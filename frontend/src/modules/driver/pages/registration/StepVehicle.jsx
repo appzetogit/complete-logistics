@@ -11,13 +11,16 @@ import { motion } from 'framer-motion';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
     getStoredDriverRegistrationSession,
+    getDriverDocumentTemplates,
     getDriverServiceLocations,
     saveDriverRegistrationSession,
     saveDriverVehicle,
     getDriverVehicleTypes,
     getDriverVehicleFieldTemplates,
+    verifyDriverOnboardingLicenseDocument,
     verifyDriverVehicleRc,
 } from '../../services/registrationService';
+import { normalizeDriverDocumentTemplates } from '../../utils/documentTemplates';
 
 const VEHICLE_NUMBER_PATTERNS = [
     /^[A-Z]{2}\d{1,2}[A-Z]{1,4}\d{4}$/,
@@ -54,6 +57,41 @@ const applyAutofillCustomField = (currentValue, fieldConfig, nextValue) => {
 
     return normalizedValue;
 };
+const normalizeVerificationType = (value = '') => {
+    const normalized = String(value || 'none').trim().toLowerCase();
+    return ['driving_license', 'pan', 'gstin', 'rc', 'bank_account'].includes(normalized) ? normalized : 'none';
+};
+const normalizeOnboardingDocument = (doc) => {
+    if (!doc) return null;
+    if (typeof doc === 'string') {
+        return {
+            previewUrl: doc,
+            secureUrl: doc,
+            uploaded: true,
+        };
+    }
+
+    return {
+        ...doc,
+        previewUrl: doc.previewUrl || doc.secureUrl || doc.url || '',
+        uploaded: doc.uploaded ?? Boolean(doc.previewUrl || doc.secureUrl || doc.url),
+    };
+};
+const getDrivingLicenseVerificationDetails = (document = {}) =>
+    [
+        { key: 'verifiedName', label: 'Name' },
+        { key: 'verifiedDob', label: 'Date of Birth' },
+        { key: 'dlStatus', label: 'DL Status' },
+        { key: 'issuingRtoName', label: 'Issuing RTO' },
+        { key: 'relativeName', label: 'Relative Name' },
+        { key: 'requestNumber', label: 'Request Number' },
+    ]
+        .map(({ key, label }) => ({
+            key,
+            label,
+            value: String(document?.[key] || document?.[key === 'requestNumber' ? 'request_no' : ''] || '').trim(),
+        }))
+        .filter((item) => item.value);
 const hasRcAutofillData = (formData = {}, customFields = {}, customKeys = []) =>
     Boolean(
         String(formData.make || '').trim()
@@ -66,6 +104,26 @@ const hasRcAutofillData = (formData = {}, customFields = {}, customKeys = []) =>
             return Array.isArray(value) ? value.length > 0 : Boolean(String(value || '').trim());
         }),
     );
+const getRcVerificationDetailsList = (vehicle = {}) => [
+    { key: 'ownerName', label: 'Owner Name' },
+    { key: 'status', label: 'RC Status' },
+    { key: 'registrationDate', label: 'Registration Date' },
+    { key: 'insuranceUpto', label: 'Insurance Upto' },
+    { key: 'fitnessUpto', label: 'Fitness Upto' },
+    { key: 'permitNumber', label: 'Permit Number' },
+    { key: 'permitValidUpto', label: 'Permit Valid Upto' },
+    { key: 'pucNumber', label: 'PUC Number' },
+    { key: 'pucValidUpto', label: 'PUC Valid Upto' },
+    { key: 'fuelType', label: 'Fuel Type' },
+    { key: 'seatCapacity', label: 'Seat Capacity' },
+    { key: 'manufacturingMonthYear', label: 'Manufacturing Month/Year' },
+]
+    .map(({ key, label }) => ({
+        key,
+        label,
+        value: String(vehicle?.[key] || '').trim(),
+    }))
+    .filter((item) => item.value);
 const matchesVehicleFieldAccountType = (accountType, isOwner) => {
     const rawAccountType = String(accountType || '').trim().toLowerCase();
     const normalizedAccountType = rawAccountType || 'individual';
@@ -169,6 +227,7 @@ const StepVehicle = () => {
     const [vehicleTypes, setVehicleTypes] = useState([]);
     const [vehicleTypesLoading, setVehicleTypesLoading] = useState(false);
     const [vehicleFieldConfigs, setVehicleFieldConfigs] = useState(defaultVehicleFieldConfigs);
+    const [documentTemplates, setDocumentTemplates] = useState([]);
 
     const [formData, setFormData] = useState({
         registerFor: getPrimaryRegisterFor(session.serviceCategories || session.vehicleSession?.vehicle?.serviceCategories || [], session.registerFor || 'taxi'),
@@ -196,6 +255,16 @@ const StepVehicle = () => {
     const [rcVerificationLoading, setRcVerificationLoading] = useState(false);
     const [rcVerificationMessage, setRcVerificationMessage] = useState('');
     const [rcVerificationError, setRcVerificationError] = useState('');
+    const [rcVerificationDetails, setRcVerificationDetails] = useState(session.rcVerificationDetails || null);
+    const [dlMeta, setDlMeta] = useState(() => ({
+        identifyNumber: '',
+        birthDate: '',
+        requestNumber: '',
+    }));
+    const [dlVerificationLoading, setDlVerificationLoading] = useState(false);
+    const [dlVerificationMessage, setDlVerificationMessage] = useState(session.dlVerificationMessage || '');
+    const [dlVerificationError, setDlVerificationError] = useState('');
+    const [dlVerificationDetails, setDlVerificationDetails] = useState(null);
     const lastVerifiedRcRef = useRef('');
 
     useEffect(() => {
@@ -204,6 +273,67 @@ const StepVehicle = () => {
             ...formData,
         });
     }, [formData]);
+
+    useEffect(() => {
+        saveDriverRegistrationSession({
+            ...getStoredDriverRegistrationSession(),
+            ...session,
+            ...formData,
+            rcVerificationDetails,
+            rcVerificationMessage,
+            dlVerificationMessage,
+        });
+    }, [formData, rcVerificationDetails, rcVerificationMessage, dlVerificationMessage]);
+
+    useEffect(() => {
+        if (isOwner) {
+            return;
+        }
+
+        const storedSession = getStoredDriverRegistrationSession();
+        const storedTemplates = normalizeDriverDocumentTemplates(documentTemplates);
+        const dlTemplate = storedTemplates.find(
+            (template) => normalizeVerificationType(template?.verification_type) === 'driving_license',
+        );
+
+        if (!dlTemplate) {
+            return;
+        }
+
+        const templateId = String(dlTemplate.id || '').trim();
+        const docKey = String(dlTemplate.fields?.[0]?.key || '').trim();
+        const storedMeta = storedSession.documentMeta?.[templateId] || session.documentMeta?.[templateId] || {};
+        const storedDoc = normalizeOnboardingDocument(
+            storedSession.documents?.[docKey] || session.documents?.[docKey] || null,
+        );
+        const nextDlMeta = {
+            identifyNumber: String(storedMeta.identifyNumber || storedDoc?.identifyNumber || storedDoc?.identify_number || '').trim(),
+            birthDate: String(storedMeta.birthDate || storedDoc?.birthDate || storedDoc?.birth_date || '').trim(),
+            requestNumber: String(storedMeta.requestNumber || storedDoc?.requestNumber || storedDoc?.request_no || '').trim(),
+        };
+
+        setDlMeta((current) =>
+            current.identifyNumber === nextDlMeta.identifyNumber &&
+            current.birthDate === nextDlMeta.birthDate &&
+            current.requestNumber === nextDlMeta.requestNumber
+                ? current
+                : nextDlMeta,
+        );
+        setDlVerificationDetails((current) => {
+            const currentPreview = String(current?.previewUrl || current?.secureUrl || '').trim();
+            const nextPreview = String(storedDoc?.previewUrl || storedDoc?.secureUrl || '').trim();
+            const currentIdentifyNumber = String(current?.identifyNumber || current?.identify_number || '').trim();
+            const nextIdentifyNumber = String(storedDoc?.identifyNumber || storedDoc?.identify_number || '').trim();
+            const currentRequestNumber = String(current?.requestNumber || current?.request_no || '').trim();
+            const nextRequestNumber = String(storedDoc?.requestNumber || storedDoc?.request_no || '').trim();
+
+            return currentPreview === nextPreview &&
+                currentIdentifyNumber === nextIdentifyNumber &&
+                currentRequestNumber === nextRequestNumber
+                ? current
+                : storedDoc;
+        });
+    }, [documentTemplates, isOwner]);
 
     useEffect(() => {
         if (!phone || !registrationId) {
@@ -305,14 +435,37 @@ const StepVehicle = () => {
             }
         };
 
+        const loadDocumentTemplates = async () => {
+            if (isOwner) {
+                if (active) {
+                    setDocumentTemplates([]);
+                }
+                return;
+            }
+
+            try {
+                const response = await getDriverDocumentTemplates('driver');
+                const results = response?.data?.data?.results || response?.data?.results || [];
+                if (active) {
+                    setDocumentTemplates(normalizeDriverDocumentTemplates(results));
+                }
+            } catch (err) {
+                console.error('Failed to load driver document templates:', err);
+                if (active) {
+                    setDocumentTemplates([]);
+                }
+            }
+        };
+
         loadLocations();
         loadVehicleTypes();
         loadVehicleFieldConfigs();
+        loadDocumentTemplates();
 
         return () => {
             active = false;
         };
-    }, []);
+    }, [isOwner]);
 
     const activeVehicleFields = vehicleFieldConfigs
         .filter((item) => item?.active !== false)
@@ -377,6 +530,62 @@ const StepVehicle = () => {
     const manufacturerFieldKey = findAutofillCustomFieldKey(visibleCustomVehicleFields, ['manufacturer', 'vehicle manufacturer', 'brand']);
     const rcAutofillCustomFieldKeys = [fuelTypeFieldKey, seatCapacityFieldKey, manufacturerFieldKey].filter(Boolean);
     const showRcAutofilledFields = isOwner || hasRcAutofillData(formData, formData.customFields, rcAutofillCustomFieldKeys);
+    const drivingLicenseTemplate = documentTemplates.find(
+        (template) => normalizeVerificationType(template?.verification_type) === 'driving_license',
+    ) || null;
+    const drivingLicenseTemplateId = String(
+        drivingLicenseTemplate?.id ||
+        session.drivingLicenseTemplateId ||
+        'driving_license'
+    ).trim();
+    const drivingLicenseDocumentKey = String(
+        drivingLicenseTemplate?.fields?.[0]?.key ||
+        session.drivingLicenseDocumentKey ||
+        'driving_license'
+    ).trim();
+
+    useEffect(() => {
+        if (!drivingLicenseTemplateId) {
+            return;
+        }
+
+        const storedSession = getStoredDriverRegistrationSession();
+        saveDriverRegistrationSession({
+            ...storedSession,
+            ...session,
+            ...formData,
+            rcVerificationDetails,
+            rcVerificationMessage,
+            dlVerificationMessage,
+            drivingLicenseTemplateId,
+            drivingLicenseDocumentKey,
+            documents: dlVerificationDetails && drivingLicenseDocumentKey
+                ? {
+                    ...(storedSession.documents || {}),
+                    [drivingLicenseDocumentKey]: dlVerificationDetails,
+                }
+                : (storedSession.documents || {}),
+            documentMeta: {
+                ...(storedSession.documentMeta || {}),
+                [drivingLicenseTemplateId]: {
+                    ...(storedSession.documentMeta?.[drivingLicenseTemplateId] || {}),
+                    identifyNumber: String(dlMeta.identifyNumber || '').trim(),
+                    birthDate: String(dlMeta.birthDate || '').trim(),
+                    requestNumber: String(dlMeta.requestNumber || '').trim(),
+                },
+            },
+        });
+    }, [
+        dlMeta,
+        dlVerificationDetails,
+        dlVerificationMessage,
+        drivingLicenseDocumentKey,
+        drivingLicenseTemplateId,
+        formData,
+        rcVerificationDetails,
+        rcVerificationMessage,
+        session,
+    ]);
 
     const handleVerifyRc = async () => {
         if (isOwner || rcVerificationLoading) {
@@ -476,14 +685,106 @@ const StepVehicle = () => {
             });
 
             lastVerifiedRcRef.current = normalizedRcNumber;
+            setRcVerificationDetails(vehicle);
             setRcVerificationMessage(verificationMessage);
             setRcVerificationError('');
         } catch (err) {
             lastVerifiedRcRef.current = '';
+            setRcVerificationDetails(null);
             setRcVerificationMessage('');
             setRcVerificationError(err?.message || 'Unable to verify RC number');
         } finally {
             setRcVerificationLoading(false);
+        }
+    };
+
+    const handleVerifyDl = async () => {
+        if (isOwner || dlVerificationLoading) {
+            return;
+        }
+
+        if (!registrationId || !phone) {
+            setDlVerificationError('Registration session expired. Please restart onboarding.');
+            setDlVerificationMessage('');
+            return;
+        }
+
+        const identifyNumber = String(dlMeta.identifyNumber || '').trim().toUpperCase();
+        const birthDate = String(dlMeta.birthDate || '').trim();
+        const requestNumber = String(dlMeta.requestNumber || '').trim();
+
+        if (!identifyNumber) {
+            setDlVerificationError('Driving license number is required');
+            setDlVerificationMessage('');
+            return;
+        }
+
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
+            setDlVerificationError('Birth date must use YYYY-MM-DD format');
+            setDlVerificationMessage('');
+            return;
+        }
+
+        setDlVerificationLoading(true);
+        setDlVerificationError('');
+        setDlVerificationMessage('');
+
+        try {
+            const response = await verifyDriverOnboardingLicenseDocument(drivingLicenseDocumentKey, {
+                registrationId,
+                phone: session.phone,
+                licenseNumber: identifyNumber,
+                birthDate,
+                requestNumber,
+            });
+
+            const payload = response?.data?.data || response?.data || {};
+            const verifiedDocument = normalizeOnboardingDocument(payload?.document);
+            const nextRequestNumber = String(
+                verifiedDocument?.requestNumber ||
+                verifiedDocument?.request_no ||
+                requestNumber,
+            ).trim();
+            const nextMessage = String(payload?.message || 'Driving license verified successfully').trim();
+
+            setDlMeta({
+                identifyNumber,
+                birthDate,
+                requestNumber: nextRequestNumber,
+            });
+            setDlVerificationDetails(verifiedDocument);
+            setDlVerificationMessage(nextMessage);
+
+            const storedSession = getStoredDriverRegistrationSession();
+            saveDriverRegistrationSession({
+                ...storedSession,
+                ...session,
+                ...formData,
+                rcVerificationDetails,
+                rcVerificationMessage,
+                dlVerificationMessage: nextMessage,
+                drivingLicenseTemplateId,
+                drivingLicenseDocumentKey,
+                documents: {
+                    ...(storedSession.documents || {}),
+                    [drivingLicenseDocumentKey]: verifiedDocument,
+                },
+                documentMeta: {
+                    ...(storedSession.documentMeta || {}),
+                    [drivingLicenseTemplateId]: {
+                        ...(storedSession.documentMeta?.[drivingLicenseTemplateId] || {}),
+                        identifyNumber,
+                        birthDate,
+                        requestNumber: nextRequestNumber,
+                    },
+                },
+            });
+        } catch (err) {
+            setDlVerificationDetails(null);
+            setDlVerificationMessage('');
+            setDlVerificationError(err?.message || 'Unable to verify driving license');
+        } finally {
+            setDlVerificationLoading(false);
         }
     };
 
@@ -673,6 +974,8 @@ const StepVehicle = () => {
     const hasRequiredCustomFields = visibleCustomVehicleFields.every(
         (field) => field?.is_required === false || isFilled(formData.customFields?.[field.field_key]),
     );
+    const rcVerificationDetailsList = getRcVerificationDetailsList(rcVerificationDetails || {});
+    const dlVerificationDetailsList = getDrivingLicenseVerificationDetails(dlVerificationDetails || {});
 
     return (
         <div 
@@ -988,6 +1291,7 @@ const StepVehicle = () => {
                                                 onChange={(e) => {
                                                     clearFieldError('rcNumber');
                                                     lastVerifiedRcRef.current = '';
+                                                    setRcVerificationDetails(null);
                                                     setRcVerificationMessage('');
                                                     setRcVerificationError('');
                                                     setFormData((p) => ({ ...p, rcNumber: normalizeVehicleNumber(e.target.value) }));
@@ -1019,6 +1323,28 @@ const StepVehicle = () => {
                                             {!fieldErrors.rcNumber && !isOwner && !rcVerificationLoading && rcVerificationError ? (
                                                 <p className="text-[10px] font-bold text-amber-600 pt-1 px-1">{rcVerificationError}</p>
                                             ) : null}
+                                        </div>
+                                        ) : null}
+
+                                        {rcVerificationDetailsList.length > 0 ? (
+                                        <div className="col-span-2 rounded-[1.8rem] border border-emerald-100 bg-emerald-50/50 p-4">
+                                            <div className="flex items-center gap-2 px-1">
+                                                <ShieldCheck size={15} className="text-emerald-600" />
+                                                <p className="text-[10px] font-black uppercase tracking-[0.15em] text-emerald-700">
+                                                    Verified RC Details
+                                                </p>
+                                            </div>
+                                            <p className="mt-1 px-1 text-[11px] font-semibold text-emerald-800/70">
+                                                RC details only, including permit, insurance, fitness and PUC info when available.
+                                            </p>
+                                            <div className="mt-3 grid grid-cols-2 gap-3">
+                                                {rcVerificationDetailsList.map((item) => (
+                                                    <div key={item.key} className="rounded-2xl bg-white/90 px-3 py-2">
+                                                        <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">{item.label}</p>
+                                                        <p className="mt-1 text-[12px] font-bold text-slate-900 break-words">{item.value}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
                                         ) : null}
 
@@ -1096,6 +1422,106 @@ const StepVehicle = () => {
                                                 className="w-full bg-transparent border-none p-0 text-lg font-black text-slate-900 focus:outline-none focus:ring-0 placeholder:text-slate-200"
                                             />
                                             {fieldErrors.color && <p className="text-[10px] font-bold text-rose-500 pt-1 px-1">{fieldErrors.color}</p>}
+                                        </div>
+                                        ) : null}
+                                    </div>
+                                </div>
+                                ) : null}
+
+                                {!isOwner ? (
+                                <div className="space-y-5 pt-1">
+                                    <div className="space-y-1 px-1">
+                                        <h2 className="text-lg font-black tracking-tight text-slate-900">Driving License</h2>
+                                        <p className="text-[12px] font-black text-slate-400 uppercase tracking-widest opacity-60">Separate DL verification</p>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="group rounded-[1.8rem] border-2 transition-all p-4 border-slate-50 bg-slate-50 focus-within:border-slate-900/10 focus-within:bg-white focus-within:shadow-xl focus-within:shadow-slate-900/5 col-span-2">
+                                            <label className="block text-[10px] font-black uppercase tracking-[0.15em] text-slate-400 opacity-70 px-1 mb-1">License Number</label>
+                                            <input
+                                                value={dlMeta.identifyNumber}
+                                                onChange={(e) => {
+                                                    setDlVerificationDetails(null);
+                                                    setDlVerificationMessage('');
+                                                    setDlVerificationError('');
+                                                    setDlMeta((prev) => ({ ...prev, identifyNumber: e.target.value.toUpperCase() }));
+                                                }}
+                                                placeholder="Enter DL number"
+                                                className="w-full bg-transparent border-none p-0 text-[16px] font-semibold text-slate-950 focus:outline-none focus:ring-0 placeholder:text-slate-300 uppercase tracking-wide"
+                                            />
+                                        </div>
+
+                                        <div className="group rounded-[1.8rem] border-2 transition-all p-4 border-slate-50 bg-slate-50 focus-within:border-slate-900/10 focus-within:bg-white focus-within:shadow-xl focus-within:shadow-slate-900/5">
+                                            <label className="block text-[10px] font-black uppercase tracking-[0.15em] text-slate-400 opacity-70 px-1 mb-1">Birth Date</label>
+                                            <input
+                                                type="date"
+                                                value={dlMeta.birthDate}
+                                                onChange={(e) => {
+                                                    setDlVerificationDetails(null);
+                                                    setDlVerificationMessage('');
+                                                    setDlVerificationError('');
+                                                    setDlMeta((prev) => ({ ...prev, birthDate: e.target.value }));
+                                                }}
+                                                className="w-full bg-transparent border-none p-0 text-[16px] font-semibold text-slate-950 focus:outline-none focus:ring-0"
+                                            />
+                                        </div>
+
+                                        <div className="group rounded-[1.8rem] border-2 transition-all p-4 border-slate-50 bg-slate-50 focus-within:border-slate-900/10 focus-within:bg-white focus-within:shadow-xl focus-within:shadow-slate-900/5">
+                                            <label className="block text-[10px] font-black uppercase tracking-[0.15em] text-slate-400 opacity-70 px-1 mb-1">Request Number</label>
+                                            <input
+                                                value={dlMeta.requestNumber}
+                                                onChange={(e) => {
+                                                    setDlVerificationDetails(null);
+                                                    setDlVerificationMessage('');
+                                                    setDlVerificationError('');
+                                                    setDlMeta((prev) => ({ ...prev, requestNumber: e.target.value }));
+                                                }}
+                                                placeholder="Optional"
+                                                className="w-full bg-transparent border-none p-0 text-[16px] font-semibold text-slate-950 focus:outline-none focus:ring-0 placeholder:text-slate-300"
+                                            />
+                                        </div>
+
+                                        <div className="col-span-2 flex justify-end">
+                                            <button
+                                                type="button"
+                                                onClick={handleVerifyDl}
+                                                disabled={dlVerificationLoading}
+                                                className={`rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-[0.15em] transition-colors ${
+                                                    dlVerificationLoading
+                                                        ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                                                        : 'bg-slate-900 text-white hover:bg-black'
+                                                }`}
+                                            >
+                                                {dlVerificationLoading ? 'Verifying...' : 'Verify DL'}
+                                            </button>
+                                        </div>
+
+                                        {dlVerificationMessage ? (
+                                            <p className="col-span-2 text-[10px] font-bold text-emerald-600 px-1">{dlVerificationMessage}</p>
+                                        ) : null}
+                                        {dlVerificationError ? (
+                                            <p className="col-span-2 text-[10px] font-bold text-amber-600 px-1">{dlVerificationError}</p>
+                                        ) : null}
+
+                                        {dlVerificationDetailsList.length > 0 ? (
+                                        <div className="col-span-2 rounded-[1.8rem] border border-emerald-100 bg-emerald-50/50 p-4">
+                                            <div className="flex items-center gap-2 px-1">
+                                                <ShieldCheck size={15} className="text-emerald-600" />
+                                                <p className="text-[10px] font-black uppercase tracking-[0.15em] text-emerald-700">
+                                                    Verified From DL
+                                                </p>
+                                            </div>
+                                            <p className="mt-1 px-1 text-[11px] font-semibold text-emerald-800/70">
+                                                DL details only, kept separate from RC verification.
+                                            </p>
+                                            <div className="mt-3 grid grid-cols-2 gap-3">
+                                                {dlVerificationDetailsList.map((item) => (
+                                                    <div key={item.key} className="rounded-2xl bg-white/90 px-3 py-2">
+                                                        <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">{item.label}</p>
+                                                        <p className="mt-1 text-[12px] font-bold text-slate-900 break-words">{item.value}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
                                         ) : null}
                                     </div>

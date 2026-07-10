@@ -48,7 +48,8 @@ const unwrapLoginPayload = (response) => {
 const generateOTP = () => String(Math.floor(1000 + Math.random() * 9000));
 const DRIVER_PLACEHOLDER = { name: 'Delivery Captain', rating: '4.9', vehicle: 'Bike', plate: 'Assigned', phone: '', eta: 2 };
 const STAGES = { SEARCHING: 'searching', ACCEPTED: 'accepted' };
-const ACTIVE_DELIVERY_POLL_MS = 1500;
+const ACTIVE_DELIVERY_POLL_MS = 8000;
+const ACTIVE_DELIVERY_POLL_DELAY_MS = 6000;
 const SEARCH_TIMEOUT_MS = 20000;
 const CONSUMED_SEARCH_NONCE_PREFIX = 'Appzeto 24_consumed_parcel_search_nonce:';
 const ACTIVE_SEARCH_NONCES = new Set();
@@ -57,10 +58,10 @@ const ACTIVE_SEARCH_NONCE_CLEANUPS = new Map();
 const withUserAuthorization = (token) => (
   token
     ? {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
     : {}
 );
 
@@ -375,6 +376,7 @@ const ParcelSearchingDriver = () => {
   const [bookingError, setBookingError] = useState('');
   const [nearbyVehicleCount, setNearbyVehicleCount] = useState(4);
   const activeRidePollRef = useRef(null);
+  const activeRidePollStartTimeoutRef = useRef(null);
   const searchTimeoutRef = useRef(null);
   const requestStartedRef = useRef(false);
   const cleanupSearchRef = useRef(null);
@@ -523,7 +525,7 @@ const ParcelSearchingDriver = () => {
       activeRideIdRef.current = String(rideId || activeRideIdRef.current || '');
       trackingStartedRef.current = true;
 
-      const nextRide = {
+        const nextRide = {
         ...routeState,
         type: 'parcel',
         serviceType: 'parcel',
@@ -629,8 +631,10 @@ const ParcelSearchingDriver = () => {
       disposed = true;
       requestStartedRef.current = false;
       clearInterval(activeRidePollRef.current);
+      clearTimeout(activeRidePollStartTimeoutRef.current);
       clearTimeout(searchTimeoutRef.current);
       clearTimeout(acceptedTimerRef.current);
+      activeRidePollStartTimeoutRef.current = null;
       activeRidePollRef.current = null;
       socketService.off('rideSearchUpdate', onRideSearchUpdate);
       socketService.off('rideAccepted', onRideAccepted);
@@ -741,8 +745,17 @@ const ParcelSearchingDriver = () => {
         };
 
         clearInterval(activeRidePollRef.current);
-        activeRidePollRef.current = setInterval(pollActiveRide, ACTIVE_DELIVERY_POLL_MS);
-        pollActiveRide();
+        activeRidePollRef.current = null;
+        const startFallbackPolling = () => {
+          if (disposed || trackingStartedRef.current) return;
+          pollActiveRide();
+          activeRidePollRef.current = setInterval(pollActiveRide, ACTIVE_DELIVERY_POLL_MS);
+        };
+        clearTimeout(activeRidePollStartTimeoutRef.current);
+        activeRidePollStartTimeoutRef.current = window.setTimeout(
+          startFallbackPolling,
+          ACTIVE_DELIVERY_POLL_DELAY_MS,
+        );
         if (!disposed) {
           setSearchStatus('Booking created. Notifying nearby captains...');
           setNearbyVehicleCount(clampVehicleCount(selectedVehicleTypeIds.length));

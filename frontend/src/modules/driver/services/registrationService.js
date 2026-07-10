@@ -206,6 +206,9 @@ export const saveDriverVehicle = (payload) =>
 export const verifyDriverVehicleRc = (payload) =>
   api.post("/drivers/onboarding/vehicle/verify-rc", payload);
 
+export const verifyDriverOnboardingLicenseDocument = (documentKey, payload) =>
+  api.post(`/drivers/onboarding/documents/${encodeURIComponent(documentKey)}/verify-license`, payload);
+
 export const saveDriverDocuments = (payload) =>
   api.patch("/drivers/onboarding/documents", payload);
 
@@ -351,14 +354,7 @@ const getTokenPayload = (token) => {
     if (!payload) {
       return null;
     }
-    const decoded = JSON.parse(atob(decodeBase64Url(payload)));
-    if (decoded && typeof decoded.exp === 'number') {
-      const isExpired = Date.now() / 1000 >= decoded.exp;
-      if (isExpired) {
-        return null;
-      }
-    }
-    return decoded;
+    return JSON.parse(atob(decodeBase64Url(payload)));
   } catch {
     return null;
   }

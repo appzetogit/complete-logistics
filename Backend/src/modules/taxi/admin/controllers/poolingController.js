@@ -160,7 +160,7 @@ export const approvePoolingVehicle = asyncHandler(async (req, res) => {
       status: 'active',
       poolingEnabled: true,
     },
-    { new: true },
+    { returnDocument: 'after' },
   );
 
   if (!vehicle) {
@@ -186,7 +186,7 @@ export const updatePoolingBookingStatus = asyncHandler(async (req, res) => {
   const booking = await PoolingBooking.findByIdAndUpdate(
     req.params.id,
     { bookingStatus: status },
-    { new: true }
+    { returnDocument: 'after' }
   );
   if (!booking) throw new ApiError(404, 'Booking not found');
 

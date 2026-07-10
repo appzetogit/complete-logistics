@@ -230,10 +230,9 @@ const getStatusColor = (status) => {
 
   const getDocumentStatus = (doc = {}) =>
     String(
-      doc?.status ||
-      doc?.verificationStatus ||
       doc?.approvalStatus ||
       doc?.reviewStatus ||
+      doc?.status ||
       'pending',
     ).toLowerCase();
 

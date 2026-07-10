@@ -42,6 +42,8 @@ const ARRIVAL_RADIUS_METERS = 100;
 const ROUTE_SIMPLIFY_TOLERANCE = 0.00008;
 const ROUTE_OFF_PATH_METERS = 45;
 const ROUTE_REFRESH_DEBOUNCE_MS = 2500;
+const DRIVER_LOCATION_EMIT_MIN_DISTANCE_METERS = 12;
+const DRIVER_LOCATION_EMIT_MIN_INTERVAL_MS = 3000;
 
 const mapStyles = [
     { elementType: 'geometry', stylers: [{ color: '#f8fafc' }] },
@@ -1049,6 +1051,11 @@ const ActiveTrip = () => {
     const mapFrameKeyRef = React.useRef('');
     const lastRouteRefreshAtRef = React.useRef(0);
     const routeTrimStateRef = React.useRef({ distanceMeters: Number.POSITIVE_INFINITY, shouldRefresh: false });
+    const lastDriverLocationEmitRef = React.useRef({
+        position: null,
+        emittedAt: 0,
+    });
+    const previousDestinationRef = React.useRef(null);
 
     const activeDestination = useMemo(
         () => (phase === 'to_pickup' || phase === 'otp_verification' ? pickupPosition : dropPosition),
@@ -1091,8 +1098,12 @@ const ActiveTrip = () => {
         }
 
         const socket = socketService.connect({ role: 'driver' });
+        const onSocketConnect = () => {
+            socketService.emit('ride:join', { rideId: currentRideId });
+        };
         if (socket) {
             socketService.emit('ride:join', { rideId: currentRideId });
+            socket.on('connect', onSocketConnect);
         }
 
         const handleTripClosed = (payload = {}) => {
@@ -1153,6 +1164,9 @@ const ActiveTrip = () => {
             socketService.off('rideCancelled', handleTripClosed);
             socketService.off('ride:status:updated', handleRideStatusUpdated);
             socketService.off('ride:state', handleRideState);
+            if (socket) {
+                socket.off('connect', onSocketConnect);
+            }
         };
     }, [exitToDriverHome, rideId, routeRideId]);
 
@@ -1589,8 +1603,20 @@ const ActiveTrip = () => {
         return () => window.clearInterval(intervalId);
     }, [phase, waitingStartedAt]);
 
-    const publishDriverLocation = (position, heading = displayDriverHeading) => {
+    const publishDriverLocation = (position, heading = displayDriverHeading, { speed = null, force = false } = {}) => {
         if (!rideId || !position) {
+            return;
+        }
+
+        const now = Date.now();
+        const lastEmission = lastDriverLocationEmitRef.current;
+        const movedDistance = getDistanceMeters(lastEmission.position, position);
+        const shouldEmit = force ||
+            !lastEmission.position ||
+            movedDistance >= DRIVER_LOCATION_EMIT_MIN_DISTANCE_METERS ||
+            now - Number(lastEmission.emittedAt || 0) >= DRIVER_LOCATION_EMIT_MIN_INTERVAL_MS;
+
+        if (!shouldEmit) {
             return;
         }
 
@@ -1598,8 +1624,14 @@ const ActiveTrip = () => {
             rideId,
             coordinates: [position.lng, position.lat],
             heading: normalizeHeading(heading),
+            speed,
             simulated: isSimulationEnabledRef.current,
         });
+
+        lastDriverLocationEmitRef.current = {
+            position,
+            emittedAt: now,
+        };
     };
 
     const stopSimulationTimer = () => {
@@ -1849,7 +1881,7 @@ const ActiveTrip = () => {
                     setDriverPosition((previousPosition) => {
                         const nextHeading = calculateBearing(previousPosition, position, displayDriverHeadingRef.current);
                         setDriverHeading(nextHeading);
-                        publishDriverLocation(position, nextHeading);
+                        publishDriverLocation(position, nextHeading, { force: true });
                         return position;
                     });
                 }
@@ -1881,10 +1913,7 @@ const ActiveTrip = () => {
                     );
                     setDriverHeading(nextHeading);
                     if (rideId) {
-                        socketService.emit('ride:driver-location:update', {
-                            rideId,
-                            coordinates: [nextPosition.lng, nextPosition.lat],
-                            heading: nextHeading,
+                        publishDriverLocation(nextPosition, nextHeading, {
                             speed: pos.coords.speed,
                         });
                     }
@@ -1948,7 +1977,11 @@ const ActiveTrip = () => {
     useEffect(() => () => stopSimulationTimer(), []);
 
     useEffect(() => {
-        if (isSimulationEnabled) {
+        const destinationChanged = !previousDestinationRef.current ||
+            !arePositionsNearlyEqual(previousDestinationRef.current, activeDestination, 0.00001);
+        previousDestinationRef.current = activeDestination;
+
+        if (isSimulationEnabled && !destinationChanged) {
             return;
         }
 
@@ -1960,7 +1993,7 @@ const ActiveTrip = () => {
             return;
         }
 
-        if (routePath.length > 1) {
+        if (routePath.length > 1 && !destinationChanged) {
             const trimmedRoute = trimRoutePathFromPosition(routePath, driverPosition);
             routeTrimStateRef.current = {
                 distanceMeters: trimmedRoute.distanceMeters,
@@ -1978,7 +2011,18 @@ const ActiveTrip = () => {
         }
 
         if (!isLoaded || !window.google?.maps?.importLibrary) {
-            setRoutePath(buildFallbackRoute(driverPosition, activeDestination));
+            const fallbackRoute = buildFallbackRoute(driverPosition, activeDestination);
+            setRoutePath(fallbackRoute);
+            if (isSimulationEnabled && destinationChanged) {
+                stopSimulationTimer();
+                simulationPathRef.current = fallbackRoute;
+                setSimulationStep(0);
+                setDriverPosition(fallbackRoute[0]);
+                const nextHeading = getRouteHeading(fallbackRoute[0], fallbackRoute.slice(1), displayDriverHeadingRef.current);
+                setDriverHeading(nextHeading);
+                publishDriverLocation(fallbackRoute[0], nextHeading);
+                setIsSimulationRunning(true);
+            }
             setRouteError('');
             return;
         }
@@ -1993,6 +2037,16 @@ const ActiveTrip = () => {
         if (cachedRoute) {
             if (!arePathsEquivalent(routePath, cachedRoute.routePath)) {
                 setRoutePath(cachedRoute.routePath);
+            }
+            if (isSimulationEnabled && destinationChanged) {
+                stopSimulationTimer();
+                simulationPathRef.current = cachedRoute.routePath;
+                setSimulationStep(0);
+                setDriverPosition(cachedRoute.routePath[0]);
+                const nextHeading = getRouteHeading(cachedRoute.routePath[0], cachedRoute.routePath.slice(1), displayDriverHeadingRef.current);
+                setDriverHeading(nextHeading);
+                publishDriverLocation(cachedRoute.routePath[0], nextHeading);
+                setIsSimulationRunning(true);
             }
             setRouteError(cachedRoute.routeError);
             routeTrimStateRef.current = { distanceMeters: 0, shouldRefresh: false };
@@ -2018,6 +2072,18 @@ const ActiveTrip = () => {
                     routeError: '',
                 });
                 setRoutePath(nextPath);
+                
+                if (isSimulationEnabled && destinationChanged) {
+                    stopSimulationTimer();
+                    simulationPathRef.current = nextPath;
+                    setSimulationStep(0);
+                    setDriverPosition(nextPath[0]);
+                    const nextHeading = getRouteHeading(nextPath[0], nextPath.slice(1), displayDriverHeadingRef.current);
+                    setDriverHeading(nextHeading);
+                    publishDriverLocation(nextPath[0], nextHeading);
+                    setIsSimulationRunning(true);
+                }
+
                 routeTrimStateRef.current = { distanceMeters: 0, shouldRefresh: false };
                 setRouteError('');
                 return;
@@ -2030,6 +2096,18 @@ const ActiveTrip = () => {
                 routeError: nextRouteError,
             });
             setRoutePath(fallbackRoute);
+            
+            if (isSimulationEnabled && destinationChanged) {
+                stopSimulationTimer();
+                simulationPathRef.current = fallbackRoute;
+                setSimulationStep(0);
+                setDriverPosition(fallbackRoute[0]);
+                const nextHeading = getRouteHeading(fallbackRoute[0], fallbackRoute.slice(1), displayDriverHeadingRef.current);
+                setDriverHeading(nextHeading);
+                publishDriverLocation(fallbackRoute[0], nextHeading);
+                setIsSimulationRunning(true);
+            }
+
             routeTrimStateRef.current = { distanceMeters: Number.POSITIVE_INFINITY, shouldRefresh: false };
             setRouteError(nextRouteError);
         })();

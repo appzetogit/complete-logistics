@@ -19,9 +19,14 @@ import { useSettings } from '../../../../shared/context/SettingsContext';
 const MAP_CONTAINER_STYLE = { width: '100%', height: '100%' };
 const DEFAULT_CENTER = { lat: 22.7196, lng: 75.8577 };
 const TERMINAL_STATUSES = new Set(['completed', 'cancelled', 'delivered']);
-const ACTIVE_RIDE_VALIDATE_MS = 15000;
+const ACTIVE_RIDE_VALIDATE_MS = 4000;
 const COMPLETED_TRACKING_STATUSES = new Set(['completed', 'delivered']);
 const POST_RIDE_REDIRECT_STATUSES = new Set(['arrived', 'completed', 'delivered']);
+const ROUTE_REFRESH_MIN_DISTANCE_METERS = 30;
+const ROUTE_REFRESH_MIN_INTERVAL_MS = 4000;
+const ROUTE_PROGRESS_CAPTURE_METERS = 40;
+const ROUTE_DESTINATION_CHANGE_METERS = 15;
+const MAX_ROUTE_CACHE_ENTRIES = 120;
 
 const toLatLng = (coords, fallback = DEFAULT_CENTER) => {
   const [lng, lat] = coords || [];
@@ -37,6 +42,24 @@ const arePositionsNearlyEqual = (first, second, threshold = 0.0002) => (
   Math.abs(Number(first?.lat ?? 0) - Number(second?.lat ?? 0)) < threshold &&
   Math.abs(Number(first?.lng ?? 0) - Number(second?.lng ?? 0)) < threshold
 );
+
+const toRadians = (value) => Number(value || 0) * (Math.PI / 180);
+
+const getDistanceMeters = (first, second) => {
+  if (!first || !second) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const earthRadiusMeters = 6371000;
+  const deltaLat = toRadians(Number(second.lat) - Number(first.lat));
+  const deltaLng = toRadians(Number(second.lng) - Number(first.lng));
+  const startLat = toRadians(first.lat);
+  const endLat = toRadians(second.lat);
+  const haversine = Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(startLat) * Math.cos(endLat) * Math.sin(deltaLng / 2) ** 2;
+
+  return 2 * earthRadiusMeters * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+};
 
 const normalizeHeading = (value, fallback = 0) => {
   const numeric = Number(value);
@@ -94,7 +117,6 @@ const RotatingVehicleMarker = ({ position, iconUrl = carIcon, heading = 0, title
           alt={title}
           className="h-12 w-12 object-contain drop-shadow-[0_8px_10px_rgba(15,23,42,0.35)]"
           draggable={false}
-          onError={(e) => { e.target.onerror = null; e.target.src = carIcon; }}
         />
       </div>
     </div>
@@ -196,6 +218,46 @@ const getRouteCacheKey = (origin, destination) => {
     point ? `${Number(point.lat || 0).toFixed(5)},${Number(point.lng || 0).toFixed(5)}` : '';
 
   return `${serializePoint(origin)}|${serializePoint(destination)}`;
+};
+
+const trimRoutePathFromPosition = (path = [], position) => {
+  if (!Array.isArray(path) || path.length < 2 || !position) {
+    return null;
+  }
+
+  let nearestIndex = -1;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  path.forEach((point, index) => {
+    const distance = getDistanceMeters(position, point);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  });
+
+  if (nearestIndex < 0 || nearestDistance > ROUTE_PROGRESS_CAPTURE_METERS) {
+    return null;
+  }
+
+  if (nearestIndex >= path.length - 1) {
+    return [position];
+  }
+
+  return [position, ...path.slice(nearestIndex + 1)];
+};
+
+const rememberRouteCacheEntry = (cache, key, value) => {
+  cache.set(key, value);
+
+  if (cache.size <= MAX_ROUTE_CACHE_ENTRIES) {
+    return;
+  }
+
+  const firstKey = cache.keys().next().value;
+  if (firstKey) {
+    cache.delete(firstKey);
+  }
 };
 
 const formatScheduledDateTime = (value) => {
@@ -363,7 +425,13 @@ const RideTracking = () => {
   const [vehicleImageBroken, setVehicleImageBroken] = useState(false);
   const [arrivalClockFallbackAt, setArrivalClockFallbackAt] = useState('');
   const [waitingNow, setWaitingNow] = useState(Date.now());
+  const [socketRealtimeHealthy, setSocketRealtimeHealthy] = useState(() => socketService.isConnected());
   const routeCacheRef = useRef(new Map());
+  const lastResolvedRouteRef = useRef({
+    origin: null,
+    destination: null,
+    resolvedAt: 0,
+  });
   const { settings } = useSettings();
   const appName = settings.general?.app_name || 'App';
   const navigate = useNavigate();
@@ -480,6 +548,9 @@ const RideTracking = () => {
   const latestStateRef = useRef(state);
   const latestFallbackDriverRef = useRef(fallbackDriver);
   const latestDriverRef = useRef(driver);
+  const latestTripStatusRef = useRef(tripStatus);
+  const backoffCountRef = useRef(0);
+  const pollTimerRef = useRef(null);
   const latestCompleteTrackingRef = useRef(() => {});
   const hasCompletedRedirectRef = useRef(false);
   const hasAutoFramedMapRef = useRef(false);
@@ -496,6 +567,10 @@ const RideTracking = () => {
   useEffect(() => {
     latestDriverRef.current = driver;
   }, [driver]);
+
+  useEffect(() => {
+    latestTripStatusRef.current = tripStatus;
+  }, [tripStatus]);
 
   useEffect(() => {
     hasAutoFramedMapRef.current = false;
@@ -756,7 +831,7 @@ const RideTracking = () => {
           return false;
         }
 
-        if (!activeRideId || activeRideId !== String(rideId)) {
+        if (!activeRideId || activeRideId !== String(rideId) || activeStatus !== latestTripStatusRef.current) {
           await hydrateRideState().catch(() => {});
           return false;
         }
@@ -764,21 +839,83 @@ const RideTracking = () => {
         return true;
       } catch (err) {
         console.error('Active ride validation failed:', err);
-        await hydrateRideState().catch(() => {});
-        return false;
+        throw err; // Re-throw to trigger polling backoff
       }
     };
 
+    const runPoll = async () => {
+      if (document.hidden || !active) {
+        return;
+      }
+
+      try {
+        await validateActiveRide();
+        backoffCountRef.current = 0; // Reset on success
+      } catch (_err) {
+        backoffCountRef.current = Math.min(backoffCountRef.current + 1, 4); // Max backoff multiplier of 16x (approx 64s max delay)
+      }
+
+      if (active) {
+        scheduleNext();
+      }
+    };
+
+    const scheduleNext = () => {
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+
+      if (document.hidden || !active) {
+        return;
+      }
+
+      const baseInterval = socketRealtimeHealthy ? 30000 : 4000;
+      const backoffMultiplier = Math.pow(2, backoffCountRef.current);
+      const delay = Math.min(baseInterval * backoffMultiplier, 60000);
+
+      pollTimerRef.current = setTimeout(() => {
+        runPoll();
+      }, delay);
+    };
+
+    // Immediate sync and kickoff
     hydrateRideState();
-    const validationInterval = window.setInterval(() => {
-      validateActiveRide().catch(() => {});
-    }, ACTIVE_RIDE_VALIDATE_MS);
+    scheduleNext();
+
+    const handleVisibilityChange = () => {
+      if (!active) return;
+
+      if (document.visibilityState === 'visible') {
+        backoffCountRef.current = 0;
+        hydrateRideState().catch(() => {});
+        
+        // Reconnect/re-verify the socket room join immediately on focus
+        const currentSocket = socketService.connect({ role: 'user' });
+        if (currentSocket) {
+          socketService.emit('ride:join', { rideId });
+        }
+
+        scheduleNext();
+      } else {
+        if (pollTimerRef.current) {
+          clearTimeout(pollTimerRef.current);
+          pollTimerRef.current = null;
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       active = false;
-      window.clearInterval(validationInterval);
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [activeRideEndpoint, rideId]); // Removed unstable dependencies (completeTracking, exitTracking, etc.) to stop infinite loop
+  }, [activeRideEndpoint, rideId, socketRealtimeHealthy]); // Added socketRealtimeHealthy to re-trigger scheduling automatically
 
   useEffect(() => {
     if (!TERMINAL_STATUSES.has(tripStatus)) {
@@ -809,8 +946,11 @@ const RideTracking = () => {
     const socket = socketService.connect({ role: 'user' });
 
     if (!socket) {
+      setSocketRealtimeHealthy(false);
       return () => {};
     }
+
+    setSocketRealtimeHealthy(socket.connected);
 
     const onRideState = (payload) => {
       if (!payload || String(payload.rideId || '') !== String(rideId)) {
@@ -927,16 +1067,28 @@ const RideTracking = () => {
     socketService.on('ride:driver-location:updated', onLocationUpdated);
     socketService.on('ride:status:updated', onStatusUpdated);
     socketService.emit('ride:join', { rideId });
+    const onSocketConnect = () => {
+      setSocketRealtimeHealthy(true);
+      socketService.emit('ride:join', { rideId });
+    };
+    const onSocketDisconnect = () => setSocketRealtimeHealthy(false);
+    const onSocketConnectError = () => setSocketRealtimeHealthy(false);
+    socket.on('connect', onSocketConnect);
+    socket.on('disconnect', onSocketDisconnect);
+    socket.on('connect_error', onSocketConnectError);
 
     return () => {
       socketService.off('ride:state', onRideState);
       socketService.off('ride:driver-location:updated', onLocationUpdated);
       socketService.off('ride:status:updated', onStatusUpdated);
+      socket.off('connect', onSocketConnect);
+      socket.off('disconnect', onSocketDisconnect);
+      socket.off('connect_error', onSocketConnectError);
     };
   }, [rideId]);
 
   useEffect(() => {
-    if (!rideId) {
+    if (!rideId || socketRealtimeHealthy) {
       return () => {};
     }
 
@@ -985,12 +1137,17 @@ const RideTracking = () => {
       },
       () => {},
     );
-  }, [rideId]);
+  }, [rideId, socketRealtimeHealthy]);
 
   useEffect(() => {
     if (isScheduledUpcoming && !hasLiveDriverLocation) {
       setRoutePath([]);
       setRouteError('');
+      lastResolvedRouteRef.current = {
+        origin: null,
+        destination: null,
+        resolvedAt: 0,
+      };
       return;
     }
 
@@ -1006,11 +1163,40 @@ const RideTracking = () => {
       return;
     }
 
+    const trimmedRoutePath = trimRoutePathFromPosition(routePath, driverPosition);
+    if (trimmedRoutePath) {
+      const currentFirstPoint = routePath[0];
+      const nextFirstPoint = trimmedRoutePath[0];
+      const shouldUpdateRoutePath = routePath.length !== trimmedRoutePath.length ||
+        !arePositionsNearlyEqual(currentFirstPoint, nextFirstPoint, 0.00001);
+
+      if (shouldUpdateRoutePath) {
+        setRoutePath(trimmedRoutePath);
+      }
+    }
+
+    const now = Date.now();
+    const lastResolvedRoute = lastResolvedRouteRef.current;
+    const destinationChanged = !lastResolvedRoute.destination ||
+      getDistanceMeters(lastResolvedRoute.destination, activeDestination) > ROUTE_DESTINATION_CHANGE_METERS;
+    const movedEnough = !lastResolvedRoute.origin ||
+      getDistanceMeters(lastResolvedRoute.origin, driverPosition) > ROUTE_REFRESH_MIN_DISTANCE_METERS;
+    const staleEnough = now - Number(lastResolvedRoute.resolvedAt || 0) >= ROUTE_REFRESH_MIN_INTERVAL_MS;
+
+    if (!destinationChanged && !(movedEnough && staleEnough)) {
+      return;
+    }
+
     const routeCacheKey = getRouteCacheKey(driverPosition, activeDestination);
     const cachedRoute = routeCacheRef.current.get(routeCacheKey);
     if (cachedRoute) {
       setRoutePath(cachedRoute.routePath);
       setRouteError(cachedRoute.routeError);
+      lastResolvedRouteRef.current = {
+        origin: driverPosition,
+        destination: activeDestination,
+        resolvedAt: now,
+      };
       return;
     }
 
@@ -1026,10 +1212,15 @@ const RideTracking = () => {
       }
 
       if (result.status === 'OK' && result.path.length) {
-        routeCacheRef.current.set(routeCacheKey, {
+        rememberRouteCacheEntry(routeCacheRef.current, routeCacheKey, {
           routePath: result.path,
           routeError: '',
         });
+        lastResolvedRouteRef.current = {
+          origin: driverPosition,
+          destination: activeDestination,
+          resolvedAt: Date.now(),
+        };
         setRoutePath(result.path);
         setRouteError('');
         return;
@@ -1037,10 +1228,15 @@ const RideTracking = () => {
 
       const fallbackRoute = [driverPosition, activeDestination];
       const nextRouteError = result.status || 'Directions unavailable';
-      routeCacheRef.current.set(routeCacheKey, {
+      rememberRouteCacheEntry(routeCacheRef.current, routeCacheKey, {
         routePath: fallbackRoute,
         routeError: nextRouteError,
       });
+      lastResolvedRouteRef.current = {
+        origin: driverPosition,
+        destination: activeDestination,
+        resolvedAt: Date.now(),
+      };
       setRoutePath(fallbackRoute);
       setRouteError(nextRouteError);
     })();
@@ -1048,7 +1244,7 @@ const RideTracking = () => {
     return () => {
       active = false;
     };
-  }, [activeDestination, driverPosition, hasLiveDriverLocation, isLoaded, isScheduledUpcoming]);
+  }, [activeDestination, driverPosition, hasLiveDriverLocation, isLoaded, isScheduledUpcoming, routePath]);
 
   useEffect(() => {
     if (!map || !window.google?.maps) {
@@ -1157,7 +1353,7 @@ const RideTracking = () => {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 w-full lg:max-w-7xl mx-auto relative font-sans overflow-hidden lg:grid lg:grid-cols-12 lg:bg-white lg:shadow-xl">
+    <div className="min-h-screen bg-slate-50 font-sans overflow-hidden lg:grid lg:grid-cols-12 lg:h-screen lg:max-w-none relative">
       <AnimatePresence>
         {shareToast && (
           <motion.div
@@ -1252,8 +1448,9 @@ const RideTracking = () => {
         )}
       </AnimatePresence>
 
-      {/* MAP BACKGROUND (Mobile) / RIGHT COLUMN (Desktop) */}
-      <div className="absolute inset-0 z-0 bg-slate-200 lg:relative lg:col-span-7 lg:col-start-6 lg:h-full lg:rounded-r-3xl lg:overflow-hidden lg:z-0">
+      {/* Map Column (Mobile full, Desktop right 7 cols) */}
+      <div className="absolute inset-0 z-0 lg:relative lg:col-span-7 lg:col-start-6 lg:h-full lg:z-0 lg:order-2 bg-slate-200">
+        <div className="absolute inset-0 z-0 bg-slate-200">
         {!HAS_VALID_GOOGLE_MAPS_KEY ? (
           <div className="flex h-full w-full items-center justify-center bg-slate-200 px-6 text-center">
             <div className="rounded-[18px] bg-white/90 px-4 py-4 shadow-sm">
@@ -1285,7 +1482,7 @@ const RideTracking = () => {
               gestureHandling: 'greedy',
             }}
           >
-            {routePath.length > 1 && hasLiveDriverLocation && (
+            {routePath.length > 1 && (
               <PolylineF
                 path={routePath}
                 options={{
@@ -1316,6 +1513,7 @@ const RideTracking = () => {
             </div>
           </div>
         )}
+        </div>
 
         <motion.button
           whileTap={{ scale: 0.9 }}
@@ -1348,22 +1546,22 @@ const RideTracking = () => {
         {isScheduledUpcoming ? (
           <div className="absolute top-[132px] left-4 right-4 z-10 rounded-[18px] border border-emerald-100 bg-white/92 px-4 py-3 shadow-[0_10px_28px_rgba(16,185,129,0.12)] backdrop-blur-md">
             <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">Scheduled ride</p>
-                <p className="mt-1 text-[15px] font-black tracking-tight text-slate-950">{scheduledDateLabel}</p>
-                <p className="mt-1 text-[11px] font-bold text-slate-500">
-                  {hasLiveDriverLocation
-                    ? 'Your driver has started sharing location for this pickup.'
-                    : 'Driver assigned. We will light up live movement here as pickup time gets closer.'}
-                </p>
-              </div>
-              <div className="rounded-[16px] bg-emerald-50 px-3 py-2 text-right">
-                <p className="text-[9px] font-black uppercase tracking-[0.18em] text-emerald-700">Countdown</p>
-                <p className="mt-1 text-[13px] font-black text-slate-950">{scheduledCountdown || 'Ready'}</p>
-              </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">Scheduled ride</p>
+              <p className="mt-1 text-[15px] font-black tracking-tight text-slate-950">{scheduledDateLabel}</p>
+              <p className="mt-1 text-[11px] font-bold text-slate-500">
+                {hasLiveDriverLocation
+                  ? 'Your driver has started sharing location for this pickup.'
+                  : 'Driver assigned. We will light up live movement here as pickup time gets closer.'}
+              </p>
+            </div>
+            <div className="rounded-[16px] bg-emerald-50 px-3 py-2 text-right">
+              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-emerald-700">Countdown</p>
+              <p className="mt-1 text-[13px] font-black text-slate-950">{scheduledCountdown || 'Ready'}</p>
             </div>
           </div>
-        ) : null}
+        </div>
+      ) : null}
       </div>
 
       {/* BOTTOM SHEET (Mobile) / LEFT COLUMN (Desktop) */}

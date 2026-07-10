@@ -5,6 +5,9 @@ import { BusBooking } from '../../user/models/BusBooking.js';
 import { BusService } from '../models/BusService.js';
 import { BusSeatHold } from '../../user/models/BusSeatHold.js';
 import { getPublicActivePaymentGateway } from '../../services/paymentGatewayService.js';
+import { getOrLoadCachedValue } from '../../../../utils/cache.js';
+
+const PUBLIC_BOOTSTRAP_CACHE_TTL_MS = 30_000;
 
 const ok = (res, data, extra = {}) =>
   res.json({ success: true, data, ...extra });
@@ -1459,9 +1462,18 @@ export const deleteRole = asyncHandler(async (req, res) => {
   ok(res, { deleted: true });
 });
 
-export const getAppModules = asyncHandler(async (req, res) =>
-  ok(res, await adminService.listAppModules(req.query)),
-);
+export const getAppModules = asyncHandler(async (req, res) => {
+  const cacheKey = `cache:public:app_modules:${JSON.stringify(req.query || {})}`;
+  const data = await getOrLoadCachedValue(
+    cacheKey,
+    {
+      ttlMs: PUBLIC_BOOTSTRAP_CACHE_TTL_MS,
+      load: () => adminService.listAppModules(req.query),
+    },
+  );
+
+  ok(res, data);
+});
 export const createAppModule = asyncHandler(async (req, res) =>
   ok(res, await adminService.createAppModule(req.body)),
 );
@@ -1624,9 +1636,18 @@ export const downloadFleetFinanceReport = asyncHandler(async (req, res) => {
   const data = await adminService.buildFleetFinanceReport(req.query);
   await sendFile(res, "fleet-finance-report", data, format);
 });
-export const getGeneralSettingsCategory = asyncHandler(async (req, res) =>
-  ok(res, await adminService.getGeneralSettings(req.params.category)),
-);
+export const getGeneralSettingsCategory = asyncHandler(async (req, res) => {
+  const category = String(req.params.category || '').trim().toLowerCase();
+  const data = await getOrLoadCachedValue(
+    `cache:public:general_settings:${category}`,
+    {
+      ttlMs: PUBLIC_BOOTSTRAP_CACHE_TTL_MS,
+      load: () => adminService.getGeneralSettings(req.params.category),
+    },
+  );
+
+  ok(res, data);
+});
 export const getUserHomeManagement = asyncHandler(async (req, res) => {
   const result = await adminService.getGeneralSettings('user-home-management');
   ok(res, result.settings || {});
@@ -1642,23 +1663,33 @@ export const getTransportTypes = asyncHandler(async (_req, res) =>
 );
 
 export const getAppBootstrap = asyncHandler(async (_req, res) => {
-  const [modules, general, transportRide, customize, paymentGateway, userHomeSettings] = await Promise.all([
-    adminService.listAppModules(),
-    adminService.getGeneralSettings('general'),
-    adminService.getGeneralSettings('transport-ride'),
-    adminService.getGeneralSettings('customize'),
-    getPublicActivePaymentGateway(),
-    adminService.getGeneralSettings('user-home-management'),
-  ]);
+  const data = await getOrLoadCachedValue(
+    'cache:public:app_bootstrap',
+    {
+      ttlMs: PUBLIC_BOOTSTRAP_CACHE_TTL_MS,
+      load: async () => {
+        const [modules, general, transportRide, customize, paymentGateway, userHomeSettings] = await Promise.all([
+          adminService.listAppModules(),
+          adminService.getGeneralSettings('general'),
+          adminService.getGeneralSettings('transport-ride'),
+          adminService.getGeneralSettings('customize'),
+          getPublicActivePaymentGateway(),
+          adminService.getGeneralSettings('user-home-management'),
+        ]);
 
-  ok(res, {
-    modules: modules.results || modules,
-    settings: {
-      general: general.settings || {},
-      transportRide: transportRide.settings || {},
-      customization: customize.settings || {},
-      paymentGateway: paymentGateway?.activeGateway || null,
-      userHomeSettings: userHomeSettings.settings || {},
-    }
-  });
+        return {
+          modules: modules.results || modules,
+          settings: {
+            general: general.settings || {},
+            transportRide: transportRide.settings || {},
+            customization: customize.settings || {},
+            paymentGateway: paymentGateway?.activeGateway || null,
+            userHomeSettings: userHomeSettings.settings || {},
+          },
+        };
+      },
+    },
+  );
+
+  ok(res, data);
 });

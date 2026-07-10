@@ -3,8 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Briefcase, MapPin, Calendar, User, Mail, Phone, Award, Send, CheckCircle, Share2, Copy, Globe2, Network, MessageCircle } from 'lucide-react';
 import api from '../../../shared/api/axiosInstance';
 import toast from 'react-hot-toast';
-import { ContainerScroll } from '@/components/ui/container-scroll-animation';
-import { CareersDashboardHelper } from '@/components/ui/CareersDashboardHelper';
 
 const CareersPage = () => {
   const navigate = useNavigate();
@@ -23,6 +21,9 @@ const CareersPage = () => {
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [activeShareMenu, setActiveShareMenu] = useState(null);
+  const [uploadingResume, setUploadingResume] = useState(false);
+  const [isResumeFileUploaded, setIsResumeFileUploaded] = useState(false);
+  const [uploadedFileName, setUploadedFileName] = useState('');
 
   useEffect(() => {
     fetchJobs();
@@ -65,7 +66,7 @@ const CareersPage = () => {
   };
 
   const buildShareText = (job) => (
-    `Check out this opening at Appzeto 24: ${job.title} (${job.department}) in ${job.location}.`
+    `Check out this opening at Rydon24: ${job.title} (${job.department}) in ${job.location}.`
   );
 
   const syncSelectedJobToUrl = (job) => {
@@ -103,7 +104,7 @@ const CareersPage = () => {
     if (channel === 'native' && navigator.share) {
       try {
         await navigator.share({
-          title: `${job.title} at Appzeto 24`,
+          title: `${job.title} at Rydon24`,
           text: shareText,
           url: shareUrl
         });
@@ -120,7 +121,7 @@ const CareersPage = () => {
       whatsapp: `https://wa.me/?text=${encodedText}%20${encodedUrl}`,
       facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`,
       linkedin: `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`,
-      email: `mailto:?subject=${encodeURIComponent(`${job.title} at Appzeto 24`)}&body=${encodedText}%0A%0A${encodedUrl}`
+      email: `mailto:?subject=${encodeURIComponent(`${job.title} at Rydon24`)}&body=${encodedText}%0A%0A${encodedUrl}`
     };
 
     if (channel === 'copy') {
@@ -140,6 +141,49 @@ const CareersPage = () => {
     setSuccess(false);
     setActiveShareMenu(null);
     syncSelectedJobToUrl(job);
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('File is too large. Max size is 10MB.');
+      return;
+    }
+
+    try {
+      setUploadingResume(true);
+      setUploadedFileName(file.name);
+
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = async () => {
+        try {
+          const dataUrl = reader.result;
+          const res = await api.post('/careers/upload', { dataUrl });
+          const secureUrl = res?.data?.secureUrl || res?.secureUrl;
+          if (secureUrl) {
+            setFormData((prev) => ({ ...prev, resumeUrl: secureUrl }));
+            setIsResumeFileUploaded(true);
+            toast.success('Resume uploaded successfully!');
+          } else {
+            throw new Error('Upload failed: secureUrl not found');
+          }
+        } catch (error) {
+          console.error('File upload error:', error);
+          toast.error(error.message || 'Failed to upload document.');
+          setUploadedFileName('');
+        } finally {
+          setUploadingResume(false);
+        }
+      };
+    } catch (error) {
+      console.error('File reader error:', error);
+      toast.error('Failed to read file.');
+      setUploadingResume(false);
+      setUploadedFileName('');
+    }
   };
 
   const shareOptions = [
@@ -175,6 +219,8 @@ const CareersPage = () => {
         coverLetter: '',
         resumeUrl: ''
       });
+      setIsResumeFileUploaded(false);
+      setUploadedFileName('');
     } catch (error) {
       console.error('Submission failed:', error);
       toast.error(error.message || 'Failed to submit application. Please try again.');
@@ -186,7 +232,7 @@ const CareersPage = () => {
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-gray-900">
       {/* Header */}
-      <div className="fixed top-0 left-0 right-0 bg-yellow-50/90 backdrop-blur-md z-50 border-b border-yellow-100/80 shadow-sm">
+      <div className="fixed top-0 left-0 right-0 bg-white/90 backdrop-blur-md z-50 border-b border-gray-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
@@ -224,7 +270,7 @@ const CareersPage = () => {
             WE ARE HIRING
           </span>
           <h1 className="text-4xl md:text-6xl font-black tracking-tight mb-6 leading-tight">
-            Build the Future of <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FFB300] to-[#FFC43D]">Mobility</span> with Appzeto 24
+            Build the Future of <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FFB300] to-[#FFC43D]">Mobility</span> with Rydon24
           </h1>
           <p className="text-base md:text-lg text-gray-400 leading-relaxed max-w-2xl mx-auto">
             Join a fast-growing, dynamic team dedicated to providing secure, efficient, and modern transit and delivery services.
@@ -259,10 +305,11 @@ const CareersPage = () => {
                   <div
                     key={job.id}
                     onClick={() => handleSelectJob(job)}
-                    className={`p-6 rounded-2xl border transition-all duration-300 cursor-pointer bg-white ${selectedJob?.id === job.id
+                    className={`p-6 rounded-2xl border transition-all duration-300 cursor-pointer bg-white ${
+                      selectedJob?.id === job.id
                         ? 'border-[#FFB300] ring-2 ring-[#FFB300]/25 shadow-md scale-[1.01]'
                         : 'border-gray-100 shadow-sm hover:border-[#FFB300]/50 hover:shadow-md hover:translate-y-[-2px]'
-                      }`}
+                    }`}
                   >
                     <div className="flex justify-between items-start">
                       <div>
@@ -528,16 +575,67 @@ const CareersPage = () => {
 
                           <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">
-                              Resume / Portfolio Link (Optional)
+                              Upload Resume / Document (Optional)
                             </label>
-                            <input
-                              type="url"
-                              name="resumeUrl"
-                              value={formData.resumeUrl}
-                              onChange={handleInputChange}
-                              placeholder="https://drive.google.com/... or github.com/..."
-                              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-[#FFB300] focus:ring-1 focus:ring-[#FFB300] text-sm transition-all outline-none bg-gray-50/50"
-                            />
+                            <div className="flex flex-col gap-3">
+                              {uploadingResume ? (
+                                <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-dashed border-amber-300 bg-amber-50/20 text-xs font-semibold text-amber-600">
+                                  <span className="w-4 h-4 border-2 border-amber-600/30 border-t-amber-600 rounded-full animate-spin"></span>
+                                  <span>Uploading resume...</span>
+                                </div>
+                              ) : formData.resumeUrl && isResumeFileUploaded ? (
+                                <div className="flex items-center justify-between px-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50/20 text-xs font-semibold text-emerald-700">
+                                  <div className="flex items-center gap-2">
+                                    <CheckCircle size={16} className="text-emerald-600" />
+                                    <span className="truncate max-w-[200px]">{uploadedFileName || 'Resume uploaded'}</span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsResumeFileUploaded(false);
+                                      setUploadedFileName('');
+                                      setFormData(prev => ({ ...prev, resumeUrl: '' }));
+                                    }}
+                                    className="text-[10px] font-bold uppercase tracking-wider text-red-500 hover:text-red-700 cursor-pointer"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="relative group cursor-pointer">
+                                  <input
+                                    type="file"
+                                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                                    onChange={handleFileChange}
+                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                  />
+                                  <div className="flex flex-col items-center justify-center border border-dashed border-gray-200 group-hover:border-[#FFB300]/50 rounded-xl p-4 bg-gray-50/50 transition-colors">
+                                    <span className="text-xs font-bold text-gray-500 group-hover:text-slate-800 transition-colors">
+                                      Choose File (PDF, Word, or Image)
+                                    </span>
+                                    <span className="text-[10px] text-gray-400 mt-1">
+                                      Max size 10MB
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {!isResumeFileUploaded && (
+                                <div>
+                                  <label className="block text-[9px] font-bold uppercase tracking-wider text-gray-400 mb-1">
+                                    Or paste a Portfolio / Drive Link instead
+                                  </label>
+                                  <input
+                                    type="url"
+                                    name="resumeUrl"
+                                    value={formData.resumeUrl}
+                                    onChange={handleInputChange}
+                                    placeholder="https://drive.google.com/... or github.com/..."
+                                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-[#FFB300] focus:ring-1 focus:ring-[#FFB300] text-sm transition-all outline-none bg-gray-50/50"
+                                  />
+                                </div>
+                              )}
+                            </div>
                           </div>
 
                           <div className="flex gap-3 pt-2">
@@ -578,24 +676,6 @@ const CareersPage = () => {
             </div>
           </div>
         )}
-      </div>
-
-      {/* Careers Scroll Animation Section */}
-      <div className="bg-slate-100 py-16">
-        <ContainerScroll
-          titleComponent={
-            <div className="mb-8">
-              <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight leading-none text-center">
-                Build the future of mobility <br />
-                <span className="text-4xl md:text-5xl font-black text-[#FFB300] mt-2 block leading-none">
-                  Join Our Team
-                </span>
-              </h2>
-            </div>
-          }
-        >
-          <CareersDashboardHelper />
-        </ContainerScroll>
       </div>
     </div>
   );

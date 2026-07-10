@@ -1,14 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ArrowLeft,
-  Camera,
-  CheckCircle2,
-  FileText,
-  ImagePlus,
-  ShieldCheck,
-  AlertCircle,
-  ChevronRight,
-  UploadCloud
+import { 
+    ArrowLeft, 
+    Camera, 
+    CheckCircle2, 
+    FileText, 
+    ImagePlus,
+    ShieldCheck, 
+    AlertCircle,
+    ChevronRight,
+    UploadCloud
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -20,6 +20,7 @@ import {
   persistDriverAuthSession,
   saveDriverDocuments,
   saveDriverRegistrationSession,
+  verifyDriverOnboardingLicenseDocument,
 } from '../../services/registrationService';
 import {
   flattenDriverDocumentFields,
@@ -85,6 +86,22 @@ const templateNeedsBirthDate = (template = {}) =>
 
 const templateSupportsRequestNumber = (template = {}) =>
   normalizeVerificationType(template?.verification_type) === 'driving_license';
+
+const getDrivingLicenseVerificationDetails = (document = {}) =>
+  [
+    { key: 'verifiedName', label: 'Name' },
+    { key: 'verifiedDob', label: 'Date of Birth' },
+    { key: 'dlStatus', label: 'DL Status' },
+    { key: 'issuingRtoName', label: 'Issuing RTO' },
+    { key: 'relativeName', label: 'Relative Name' },
+    { key: 'requestNumber', label: 'Request Number' },
+  ]
+    .map(({ key, label }) => ({
+      key,
+      label,
+      value: String(document?.[key] || document?.[key === 'requestNumber' ? 'request_no' : ''] || '').trim(),
+    }))
+    .filter((item) => item.value);
 
 const buildTemplateMetaState = (templates = [], documents = {}) =>
   Object.fromEntries(
@@ -211,9 +228,9 @@ const isNativeCameraBridgeAvailable = () => {
   }
 
   return Boolean(
-    window?.Appzeto24Native?.captureInspectionPhoto
-    || window?.__nativeServiceCenterCamera
-  || window?.flutter_inappwebview?.callHandler,
+    window?.Rydon24Native?.captureInspectionPhoto
+      || window?.__nativeServiceCenterCamera
+      || window?.flutter_inappwebview?.callHandler,
   );
 };
 
@@ -238,11 +255,11 @@ const normalizeNativeCameraBridgeResult = (result) => {
   const rawBase64 = String(result.base64 || result.base64Data || result.imageBase64 || result.previewBase64 || '').trim();
   const dataUrl = String(
     result.dataUrl
-    || result.image
-    || result.base64Image
-    || result.previewImage
-    || (rawBase64 ? `data:${mimeType};base64,${rawBase64}` : '')
-    || '',
+      || result.image
+      || result.base64Image
+      || result.previewImage
+      || (rawBase64 ? `data:${mimeType};base64,${rawBase64}` : '')
+      || '',
   ).trim();
 
   if (!dataUrl.startsWith('data:image/')) {
@@ -323,8 +340,11 @@ const StepDocuments = () => {
       Object.entries(session.documents || {}).map(([key, value]) => [key, normalizeDocument(value)]),
     ),
   );
-  const [documentMeta, setDocumentMeta] = useState({});
+  const [documentMeta, setDocumentMeta] = useState(() => session.documentMeta || {});
   const [uploading, setUploading] = useState(null);
+  const [verifyingTemplateId, setVerifyingTemplateId] = useState('');
+  const [verificationMessages, setVerificationMessages] = useState({});
+  const [verificationErrors, setVerificationErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -452,25 +472,25 @@ const StepDocuments = () => {
         docKey,
         docValue
           ? {
-            ...docValue,
-            identifyNumber,
-            identify_number: identifyNumber,
-            documentNumber: identifyNumber,
-            document_number: identifyNumber,
-            expiryDate,
-            expiry_date: expiryDate,
-            birthDate,
-            birth_date: birthDate,
-            requestNumber,
-            request_no: requestNumber,
-            ifsc,
-            ifscCode: ifsc,
-            ifsc_code: ifsc,
-            accountHolderName,
-            account_holder_name: accountHolderName,
-            beneficiaryName: accountHolderName,
-            benificiary_name: accountHolderName,
-          }
+              ...docValue,
+              identifyNumber,
+              identify_number: identifyNumber,
+              documentNumber: identifyNumber,
+              document_number: identifyNumber,
+              expiryDate,
+              expiry_date: expiryDate,
+              birthDate,
+              birth_date: birthDate,
+              requestNumber,
+              request_no: requestNumber,
+              ifsc,
+              ifscCode: ifsc,
+              ifsc_code: ifsc,
+              accountHolderName,
+              account_holder_name: accountHolderName,
+              beneficiaryName: accountHolderName,
+              benificiary_name: accountHolderName,
+            }
           : docValue,
       ]),
     );
@@ -557,7 +577,12 @@ const StepDocuments = () => {
         mimeType: effectiveMimeType,
         uploaded: true,
       };
-      const nextDocWithMeta = applyTemplateMetaToDocuments(templateId, { [key]: nextDoc })[key];
+      const nextDocWithMeta = applyTemplateMetaToDocuments(templateId, {
+        [key]: {
+          ...(docs[key] || {}),
+          ...nextDoc,
+        },
+      })[key];
 
       setDocs((prev) => ({
         ...prev,
@@ -637,9 +662,9 @@ const StepDocuments = () => {
     try {
       let normalizedResult = null;
 
-      if (typeof window?.Appzeto24Native?.captureInspectionPhoto === 'function') {
+      if (typeof window?.Rydon24Native?.captureInspectionPhoto === 'function') {
         normalizedResult = normalizeNativeCameraBridgeResult(
-          await withBridgeTimeout(window.Appzeto24Native.captureInspectionPhoto(payload)),
+          await withBridgeTimeout(window.Rydon24Native.captureInspectionPhoto(payload)),
         );
       }
 
@@ -688,6 +713,98 @@ const StepDocuments = () => {
     } catch (error) {
       setError(error?.message || 'Unable to open the camera');
       triggerCameraFileInput(key);
+    }
+  };
+
+  const handleVerifyDrivingLicense = async (template) => {
+    const templateId = String(template?.id || '').trim();
+    const templateFields = templateFieldMap[templateId] || [];
+    const primaryField = templateFields[0];
+    const documentKey = String(primaryField?.key || '').trim();
+    const meta = documentMeta[templateId] || {};
+    const identifyNumber = String(meta.identifyNumber || '').trim().toUpperCase();
+    const birthDate = String(meta.birthDate || '').trim();
+    const requestNumber = String(meta.requestNumber || '').trim();
+
+    if (!templateId || !documentKey) {
+      setVerificationErrors((prev) => ({
+        ...prev,
+        [templateId]: 'Driving license document is not configured properly',
+      }));
+      return;
+    }
+
+    if (!identifyNumber) {
+      setVerificationErrors((prev) => ({
+        ...prev,
+        [templateId]: 'Enter the driving license number first',
+      }));
+      return;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
+      setVerificationErrors((prev) => ({
+        ...prev,
+        [templateId]: 'Enter the birth date in YYYY-MM-DD format',
+      }));
+      return;
+    }
+
+    setVerifyingTemplateId(templateId);
+    setVerificationErrors((prev) => ({ ...prev, [templateId]: '' }));
+    setVerificationMessages((prev) => ({ ...prev, [templateId]: '' }));
+    setError('');
+
+    try {
+      const response = await verifyDriverOnboardingLicenseDocument(documentKey, {
+        registrationId: session.registrationId,
+        phone: session.phone,
+        licenseNumber: identifyNumber,
+        birthDate,
+        requestNumber,
+      });
+
+      const payload = unwrap(response);
+      const verifiedDocument = normalizeDocument(payload?.document);
+
+      if (verifiedDocument) {
+        setDocs((current) => ({
+          ...current,
+          [documentKey]: {
+            ...(current[documentKey] || {}),
+            ...verifiedDocument,
+            uploaded: current[documentKey]?.uploaded ?? verifiedDocument.uploaded ?? false,
+          },
+        }));
+      }
+
+      const nextRequestNumber = String(
+        verifiedDocument?.requestNumber ||
+        verifiedDocument?.request_no ||
+        requestNumber,
+      ).trim();
+
+      setDocumentMeta((current) => ({
+        ...current,
+        [templateId]: {
+          ...(current[templateId] || {}),
+          identifyNumber,
+          birthDate,
+          requestNumber: nextRequestNumber,
+        },
+      }));
+
+      setVerificationMessages((prev) => ({
+        ...prev,
+        [templateId]: String(payload?.message || 'Driving license verified successfully').trim(),
+      }));
+    } catch (requestError) {
+      setVerificationErrors((prev) => ({
+        ...prev,
+        [templateId]: requestError?.message || 'Unable to verify driving license',
+      }));
+    } finally {
+      setVerifyingTemplateId('');
     }
   };
 
@@ -804,46 +921,46 @@ const StepDocuments = () => {
   };
 
   return (
-    <div
-      className="min-h-screen bg-[linear-gradient(180deg,#f6efe4_0%,#fcfaf6_28%,#ffffff_100%)] px-5 pb-32 pt-8 select-none overflow-x-hidden"
-      style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}
+    <div 
+        className="min-h-screen bg-[linear-gradient(180deg,#f6efe4_0%,#fcfaf6_28%,#ffffff_100%)] px-5 pb-32 pt-8 select-none overflow-x-hidden"
+        style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}
     >
       <main className="mx-auto max-w-sm space-y-6">
         <header className="space-y-5">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={handleBackNavigation}
-              className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/70 bg-white/80 text-slate-900 shadow-[0_10px_30px_rgba(15,23,42,0.08)] backdrop-blur-sm transition-transform active:scale-95"
-            >
-              <ArrowLeft size={18} strokeWidth={2.5} />
-            </button>
-            <div className="rounded-full bg-slate-900/5 px-4 py-1.5 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500 border border-slate-900/5">
-              Step 4 of 4
+            <div className="flex items-center justify-between">
+                <button
+                    onClick={handleBackNavigation}
+                    className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/70 bg-white/80 text-slate-900 shadow-[0_10px_30px_rgba(15,23,42,0.08)] backdrop-blur-sm transition-transform active:scale-95"
+                >
+                    <ArrowLeft size={18} strokeWidth={2.5} />
+                </button>
+                <div className="rounded-full bg-slate-900/5 px-4 py-1.5 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500 border border-slate-900/5">
+                    Step 4 of 4
+                </div>
             </div>
-          </div>
 
-          <section className="space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-[1.25rem] bg-slate-900 text-white shadow-xl shadow-slate-900/10">
-                <ShieldCheck size={22} strokeWidth={2.5} />
-              </div>
-              <span className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400 opacity-60">
-                Identity Verification
-              </span>
-            </div>
-            <h1 className="font-['Outfit'] text-[48px] font-black leading-[1] tracking-[-0.04em] text-slate-900">
-              KYC <span className="text-slate-400">Vault</span>
-            </h1>
-            <p className="text-[15px] leading-relaxed text-slate-500 font-bold opacity-80 max-w-[28ch]">
-              Upload clear photos of the required documents to verify your identity.
-            </p>
-          </section>
+            <section className="space-y-3">
+                <div className="flex items-center gap-3">
+                     <div className="flex h-11 w-11 items-center justify-center rounded-[1.25rem] bg-slate-900 text-white shadow-xl shadow-slate-900/10">
+                        <ShieldCheck size={22} strokeWidth={2.5} />
+                    </div>
+                    <span className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400 opacity-60">
+                        Identity Verification
+                    </span>
+                </div>
+                <h1 className="font-['Outfit'] text-[48px] font-black leading-[1] tracking-[-0.04em] text-slate-900">
+                    KYC <span className="text-slate-400">Vault</span>
+                </h1>
+                <p className="text-[15px] leading-relaxed text-slate-500 font-bold opacity-80 max-w-[28ch]">
+                    Upload clear photos of the required documents to verify your identity.
+                </p>
+            </section>
         </header>
 
         {error && (
-          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700 shadow-[0_10px_30px_rgba(244,63,94,0.08)]">
-            {error}
-          </div>
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700 shadow-[0_10px_30px_rgba(244,63,94,0.08)]">
+                {error}
+            </div>
         )}
 
         <div className="space-y-6">
@@ -861,13 +978,13 @@ const StepDocuments = () => {
                   <div className="space-y-1.5">
                     <h3 className="text-lg font-black tracking-tight text-slate-900">{template.name}</h3>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest opacity-60">
-                        {template.fields.length > 1 ? 'Multiple Sides' : 'Single Side'}
-                      </span>
-                      <div className="w-1 h-1 rounded-full bg-slate-200" />
-                      <span className={`text-[10px] font-black uppercase tracking-widest ${template.is_required ? 'text-emerald-600' : 'text-slate-400 opacity-60'}`}>
-                        {template.is_required ? 'Mandatory' : 'Optional'}
-                      </span>
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest opacity-60">
+                           {template.fields.length > 1 ? 'Multiple Sides' : 'Single Side'}
+                        </span>
+                        <div className="w-1 h-1 rounded-full bg-slate-200" />
+                        <span className={`text-[10px] font-black uppercase tracking-widest ${template.is_required ? 'text-emerald-600' : 'text-slate-400 opacity-60'}`}>
+                          {template.is_required ? 'Mandatory' : 'Optional'}
+                        </span>
                     </div>
                   </div>
                   <div className="rounded-full bg-slate-900/5 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-slate-500 border border-slate-900/5">
@@ -889,85 +1006,88 @@ const StepDocuments = () => {
                             {isRequired ? 'Required' : 'Optional'}
                           </span>
                         </div>
-
+                        
                         <div className="grid grid-cols-1 gap-3">
-                          <div
-                            className={`relative min-h-[160px] rounded-[1.8rem] border-2 transition-all overflow-hidden flex flex-col items-center justify-center gap-2 ${document?.previewUrl
-                                ? 'border-emerald-500/20 bg-emerald-50/10'
-                                : 'border-dashed border-slate-100 bg-slate-50 hover:border-slate-200'
-                              }`}
-                          >
-                            {isUploading ? (
-                              <div className="flex flex-col items-center gap-3">
-                                <div className="w-6 h-6 border-2 border-slate-200 border-t-slate-900 rounded-full animate-spin" />
-                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Uploading</span>
-                              </div>
-                            ) : document?.previewUrl ? (
-                              <>
-                                <img src={document.previewUrl} alt={field.label} className="absolute inset-0 h-full w-full object-cover" />
-                                <div className="absolute inset-0 bg-black/10" />
-                                <div className="absolute bottom-4 right-4 w-8 h-8 bg-emerald-500 rounded-full flex items-center justify-center text-white shadow-xl border-2 border-white">
-                                  <CheckCircle2 size={16} strokeWidth={3} />
-                                </div>
-                                <div className="absolute top-4 left-4 bg-black/40 backdrop-blur-md rounded-xl px-3 py-1.5 flex items-center gap-2 border border-white/20">
-                                  <Camera size={12} className="text-white" />
-                                  <span className="text-[10px] font-black text-white uppercase tracking-widest">Retake Photo</span>
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="w-12 h-12 rounded-2xl bg-white text-slate-400 flex items-center justify-center shadow-sm border border-slate-100">
-                                  <UploadCloud size={20} />
-                                </div>
-                                <div className="text-center">
-                                  <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Tap to upload</p>
-                                </div>
-                                <div className="absolute top-4 right-4 w-8 h-8 rounded-xl bg-slate-900/5 flex items-center justify-center">
-                                  <Camera size={14} className="text-slate-400" />
-                                </div>
-                              </>
-                            )}
-                          </div>
-
-                          <div className="flex gap-2">
-                            <label className={`flex-1 relative flex h-12 items-center justify-center gap-2 text-center rounded-2xl border text-[11px] font-black uppercase tracking-widest transition-all ${isUploading
-                                ? 'cursor-not-allowed border-slate-50 bg-slate-50 text-slate-300'
-                                : 'cursor-pointer border-slate-100 bg-white text-slate-600 hover:bg-slate-50 active:scale-[0.98]'
-                              }`}>
-                              <ImagePlus size={16} />
-                              Gallery
-                              <input
-                                type="file"
-                                accept="image/*"
-                                disabled={isUploading}
-                                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                                aria-label={`Upload ${field.label} from gallery`}
-                                onChange={(event) => handleFileChange(template.id, field.key, event)}
-                              />
-                            </label>
-                            <button
-                              type="button"
-                              disabled={isUploading}
-                              onClick={() => handleCameraCapture(template.id, field.key, field.label)}
-                              className={`flex-1 relative flex h-12 items-center justify-center gap-2 text-center rounded-2xl border text-[11px] font-black uppercase tracking-widest transition-all ${isUploading
-                                  ? 'cursor-not-allowed border-slate-50 bg-slate-50 text-slate-300'
-                                  : 'cursor-pointer border-slate-900 bg-slate-900 text-white hover:bg-black shadow-lg shadow-slate-900/10 active:scale-[0.98]'
+                            <div
+                                className={`relative min-h-[160px] rounded-[1.8rem] border-2 transition-all overflow-hidden flex flex-col items-center justify-center gap-2 ${
+                                    document?.previewUrl
+                                        ? 'border-emerald-500/20 bg-emerald-50/10'
+                                        : 'border-dashed border-slate-100 bg-slate-50 hover:border-slate-200'
                                 }`}
                             >
-                              <Camera size={16} />
-                              Camera
-                              <input
-                                id={buildDocumentCameraInputId(field.key)}
-                                type="file"
-                                accept="image/*"
-                                capture="environment"
-                                disabled={isUploading}
-                                className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
-                                aria-label={`Capture ${field.label} from camera`}
-                                onChange={(event) => handleFileChange(template.id, field.key, event)}
-                              />
-                            </button>
-                          </div>
+                                {isUploading ? (
+                                    <div className="flex flex-col items-center gap-3">
+                                        <div className="w-6 h-6 border-2 border-slate-200 border-t-slate-900 rounded-full animate-spin" />
+                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Uploading</span>
+                                    </div>
+                                ) : document?.previewUrl ? (
+                                    <>
+                                        <img src={document.previewUrl} alt={field.label} className="absolute inset-0 h-full w-full object-cover" />
+                                        <div className="absolute inset-0 bg-black/10" />
+                                        <div className="absolute bottom-4 right-4 w-8 h-8 bg-emerald-500 rounded-full flex items-center justify-center text-white shadow-xl border-2 border-white">
+                                            <CheckCircle2 size={16} strokeWidth={3} />
+                                        </div>
+                                        <div className="absolute top-4 left-4 bg-black/40 backdrop-blur-md rounded-xl px-3 py-1.5 flex items-center gap-2 border border-white/20">
+                                            <Camera size={12} className="text-white" />
+                                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Retake Photo</span>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="w-12 h-12 rounded-2xl bg-white text-slate-400 flex items-center justify-center shadow-sm border border-slate-100">
+                                            <UploadCloud size={20} />
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Tap to upload</p>
+                                        </div>
+                                        <div className="absolute top-4 right-4 w-8 h-8 rounded-xl bg-slate-900/5 flex items-center justify-center">
+                                            <Camera size={14} className="text-slate-400" />
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            <div className="flex gap-2">
+                                <label className={`flex-1 relative flex h-12 items-center justify-center gap-2 text-center rounded-2xl border text-[11px] font-black uppercase tracking-widest transition-all ${
+                                    isUploading
+                                    ? 'cursor-not-allowed border-slate-50 bg-slate-50 text-slate-300'
+                                    : 'cursor-pointer border-slate-100 bg-white text-slate-600 hover:bg-slate-50 active:scale-[0.98]'
+                                }`}>
+                                    <ImagePlus size={16} />
+                                    Gallery
+                                    <input
+                                    type="file"
+                                    accept="image/*"
+                                    disabled={isUploading}
+                                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                    aria-label={`Upload ${field.label} from gallery`}
+                                    onChange={(event) => handleFileChange(template.id, field.key, event)}
+                                    />
+                                </label>
+                                <button
+                                    type="button"
+                                    disabled={isUploading}
+                                    onClick={() => handleCameraCapture(template.id, field.key, field.label)}
+                                    className={`flex-1 relative flex h-12 items-center justify-center gap-2 text-center rounded-2xl border text-[11px] font-black uppercase tracking-widest transition-all ${
+                                      isUploading
+                                        ? 'cursor-not-allowed border-slate-50 bg-slate-50 text-slate-300'
+                                        : 'cursor-pointer border-slate-900 bg-slate-900 text-white hover:bg-black shadow-lg shadow-slate-900/10 active:scale-[0.98]'
+                                    }`}
+                                >
+                                    <Camera size={16} />
+                                    Camera
+                                    <input
+                                    id={buildDocumentCameraInputId(field.key)}
+                                    type="file"
+                                    accept="image/*"
+                                    capture="environment"
+                                    disabled={isUploading}
+                                    className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
+                                    aria-label={`Capture ${field.label} from camera`}
+                                    onChange={(event) => handleFileChange(template.id, field.key, event)}
+                                    />
+                                </button>
+                            </div>
                         </div>
                       </div>
                     );
@@ -989,21 +1109,21 @@ const StepDocuments = () => {
                     {template.has_identify_number ? (
                       <div className="group rounded-[1.8rem] border-2 transition-all p-4 border-slate-50 bg-slate-50 focus-within:border-slate-900/10 focus-within:bg-white focus-within:shadow-xl focus-within:shadow-slate-900/5">
                         <div className="flex items-center gap-4">
-                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm group-focus-within:bg-slate-900 group-focus-within:text-white transition-all">
-                            <FileText size={20} strokeWidth={2.5} />
-                          </div>
-                          <div className="min-w-0 flex-1 space-y-0.5">
-                            <label className="block text-[10px] font-black uppercase tracking-[0.15em] text-slate-400 opacity-70">
-                              {formatMetaLabel(template.identify_number_key) || `${template.name} Number`}
-                            </label>
-                            <input
-                              type="text"
-                              value={documentMeta[template.id]?.identifyNumber || ''}
-                              onChange={(event) => handleMetaChange(template.id, 'identifyNumber', event.target.value.toUpperCase())}
-                              placeholder={`Enter ${formatMetaLabel(template.identify_number_key) || 'Number'}`}
-                              className="w-full border-none bg-transparent p-0 text-lg font-black text-slate-900 outline-none focus:ring-0 placeholder:text-slate-200"
-                            />
-                          </div>
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm group-focus-within:bg-slate-900 group-focus-within:text-white transition-all">
+                                <FileText size={20} strokeWidth={2.5} />
+                            </div>
+                            <div className="min-w-0 flex-1 space-y-0.5">
+                                <label className="block text-[10px] font-black uppercase tracking-[0.15em] text-slate-400 opacity-70">
+                                    {formatMetaLabel(template.identify_number_key) || `${template.name} Number`}
+                                </label>
+                                <input
+                                    type="text"
+                                    value={documentMeta[template.id]?.identifyNumber || ''}
+                                    onChange={(event) => handleMetaChange(template.id, 'identifyNumber', event.target.value.toUpperCase())}
+                                    placeholder={`Enter ${formatMetaLabel(template.identify_number_key) || 'Number'}`}
+                                    className="w-full border-none bg-transparent p-0 text-lg font-black text-slate-900 outline-none focus:ring-0 placeholder:text-slate-200"
+                                />
+                            </div>
                         </div>
                       </div>
                     ) : null}
@@ -1043,7 +1163,7 @@ const StepDocuments = () => {
                     ) : null}
 
                     {template.has_expiry_date ? (
-                      <div
+                      <div 
                         onClick={(e) => {
                           const input = e.currentTarget.querySelector('input[type="date"]');
                           if (input) {
@@ -1058,20 +1178,20 @@ const StepDocuments = () => {
                         className="group cursor-pointer rounded-[1.8rem] border-2 transition-all p-4 border-slate-50 bg-slate-50 focus-within:border-slate-900/10 focus-within:bg-white focus-within:shadow-xl focus-within:shadow-slate-900/5"
                       >
                         <div className="flex items-center gap-4">
-                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm group-focus-within:bg-slate-900 group-focus-within:text-white transition-all">
-                            <AlertCircle size={20} strokeWidth={2.5} />
-                          </div>
-                          <div className="min-w-0 flex-1 space-y-0.5">
-                            <label className="block text-[10px] font-black uppercase tracking-[0.15em] text-slate-400 opacity-70">
-                              Expiry Date
-                            </label>
-                            <input
-                              type="date"
-                              value={documentMeta[template.id]?.expiryDate || ''}
-                              onChange={(event) => handleMetaChange(template.id, 'expiryDate', event.target.value)}
-                              className="w-full border-none bg-transparent p-0 text-lg font-black text-slate-900 outline-none focus:ring-0"
-                            />
-                          </div>
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm group-focus-within:bg-slate-900 group-focus-within:text-white transition-all">
+                                <AlertCircle size={20} strokeWidth={2.5} />
+                            </div>
+                            <div className="min-w-0 flex-1 space-y-0.5">
+                                <label className="block text-[10px] font-black uppercase tracking-[0.15em] text-slate-400 opacity-70">
+                                    Expiry Date
+                                </label>
+                                <input
+                                    type="date"
+                                    value={documentMeta[template.id]?.expiryDate || ''}
+                                    onChange={(event) => handleMetaChange(template.id, 'expiryDate', event.target.value)}
+                                    className="w-full border-none bg-transparent p-0 text-lg font-black text-slate-900 outline-none focus:ring-0"
+                                />
+                            </div>
                         </div>
                       </div>
                     ) : null}
@@ -1095,6 +1215,59 @@ const StepDocuments = () => {
                             />
                           </div>
                         </div>
+                      </div>
+                    ) : null}
+
+                    {normalizeVerificationType(template.verification_type) === 'driving_license' ? (
+                      <div className="space-y-3">
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => handleVerifyDrivingLicense(template)}
+                            disabled={verifyingTemplateId === template.id}
+                            className={`rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-[0.15em] transition-colors ${
+                              verifyingTemplateId === template.id
+                                ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                                : 'bg-slate-900 text-white hover:bg-black'
+                            }`}
+                          >
+                            {verifyingTemplateId === template.id ? 'Verifying...' : 'Verify DL'}
+                          </button>
+                        </div>
+                        {verificationMessages[template.id] ? (
+                          <p className="text-[10px] font-bold text-emerald-600 px-1">{verificationMessages[template.id]}</p>
+                        ) : null}
+                        {verificationErrors[template.id] ? (
+                          <p className="text-[10px] font-bold text-amber-600 px-1">{verificationErrors[template.id]}</p>
+                        ) : null}
+                        {(() => {
+                          const primaryField = (templateFieldMap[template.id] || [])[0];
+                          const verifiedDoc = primaryField ? docs[primaryField.key] : null;
+                          const details = getDrivingLicenseVerificationDetails(verifiedDoc);
+
+                          if (details.length === 0) {
+                            return null;
+                          }
+
+                          return (
+                            <div className="rounded-[1.8rem] border border-emerald-100 bg-emerald-50/50 p-4">
+                              <div className="flex items-center gap-2 px-1">
+                                <ShieldCheck size={15} className="text-emerald-600" />
+                                <p className="text-[10px] font-black uppercase tracking-[0.15em] text-emerald-700">
+                                  Verified From DL
+                                </p>
+                              </div>
+                              <div className="mt-3 grid grid-cols-2 gap-3">
+                                {details.map((item) => (
+                                  <div key={item.key} className="rounded-2xl bg-white/90 px-3 py-2">
+                                    <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">{item.label}</p>
+                                    <p className="mt-1 text-[12px] font-bold text-slate-900 break-words">{item.value}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     ) : null}
 
@@ -1158,27 +1331,28 @@ const StepDocuments = () => {
         </div>
 
         <div className="fixed bottom-0 left-0 right-0 p-8 bg-gradient-to-t from-slate-50 via-slate-50 to-transparent">
-          <div className="mx-auto max-w-sm">
-            <motion.button
-              whileHover={{ scale: 1.02, y: -2 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={handleSubmit}
-              disabled={loading || !isComplete}
-              className={`group flex h-16 w-full items-center justify-center gap-3 rounded-[1.8rem] text-[15px] font-black tracking-tight transition-all relative overflow-hidden ${isComplete
-                  ? 'bg-slate-900 text-white shadow-[0_20px_40px_rgba(0,0,0,0.2)] active:bg-black'
-                  : 'pointer-events-none bg-slate-200 text-slate-400 shadow-none'
-                }`}
-            >
-              {loading ? (
-                <div className="h-5 w-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                <>
-                  <span className="relative z-10 uppercase tracking-widest">Review & Submit</span>
-                  <ChevronRight size={18} strokeWidth={3} className="relative z-10 group-hover:translate-x-1 transition-transform" />
-                </>
-              )}
-            </motion.button>
-          </div>
+            <div className="mx-auto max-w-sm">
+                <motion.button
+                    whileHover={{ scale: 1.02, y: -2 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleSubmit}
+                    disabled={loading || !isComplete}
+                    className={`group flex h-16 w-full items-center justify-center gap-3 rounded-[1.8rem] text-[15px] font-black tracking-tight transition-all relative overflow-hidden ${
+                        isComplete
+                            ? 'bg-slate-900 text-white shadow-[0_20px_40px_rgba(0,0,0,0.2)] active:bg-black'
+                            : 'pointer-events-none bg-slate-200 text-slate-400 shadow-none'
+                    }`}
+                >
+                    {loading ? (
+                        <div className="h-5 w-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                        <>
+                            <span className="relative z-10 uppercase tracking-widest">Review & Submit</span>
+                            <ChevronRight size={18} strokeWidth={3} className="relative z-10 group-hover:translate-x-1 transition-transform" />
+                        </>
+                    )}
+                </motion.button>
+            </div>
         </div>
       </main>
     </div>

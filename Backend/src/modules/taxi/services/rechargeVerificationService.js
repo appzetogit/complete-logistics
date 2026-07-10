@@ -2,6 +2,21 @@ import { ApiError } from '../../../utils/ApiError.js';
 import { ensureThirdPartySettingsDocument } from '../admin/services/thirdPartySettingsService.js';
 
 const trimTrailingSlash = (value = '') => String(value || '').trim().replace(/\/+$/, '');
+const normalizeLegacyDlEndpoint = (value = '') => {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '/validation/verifyDL';
+  }
+
+  if (
+    normalized === '/validation/driverLicenseRequest' ||
+    normalized === '/validation/verifyLicenseRequest'
+  ) {
+    return '/validation/verifyDL';
+  }
+
+  return normalized;
+};
 
 const joinUrl = (baseUrl = '', endpointPath = '') => {
   const base = trimTrailingSlash(baseUrl);
@@ -29,8 +44,8 @@ const normalizeRechargeVerificationSettings = (settings = {}) => ({
     bankVerifyPennyLess: String(settings?.endpoints?.bank_verify_penny_less || '/validation/verifyBankRequest').trim() || '/validation/verifyBankRequest',
     bankVerifyPennyDrop: String(settings?.endpoints?.bank_verify_penny_drop || '/validation/penny-drop').trim() || '/validation/penny-drop',
     bankVerifyV3: String(settings?.endpoints?.bank_verify_v3 || '/validation/v3/pennyDropVerify').trim() || '/validation/v3/pennyDropVerify',
-    drivingLicenseRequest: String(settings?.endpoints?.dl_request || '/validation/driverLicenseRequest').trim() || '/validation/driverLicenseRequest',
-    drivingLicenseVerify: String(settings?.endpoints?.dl_verify || '/validation/verifyLicenseRequest').trim() || '/validation/verifyLicenseRequest',
+    drivingLicenseRequest: normalizeLegacyDlEndpoint(settings?.endpoints?.dl_request || '/validation/verifyDL'),
+    drivingLicenseVerify: normalizeLegacyDlEndpoint(settings?.endpoints?.dl_verify || '/validation/verifyDL'),
     panVerify: String(settings?.endpoints?.pan_verify || '/validation/verifyPANRequest').trim() || '/validation/verifyPANRequest',
     upiBasic: String(settings?.endpoints?.upi_basic || '/validation/upiBasic').trim() || '/validation/upiBasic',
     upiAdvance: String(settings?.endpoints?.upi_advance || '/validation/upiAdvanceVerify').trim() || '/validation/upiAdvanceVerify',
@@ -153,14 +168,21 @@ export const verifyDrivingLicenseWithRecharge = async ({
   const normalizedLicenseNumber = String(licenseNumber || '').trim().toUpperCase();
   const normalizedBirthDate = String(birthDate || '').trim();
   const normalizedPartnerRequestId = String(partnerRequestId || '').trim();
-  const normalizedRequestNumber = String(requestNumber || '').trim();
 
   if (!normalizedLicenseNumber) {
     throw new ApiError(400, 'Driving license number is required');
   }
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedBirthDate)) {
-    throw new ApiError(400, 'Birth date must use YYYY-MM-DD format');
+  const yyyyMmDdMatch = normalizedBirthDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const ddMmYyyyMatch = normalizedBirthDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  const providerBirthDate = yyyyMmDdMatch
+    ? `${yyyyMmDdMatch[3]}/${yyyyMmDdMatch[2]}/${yyyyMmDdMatch[1]}`
+    : ddMmYyyyMatch
+      ? normalizedBirthDate
+      : '';
+
+  if (!providerBirthDate) {
+    throw new ApiError(400, 'Birth date must use YYYY-MM-DD or DD/MM/YYYY format');
   }
 
   if (!normalizedPartnerRequestId) {
@@ -169,9 +191,8 @@ export const verifyDrivingLicenseWithRecharge = async ({
 
   return callRechargeVerificationEndpoint(settings, settings.endpoints.drivingLicenseVerify, {
     license_no: normalizedLicenseNumber,
-    birth_date: normalizedBirthDate,
+    birth_date: providerBirthDate,
     partner_request_id: normalizedPartnerRequestId,
-    ...(normalizedRequestNumber ? { request_no: normalizedRequestNumber } : {}),
   });
 };
 
@@ -179,21 +200,11 @@ export const requestDrivingLicenseVerificationWithRecharge = async ({
   licenseNumber,
   birthDate,
 }) => {
-  const settings = await getRechargeVerificationSettings();
-  const normalizedLicenseNumber = String(licenseNumber || '').trim().toUpperCase();
-  const normalizedBirthDate = String(birthDate || '').trim();
-
-  if (!normalizedLicenseNumber) {
-    throw new ApiError(400, 'Driving license number is required');
-  }
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedBirthDate)) {
-    throw new ApiError(400, 'Birth date must use YYYY-MM-DD format');
-  }
-
-  return callRechargeVerificationEndpoint(settings, settings.endpoints.drivingLicenseRequest, {
-    license_no: normalizedLicenseNumber,
-    birth_date: normalizedBirthDate,
+  return verifyDrivingLicenseWithRecharge({
+    licenseNumber,
+    birthDate,
+    partnerRequestId: `DLREQ-${Date.now()}`,
+    requestNumber: '',
   });
 };
 

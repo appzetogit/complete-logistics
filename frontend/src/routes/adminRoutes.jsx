@@ -165,9 +165,9 @@ const AdminSectionPlaceholder = () => {
         <div className="w-16 h-16 mx-auto rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mb-5">
           <FileText size={28} />
         </div>
-        <h2 className="text-2xl font-black text-gray-950 uppercase tracking-tight">{title || 'Admin Section'}</h2>
+        <h2 className="text-2xl font-black text-gray-950 uppercase tracking-tight">{title || 'Page Not Found'}</h2>
         <p className="mt-3 text-sm font-medium text-gray-500 leading-6">
-          This admin section is not wired to the user app. It stays inside the admin shell so navigation remains safe.
+          The requested page could not be found or is currently under setup. Please check the URL or return to the dashboard.
         </p>
         <button
           type="button"
@@ -277,6 +277,7 @@ const adminRoutes = (
       <Route path="owners/create" element={<AdminOwnerCreate />} />
       <Route path="owners/:id/password" element={<AdminOwnerPasswordUpdate />} />
       <Route path="owners/:id" element={<AdminOwnerDetails />} />
+      <Route path="owners/:id/documents" element={<AdminOwnerDetails />} />
       <Route path="owners/wallet/withdrawals" element={<AdminWithdrawalRequestOwners />} />
       <Route path="owners/wallet/withdrawals/:id" element={<AdminWithdrawalRequestOwnerDetail />} />
       <Route path="fleet/drivers" element={<AdminFleetDrivers />} />

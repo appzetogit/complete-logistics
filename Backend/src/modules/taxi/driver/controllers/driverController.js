@@ -80,6 +80,7 @@ import {
   getDriverOnboardingSession,
   getDriverOnboardingSignupOptions,
   saveDriverDocuments,
+  verifyDriverOnboardingLicenseDocument,
   saveDriverRoleDetails,
   setDriverOnboardingRole,
   saveDriverPersonalDetails,
@@ -101,7 +102,7 @@ import {
   summarizePhonePePayload,
   summarizePhonePeRequestBody,
 } from "../../services/paymentDiagnostics.js";
-import { requestDrivingLicenseVerificationWithRecharge, verifyBankAccountWithRecharge, verifyDrivingLicenseWithRecharge, verifyGstinWithRecharge, verifyPanWithRecharge, verifyRcWithRecharge, verifyUpiWithRecharge } from "../../services/rechargeVerificationService.js";
+import { verifyBankAccountWithRecharge, verifyDrivingLicenseWithRecharge, verifyGstinWithRecharge, verifyPanWithRecharge, verifyRcWithRecharge, verifyUpiWithRecharge } from "../../services/rechargeVerificationService.js";
 
 const generateDriverReferralCode = (driver) => {
   const idPart = String(driver?._id || "")
@@ -137,6 +138,32 @@ const BIOMETRIC_FINGER_CODES = [
 const BIOMETRIC_CAPTURE_SOURCES = ["phone_sensor", "usb_scanner", "bluetooth_scanner", "manual", "unknown"];
 const BIOMETRIC_ENROLLMENT_MODES = ["thumbs_only", "optional", "all_ten"];
 const BIOMETRIC_STATUSES = ["not_started", "in_progress", "completed", "verified"];
+
+const resolveRechargeVerificationState = (providerResponse = {}, fallbackMessage = "") => {
+  const normalizedStatus = String(providerResponse?.status ?? "").trim().toLowerCase();
+  const message = String(
+    providerResponse?.cardData?.response?.message ||
+    providerResponse?.cardData?.message ||
+    providerResponse?.msg ||
+    providerResponse?.message ||
+    fallbackMessage ||
+    "",
+  ).trim();
+  const lowerMessage = message.toLowerCase();
+  const explicitPending =
+    ["pending", "processing", "queued", "in_progress", "in progress"].includes(normalizedStatus) ||
+    lowerMessage.includes("pending") ||
+    lowerMessage.includes("processing") ||
+    lowerMessage.includes("try after sometime") ||
+    lowerMessage.includes("please try after sometime");
+  const succeeded = normalizedStatus === "1" || normalizedStatus === "success" || normalizedStatus === "verified" || Number(providerResponse?.status || 0) === 1;
+
+  return {
+    succeeded,
+    status: succeeded ? "verified" : explicitPending ? "pending" : "failed",
+    message,
+  };
+};
 const BIOMETRIC_MIN_MATCH_SCORE = 80;
 
 const toIstDayKey = (value = new Date()) =>
@@ -3496,18 +3523,13 @@ export const verifyCurrentDriverBankDetails = async (req, res) => {
   });
 
   const accountDetails = providerResponse?.cardData?.response?.account_details || {};
-  const verificationSucceeded = Number(providerResponse?.status || 0) === 1;
+  const verification = resolveRechargeVerificationState(providerResponse);
 
   driver.bankDetails = {
     ...(driver.bankDetails?.toObject?.() || driver.bankDetails || {}),
-    verificationStatus: verificationSucceeded ? "verified" : "failed",
+    verificationStatus: verification.status,
     verificationMode: mode,
-    verificationMessage: String(
-      providerResponse?.cardData?.response?.message
-      || providerResponse?.data?.message
-      || providerResponse?.msg
-      || "",
-    ).trim(),
+    verificationMessage: verification.message,
     verificationReferenceId: String(
       providerResponse?.orderid
       || providerResponse?.optransid
@@ -3518,7 +3540,7 @@ export const verifyCurrentDriverBankDetails = async (req, res) => {
     verifiedBankName: String(accountDetails?.bank_name || "").trim(),
     verifiedBranchName: String(accountDetails?.branch_name || "").trim(),
     verifiedAccountHolderName: String(accountDetails?.beneficiary_name || "").trim(),
-    verifiedAt: new Date(),
+    verifiedAt: verification.succeeded ? new Date() : driver.bankDetails?.verifiedAt || null,
     updatedAt: driver.bankDetails?.updatedAt || new Date(),
   };
 
@@ -3556,17 +3578,13 @@ export const verifyCurrentDriverUpiDetails = async (req, res) => {
   const result = providerResponse?.cardData?.result || {};
   const vpaDetails = result?.vpa_details || {};
   const accountDetails = result?.account_details || {};
-  const verificationSucceeded = Number(providerResponse?.status || 0) === 1 || String(providerResponse?.status || "") === "1";
+  const verification = resolveRechargeVerificationState(providerResponse);
 
   driver.bankDetails = {
     ...(driver.bankDetails?.toObject?.() || driver.bankDetails || {}),
-    upiVerificationStatus: verificationSucceeded ? "verified" : "failed",
+    upiVerificationStatus: verification.status,
     upiVerificationMode: mode,
-    upiVerificationMessage: String(
-      providerResponse?.cardData?.message ||
-      providerResponse?.msg ||
-      "",
-    ).trim(),
+    upiVerificationMessage: verification.message,
     upiVerificationReferenceId: String(
       providerResponse?.orderid ||
       providerResponse?.cardData?.request_id ||
@@ -3576,7 +3594,7 @@ export const verifyCurrentDriverUpiDetails = async (req, res) => {
     upiVerifiedName: String(vpaDetails?.account_holder_name || "").trim(),
     upiAccountIfsc: String(accountDetails?.account_ifsc || "").trim(),
     upiAccountType: String(accountDetails?.account_type || "").trim(),
-    upiVerifiedAt: new Date(),
+    upiVerifiedAt: verification.succeeded ? new Date() : driver.bankDetails?.upiVerifiedAt || null,
     updatedAt: driver.bankDetails?.updatedAt || new Date(),
   };
 
@@ -3633,46 +3651,27 @@ export const verifyCurrentDriverLicenseDocument = async (req, res) => {
     throw new ApiError(400, "Driving license number is required before verification");
   }
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
-    throw new ApiError(400, "Birth date must use YYYY-MM-DD format before verification");
-  }
-
-  let resolvedRequestNumber = requestNumber;
-
-  if (!resolvedRequestNumber) {
-    const requestResponse = await requestDrivingLicenseVerificationWithRecharge({
-      licenseNumber,
-      birthDate,
-    });
-
-    resolvedRequestNumber = String(
-      requestResponse?.cardData?.request_id ||
-      requestResponse?.request_id ||
-      requestResponse?.data?.request_id ||
-      "",
-    ).trim();
-
-    if (!resolvedRequestNumber) {
-      throw new ApiError(502, "RechargeKit did not return a driving license request id");
-    }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate) && !/^\d{2}\/\d{2}\/\d{4}$/.test(birthDate)) {
+    throw new ApiError(400, "Birth date must use YYYY-MM-DD or DD/MM/YYYY format before verification");
   }
 
   const providerResponse = await verifyDrivingLicenseWithRecharge({
     licenseNumber,
     birthDate,
     partnerRequestId: buildDriverLicenseVerificationRequestId(driver),
-    requestNumber: resolvedRequestNumber,
+    requestNumber,
   });
 
   const result = providerResponse?.cardData?.result || {};
-  const sourceOutput = result?.source_output || {};
-  const verificationSucceeded = String(providerResponse?.status || "") === "1" || Number(providerResponse?.status || 0) === 1;
-  const verificationMessage = String(
-    providerResponse?.msg ||
-    result?.status ||
-    sourceOutput?.dl_status ||
-    "",
-  ).trim();
+  const licenseDetails = result?.details_of_driving_licence || {};
+  const nonTransportValidity = result?.dl_validity?.non_transport || {};
+  const badgeDetails = Array.isArray(result?.badge_details) ? result.badge_details : [];
+  const firstBadge = badgeDetails[0] || {};
+  const verification = resolveRechargeVerificationState(
+    providerResponse,
+    String(licenseDetails?.status || "").trim(),
+  );
+  const verificationMessage = verification.message;
 
   const updatedDocument = {
     ...(typeof existingDocument === "object" ? existingDocument : {}),
@@ -3684,35 +3683,39 @@ export const verifyCurrentDriverLicenseDocument = async (req, res) => {
     birthDate,
     birth_date: birthDate,
     requestNumber: String(
-      providerResponse?.optransid ||
+      providerResponse?.partnerreqid ||
       providerResponse?.cardData?.request_id ||
-      resolvedRequestNumber,
+      providerResponse?.orderid ||
+      requestNumber,
     ).trim(),
     request_no: String(
-      providerResponse?.optransid ||
+      providerResponse?.partnerreqid ||
       providerResponse?.cardData?.request_id ||
-      resolvedRequestNumber,
+      providerResponse?.orderid ||
+      requestNumber,
     ).trim(),
-    verificationStatus: verificationSucceeded ? "verified" : "failed",
-    reviewStatus: verificationSucceeded ? "verified" : "failed",
-    status: verificationSucceeded ? "verified" : "failed",
-    verifiedAt: new Date().toISOString(),
-    reviewedAt: new Date().toISOString(),
+    verificationStatus: verification.status,
+    verifiedAt: verification.succeeded ? new Date().toISOString() : existingDocument.verifiedAt || null,
     verificationMessage,
-    comment: verificationSucceeded ? "" : verificationMessage,
-    remarks: verificationSucceeded ? "" : verificationMessage,
-    reason: verificationSucceeded ? "" : verificationMessage,
     verificationReferenceId: String(
       providerResponse?.orderid ||
-      providerResponse?.optransid ||
+      providerResponse?.partnerreqid ||
       providerResponse?.cardData?.request_id ||
       "",
     ).trim(),
-    verifiedName: String(sourceOutput?.name || "").trim(),
-    verifiedDob: String(sourceOutput?.dob || birthDate).trim(),
-    dlStatus: String(sourceOutput?.dl_status || "").trim(),
-    issuingRtoName: String(sourceOutput?.issuing_rto_name || "").trim(),
-    relativeName: String(sourceOutput?.relatives_name || "").trim(),
+    verifiedName: String(licenseDetails?.name || "").trim(),
+    verifiedDob: String(result?.dob || birthDate).trim(),
+    dlStatus: String(licenseDetails?.status || "").trim(),
+    issuingRtoName: "",
+    relativeName: String(licenseDetails?.father_or_husband_name || "").trim(),
+    dlNumber: String(result?.dl_number || licenseNumber).trim(),
+    nonTransportValidFrom: String(nonTransportValidity?.from || "").trim(),
+    nonTransportValidTo: String(nonTransportValidity?.to || "").trim(),
+    transportValidFrom: String(result?.dl_validity?.transport?.from || "").trim(),
+    transportValidTo: String(result?.dl_validity?.transport?.to || "").trim(),
+    badgeNumber: String(firstBadge?.badge_no || "").trim(),
+    badgeIssueDate: String(firstBadge?.badge_issue_date || "").trim(),
+    classOfVehicle: Array.isArray(firstBadge?.class_of_vehicle) ? firstBadge.class_of_vehicle : [],
     verificationResponse: providerResponse,
   };
 
@@ -3764,8 +3767,8 @@ export const verifyCurrentDriverPanDocument = async (req, res) => {
   });
 
   const cardData = providerResponse?.cardData || {};
-  const verificationSucceeded = Number(providerResponse?.status || 0) === 1 || String(providerResponse?.status || "") === "1";
-  const verificationMessage = String(providerResponse?.msg || "").trim();
+  const verification = resolveRechargeVerificationState(providerResponse);
+  const verificationMessage = verification.message;
 
   const updatedDocument = {
     ...(typeof existingDocument === "object" ? existingDocument : {}),
@@ -3774,15 +3777,9 @@ export const verifyCurrentDriverPanDocument = async (req, res) => {
     identify_number: panNumber,
     documentNumber: panNumber,
     document_number: panNumber,
-    verificationStatus: verificationSucceeded ? "verified" : "failed",
-    reviewStatus: verificationSucceeded ? "verified" : "failed",
-    status: verificationSucceeded ? "verified" : "failed",
-    verifiedAt: new Date().toISOString(),
-    reviewedAt: new Date().toISOString(),
+    verificationStatus: verification.status,
+    verifiedAt: verification.succeeded ? new Date().toISOString() : existingDocument.verifiedAt || null,
     verificationMessage,
-    comment: verificationSucceeded ? "" : verificationMessage,
-    remarks: verificationSucceeded ? "" : verificationMessage,
-    reason: verificationSucceeded ? "" : verificationMessage,
     verificationReferenceId: String(
       providerResponse?.orderid ||
       providerResponse?.optransid ||
@@ -3845,8 +3842,8 @@ export const verifyCurrentDriverGstinDocument = async (req, res) => {
 
   const result = providerResponse?.cardData?.result || {};
   const taxpayerDetails = result?.taxpayerDetails || {};
-  const verificationSucceeded = Number(providerResponse?.status || 0) === 1 || String(providerResponse?.status || "") === "1";
-  const verificationMessage = String(providerResponse?.msg || "").trim();
+  const verification = resolveRechargeVerificationState(providerResponse);
+  const verificationMessage = verification.message;
 
   const updatedDocument = {
     ...(typeof existingDocument === "object" ? existingDocument : {}),
@@ -3855,15 +3852,9 @@ export const verifyCurrentDriverGstinDocument = async (req, res) => {
     identify_number: gstin,
     documentNumber: gstin,
     document_number: gstin,
-    verificationStatus: verificationSucceeded ? "verified" : "failed",
-    reviewStatus: verificationSucceeded ? "verified" : "failed",
-    status: verificationSucceeded ? "verified" : "failed",
-    verifiedAt: new Date().toISOString(),
-    reviewedAt: new Date().toISOString(),
+    verificationStatus: verification.status,
+    verifiedAt: verification.succeeded ? new Date().toISOString() : existingDocument.verifiedAt || null,
     verificationMessage,
-    comment: verificationSucceeded ? "" : verificationMessage,
-    remarks: verificationSucceeded ? "" : verificationMessage,
-    reason: verificationSucceeded ? "" : verificationMessage,
     verificationReferenceId: String(
       providerResponse?.orderid ||
       providerResponse?.optransid ||
@@ -3925,8 +3916,8 @@ export const verifyCurrentDriverRcDocument = async (req, res) => {
   });
 
   const result = providerResponse?.cardData?.result || {};
-  const verificationSucceeded = Number(providerResponse?.status || 0) === 1 || String(providerResponse?.status || "") === "1";
-  const verificationMessage = String(providerResponse?.msg || "").trim();
+  const verification = resolveRechargeVerificationState(providerResponse);
+  const verificationMessage = verification.message;
 
   const updatedDocument = {
     ...(typeof existingDocument === "object" ? existingDocument : {}),
@@ -3935,15 +3926,9 @@ export const verifyCurrentDriverRcDocument = async (req, res) => {
     identify_number: rcNumber,
     documentNumber: rcNumber,
     document_number: rcNumber,
-    verificationStatus: verificationSucceeded ? "verified" : "failed",
-    reviewStatus: verificationSucceeded ? "verified" : "failed",
-    status: verificationSucceeded ? "verified" : "failed",
-    verifiedAt: new Date().toISOString(),
-    reviewedAt: new Date().toISOString(),
+    verificationStatus: verification.status,
+    verifiedAt: verification.succeeded ? new Date().toISOString() : existingDocument.verifiedAt || null,
     verificationMessage,
-    comment: verificationSucceeded ? "" : verificationMessage,
-    remarks: verificationSucceeded ? "" : verificationMessage,
-    reason: verificationSucceeded ? "" : verificationMessage,
     verificationReferenceId: String(
       providerResponse?.orderid ||
       providerResponse?.optransid ||
@@ -3956,6 +3941,24 @@ export const verifyCurrentDriverRcDocument = async (req, res) => {
     vehicleManufacturer: String(result?.vehicle_manufacturer_name || "").trim(),
     vehicleRegistrationDate: String(result?.reg_date || "").trim(),
     vehicleInsuranceUpto: String(result?.vehicle_insurance_upto || "").trim(),
+    vehicleFitnessUpto: String(result?.fitness_upto || result?.vehicle_fitness_upto || "").trim(),
+    permitNumber: String(result?.permit_no || result?.permit_number || "").trim(),
+    permitValidUpto: String(result?.permit_valid_upto || result?.permit_upto || "").trim(),
+    pucNumber: String(
+      result?.vehicle_pucc_number ||
+      result?.pucc_number ||
+      result?.pucc_no ||
+      result?.puc_number ||
+      result?.puc_no ||
+      "",
+    ).trim(),
+    pucValidUpto: String(
+      result?.vehicle_pucc_upto ||
+      result?.pucc_upto ||
+      result?.puc_valid_upto ||
+      result?.puc_upto ||
+      "",
+    ).trim(),
     verificationResponse: providerResponse,
   };
 
@@ -4044,13 +4047,8 @@ export const verifyCurrentDriverBankDocument = async (req, res) => {
   });
 
   const accountDetails = providerResponse?.cardData?.response?.account_details || {};
-  const verificationSucceeded = Number(providerResponse?.status || 0) === 1 || String(providerResponse?.status || "") === "1";
-  const verificationMessage = String(
-    providerResponse?.cardData?.response?.message ||
-    providerResponse?.data?.message ||
-    providerResponse?.msg ||
-    "",
-  ).trim();
+  const verification = resolveRechargeVerificationState(providerResponse);
+  const verificationMessage = verification.message;
 
   const updatedDocument = {
     ...(typeof existingDocument === "object" ? existingDocument : {}),
@@ -4066,16 +4064,10 @@ export const verifyCurrentDriverBankDocument = async (req, res) => {
     account_holder_name: accountHolderName,
     beneficiaryName: accountHolderName,
     benificiary_name: accountHolderName,
-    verificationStatus: verificationSucceeded ? "verified" : "failed",
-    reviewStatus: verificationSucceeded ? "verified" : "failed",
-    status: verificationSucceeded ? "verified" : "failed",
-    verifiedAt: new Date().toISOString(),
-    reviewedAt: new Date().toISOString(),
+    verificationStatus: verification.status,
+    verifiedAt: verification.succeeded ? new Date().toISOString() : existingDocument.verifiedAt || null,
     verificationMode: mode,
     verificationMessage,
-    comment: verificationSucceeded ? "" : verificationMessage,
-    remarks: verificationSucceeded ? "" : verificationMessage,
-    reason: verificationSucceeded ? "" : verificationMessage,
     verificationReferenceId: String(
       providerResponse?.orderid ||
       providerResponse?.optransid ||
@@ -8306,7 +8298,7 @@ export const updateOwnerPoolingVehicle = async (req, res) => {
         images: Array.isArray(body.images) ? body.images.filter(Boolean) : [],
         ownerId: owner._id,
       },
-      { new: true, runValidators: true },
+      { returnDocument: 'after', runValidators: true },
     );
 
   if (!vehicle) {
@@ -9741,6 +9733,14 @@ export const saveOnboardingVehicle = async (req, res) => {
 
 export const verifyOnboardingVehicleRc = async (req, res) => {
   const result = await verifyDriverVehicleRc(req.body);
+  res.json({ success: true, data: result });
+};
+
+export const verifyOnboardingLicenseDocument = async (req, res) => {
+  const result = await verifyDriverOnboardingLicenseDocument({
+    ...req.body,
+    documentKey: req.params.documentKey,
+  });
   res.json({ success: true, data: result });
 };
 

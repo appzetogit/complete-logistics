@@ -49,8 +49,19 @@ export const assignPushTokenToEntity = (entity, { token, platform }) => {
   };
 };
 
-export const listEntityPushTokens = (entity = {}, role = 'unknown') =>
-  [
-    { role, field: 'fcmTokenWeb', platform: 'web', token: String(entity.fcmTokenWeb || '').trim() },
-    { role, field: 'fcmTokenMobile', platform: 'mobile', token: String(entity.fcmTokenMobile || '').trim() },
-  ].filter((entry) => entry.token);
+export const listEntityPushTokens = (entity = {}, role = 'unknown') => {
+  const mobileToken = String(entity.fcmTokenMobile || '').trim();
+  const webToken = String(entity.fcmTokenWeb || '').trim();
+
+  // Prioritize mobile token to prevent double notifications on the same device
+  // (e.g. in hybrid/webview wrappers where the same device registers both web & mobile FCM tokens).
+  if (mobileToken) {
+    return [{ role, field: 'fcmTokenMobile', platform: 'mobile', token: mobileToken }];
+  }
+
+  if (webToken) {
+    return [{ role, field: 'fcmTokenWeb', platform: 'web', token: webToken }];
+  }
+
+  return [];
+};

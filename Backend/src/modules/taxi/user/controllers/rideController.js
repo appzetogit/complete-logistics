@@ -25,6 +25,7 @@ import {
 import {
   cancelRideByUser,
   emitToDriver,
+  getSocketServer,
   notifyRideAccepted,
   notifyRideBiddingUpdated,
   restartRideDispatchWithLatestFare,
@@ -413,6 +414,36 @@ export const updateRideStatus = async (req, res) => {
     nextStatus,
     paymentMethod: req.body.paymentMethod,
   });
+
+  try {
+    const io = getSocketServer();
+    if (io) {
+      const populatedRide = await getRideDetails(ride._id);
+      const payload = {
+        rideId: String(populatedRide._id),
+        status: populatedRide.status,
+        liveStatus: populatedRide.liveStatus,
+        acceptedAt: populatedRide.acceptedAt,
+        arrivedAt: populatedRide.arrivedAt,
+        startedAt: populatedRide.startedAt,
+        completedAt: populatedRide.completedAt,
+      };
+      const room = getRideRoom(populatedRide._id);
+      
+      // Emit ride:status:updated
+      io.to(room).emit('ride:status:updated', payload);
+      
+      // Emit ride:state
+      const statePayload = serializeRideRealtime(populatedRide);
+      io.to(room).emit('ride:state', statePayload);
+      
+      // Sync to Firebase/Realtime DB
+      const { mirrorRideRealtimeState } = await import('../../services/rideRealtimeSyncService.js');
+      mirrorRideRealtimeState(statePayload).catch(() => {});
+    }
+  } catch (socketError) {
+    console.error('Failed to emit status update socket event from controller:', socketError);
+  }
 
   res.json({
     success: true,

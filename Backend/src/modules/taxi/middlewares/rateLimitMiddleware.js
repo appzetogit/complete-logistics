@@ -84,6 +84,15 @@ const buildRateLimitKey = (req, scope, mode) => {
   return `ratelimit:${scope}:${mode}:${sha1(rawParts)}`;
 };
 
+export const buildScopedRateLimitKey = ({ scope, mode = 'custom', parts = [] } = {}) => {
+  const rawParts = (Array.isArray(parts) ? parts : [parts])
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(':');
+
+  return `ratelimit:${scope}:${mode}:${sha1(rawParts)}`;
+};
+
 const formatRetryAfterSeconds = (expiresAtMs) => {
   const diffMs = Math.max(0, Number(expiresAtMs || 0) - nowMs());
   return Math.max(1, Math.ceil(diffMs / 1000));
@@ -129,6 +138,54 @@ const applyRedisRateLimit = async ({ key, max, windowMs }) => {
 
 const defaultMessage = 'Too many requests. Please try again later.';
 
+const consumeRateLimitKey = async ({ key, max, windowMs, mode = 'custom' }) => {
+  let outcome = null;
+
+  if (env.redis.rateLimitEnabled) {
+    outcome = await applyRedisRateLimit({
+      key,
+      max,
+      windowMs,
+    });
+  }
+
+  if (!outcome) {
+    outcome = applyFallbackRateLimit({
+      key,
+      max,
+      windowMs,
+    });
+  }
+
+  return {
+    ...outcome,
+    mode,
+  };
+};
+
+export const consumeScopedRateLimit = async ({
+  scope,
+  max,
+  windowMs,
+  mode = 'custom',
+  parts = [],
+} = {}) => {
+  if (!scope || !Number.isFinite(Number(max)) || !Number.isFinite(Number(windowMs))) {
+    throw new Error('consumeScopedRateLimit requires scope, max, and windowMs');
+  }
+
+  const normalizedMax = Math.max(1, Number(max));
+  const normalizedWindowMs = Math.max(1000, Number(windowMs));
+  const key = buildScopedRateLimitKey({ scope, mode, parts });
+
+  return consumeRateLimitKey({
+    key,
+    max: normalizedMax,
+    windowMs: normalizedWindowMs,
+    mode,
+  });
+};
+
 export const createRateLimitMiddleware = ({
   scope,
   max,
@@ -150,28 +207,12 @@ export const createRateLimitMiddleware = ({
 
     for (const currentMode of normalizedModes) {
       const key = buildRateLimitKey(req, scope, currentMode);
-      let outcome = null;
-
-      if (env.redis.rateLimitEnabled) {
-        outcome = await applyRedisRateLimit({
-          key,
-          max: normalizedMax,
-          windowMs: normalizedWindowMs,
-        });
-      }
-
-      if (!outcome) {
-        outcome = applyFallbackRateLimit({
-          key,
-          max: normalizedMax,
-          windowMs: normalizedWindowMs,
-        });
-      }
-
-      outcomes.push({
-        ...outcome,
+      outcomes.push(await consumeRateLimitKey({
+        key,
+        max: normalizedMax,
+        windowMs: normalizedWindowMs,
         mode: currentMode,
-      });
+      }));
     }
 
     const blockingOutcome = outcomes.find((entry) => !entry.allowed);
@@ -240,4 +281,12 @@ export const paymentOrderRateLimit = createRateLimitMiddleware({
   windowMs: 15 * 60 * 1000,
   mode: 'auth_or_ip',
   message: 'Too many payment requests. Please try again later.',
+});
+
+export const availableDriversRateLimit = createRateLimitMiddleware({
+  scope: 'available_drivers',
+  max: 60,
+  windowMs: 60 * 1000,
+  mode: 'ip',
+  message: 'Too many driver availability requests. Please try again later.',
 });

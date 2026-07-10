@@ -1,4 +1,6 @@
+import crypto from 'node:crypto';
 import mongoose from 'mongoose';
+import { runRedisCommand } from '../../../infrastructure/redis/redisClient.js';
 import { Ride } from '../user/models/Ride.js';
 import { User } from '../user/models/User.js';
 import { UserWallet } from '../user/models/UserWallet.js';
@@ -19,8 +21,128 @@ import { sendPushNotificationToEntities } from './pushNotificationService.js';
 const activeDispatches = new Map();
 let ioInstance = null;
 const scheduledDispatchTimers = new Map();
+const dispatchLeaseRefreshTimers = new Map();
+const lateDriverNotificationTimestamps = new Map();
+const lateDriverNotificationInflight = new Map();
+let dispatchRecoveryTimer = null;
+
+const DISPATCH_INSTANCE_ID = `${process.pid}:${crypto.randomUUID()}`;
+const DISPATCH_LEASE_TTL_MS = 90_000;
+const DISPATCH_LEASE_REFRESH_MS = 30_000;
+const DISPATCH_RECOVERY_INTERVAL_MS = 30_000;
+const LATE_DRIVER_NOTIFICATION_COOLDOWN_MS = 10_000;
 
 const roundMoney = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+const getDispatchLeaseKey = (rideId) => `dispatch:lease:${String(rideId)}`;
+
+const renewDispatchLease = async (rideId) => {
+  const result = await runRedisCommand(
+    async (client) => client.eval(
+      `
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+          return redis.call('pexpire', KEYS[1], ARGV[2])
+        end
+        return 0
+      `,
+      {
+        keys: [getDispatchLeaseKey(rideId)],
+        arguments: [DISPATCH_INSTANCE_ID, String(DISPATCH_LEASE_TTL_MS)],
+      },
+    ),
+    { label: `dispatch lease renew ${rideId}` },
+  );
+
+  return !result.ok || Number(result.value || 0) === 1;
+};
+
+const releaseDispatchLease = async (rideId) => {
+  await runRedisCommand(
+    async (client) => client.eval(
+      `
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+          return redis.call('del', KEYS[1])
+        end
+        return 0
+      `,
+      {
+        keys: [getDispatchLeaseKey(rideId)],
+        arguments: [DISPATCH_INSTANCE_ID],
+      },
+    ),
+    { label: `dispatch lease release ${rideId}` },
+  ).catch(() => null);
+};
+
+const stopDispatchLeaseRefresh = (rideId) => {
+  const key = String(rideId);
+  const timer = dispatchLeaseRefreshTimers.get(key);
+  if (!timer) {
+    return;
+  }
+
+  clearInterval(timer);
+  dispatchLeaseRefreshTimers.delete(key);
+};
+
+const startDispatchLeaseRefresh = (rideId) => {
+  const key = String(rideId);
+  if (dispatchLeaseRefreshTimers.has(key)) {
+    return;
+  }
+
+  const timer = setInterval(() => {
+    renewDispatchLease(key)
+      .then((stillOwned) => {
+        if (!stillOwned) {
+          stopDispatchFlow(key, { releaseLease: false });
+        }
+      })
+      .catch(() => {});
+  }, DISPATCH_LEASE_REFRESH_MS);
+
+  timer.unref?.();
+  dispatchLeaseRefreshTimers.set(key, timer);
+};
+
+const ensureDispatchLease = async (rideId) => {
+  const result = await runRedisCommand(
+    async (client) => {
+      const key = getDispatchLeaseKey(rideId);
+      const acquired = await client.set(key, DISPATCH_INSTANCE_ID, {
+        NX: true,
+        PX: DISPATCH_LEASE_TTL_MS,
+      });
+
+      if (acquired === 'OK') {
+        return { owned: true };
+      }
+
+      const currentOwner = await client.get(key);
+      if (currentOwner === DISPATCH_INSTANCE_ID) {
+        await client.pExpire(key, DISPATCH_LEASE_TTL_MS);
+        return { owned: true };
+      }
+
+      return {
+        owned: false,
+        currentOwner: currentOwner || '',
+      };
+    },
+    { label: `dispatch lease acquire ${rideId}` },
+  );
+
+  if (!result.ok) {
+    return true;
+  }
+
+  if (!result.value?.owned) {
+    stopDispatchLeaseRefresh(rideId);
+    return false;
+  }
+
+  startDispatchLeaseRefresh(rideId);
+  return true;
+};
 
 const ensureUserWallet = async (userId, session = null) => {
   if (!userId) {
@@ -326,6 +448,8 @@ export const setSocketServer = (io) => {
   ioInstance = io;
 };
 
+export const getSocketServer = () => ioInstance;
+
 export const joinRideRoom = (socket, rideId) => {
   socket.join(getRideRoom(rideId));
 };
@@ -353,6 +477,89 @@ const getDispatchVehicleTypeIds = (ride) => {
   ];
 
   return [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))];
+};
+
+const normalizeDispatchDriverIds = (value) => [...new Set(
+  (Array.isArray(value) ? value : [value])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean),
+)];
+
+const getPersistedDispatchTracking = (ride = {}) => ({
+  notifiedDriverIds: normalizeDispatchDriverIds(ride?.dispatchTracking?.notifiedDriverIds),
+  rejectedDriverIds: normalizeDispatchDriverIds(ride?.dispatchTracking?.rejectedDriverIds),
+});
+
+const hydrateDispatchStateFromRide = (ride) => {
+  if (!ride?._id) {
+    return getDispatchState('');
+  }
+
+  const persistedTracking = getPersistedDispatchTracking(ride);
+  const currentState = getDispatchState(ride._id);
+  const nextNotifiedDriverIds = normalizeDispatchDriverIds([
+    ...persistedTracking.notifiedDriverIds,
+    ...currentState.notifiedDriverIds,
+  ]);
+  const nextRejectedDriverIds = normalizeDispatchDriverIds([
+    ...persistedTracking.rejectedDriverIds,
+    ...currentState.rejectedDriverIds,
+  ]);
+
+  if (
+    nextNotifiedDriverIds.length !== currentState.notifiedDriverIds.length ||
+    nextRejectedDriverIds.length !== currentState.rejectedDriverIds.length
+  ) {
+    return saveDispatchState(ride._id, {
+      notifiedDriverIds: nextNotifiedDriverIds,
+      rejectedDriverIds: nextRejectedDriverIds,
+    });
+  }
+
+  return currentState;
+};
+
+const persistDispatchTrackingProgress = async ({
+  rideId,
+  notifiedDriverIds = [],
+  rejectedDriverIds = [],
+  reset = false,
+} = {}) => {
+  if (!rideId) {
+    return;
+  }
+
+  const safeNotifiedDriverIds = normalizeDispatchDriverIds(notifiedDriverIds);
+  const safeRejectedDriverIds = normalizeDispatchDriverIds(rejectedDriverIds);
+  const update = reset
+    ? {
+        $set: {
+          'dispatchTracking.notifiedDriverIds': [],
+          'dispatchTracking.rejectedDriverIds': [],
+          'dispatchTracking.lastDispatchAttemptAt': null,
+        },
+      }
+    : {
+        $set: {
+          'dispatchTracking.lastDispatchAttemptAt': new Date(),
+        },
+      };
+
+  if (!reset && safeNotifiedDriverIds.length) {
+    update.$addToSet = {
+      ...(update.$addToSet || {}),
+      'dispatchTracking.notifiedDriverIds': { $each: safeNotifiedDriverIds },
+    };
+  }
+
+  if (!reset && safeRejectedDriverIds.length) {
+    update.$addToSet = {
+      ...(update.$addToSet || {}),
+      'dispatchTracking.rejectedDriverIds': { $each: safeRejectedDriverIds },
+    };
+  }
+
+  await Ride.updateOne({ _id: rideId }, update);
 };
 
 const emitToSocket = (socketId, event, payload) => {
@@ -401,10 +608,15 @@ const clearScheduledDispatchTimer = (rideId) => {
   }
 };
 
-export const stopDispatchFlow = (rideId) => {
+export const stopDispatchFlow = (rideId, { releaseLease = true } = {}) => {
   clearDispatchTimer(rideId);
   clearScheduledDispatchTimer(rideId);
+  stopDispatchLeaseRefresh(rideId);
   activeDispatches.delete(String(rideId));
+
+  if (releaseLease) {
+    releaseDispatchLease(rideId).catch(() => null);
+  }
 };
 
 export const restartRideDispatchWithLatestFare = async (rideId) => {
@@ -418,7 +630,8 @@ export const restartRideDispatchWithLatestFare = async (rideId) => {
     ...state.notifiedDriverIds,
     ...state.rejectedDriverIds,
   ]);
-  stopDispatchFlow(rideId);
+  stopDispatchFlow(rideId, { releaseLease: false });
+  await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
 
   const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode');
   if (!ride || ride.status !== RIDE_STATUS.SEARCHING || ride.liveStatus !== RIDE_LIVE_STATUS.SEARCHING) {
@@ -451,6 +664,13 @@ const saveDispatchState = (rideId, nextState = {}) => {
   });
 
   return activeDispatches.get(rideKey);
+};
+
+const hasLocalDispatchFlow = (rideId) => {
+  const key = String(rideId);
+  return activeDispatches.has(key) ||
+    scheduledDispatchTimers.has(key) ||
+    dispatchLeaseRefreshTimers.has(key);
 };
 
 const closeDriverRequestWindow = (rideId, driverIds = []) => {
@@ -551,7 +771,7 @@ const emitRideRequestToDrivers = async ({
   });
 };
 
-export const markDriverRejectedFromDispatch = (rideId, driverId) => {
+export const markDriverRejectedFromDispatch = async (rideId, driverId) => {
   if (!rideId || !driverId) {
     return;
   }
@@ -560,6 +780,7 @@ export const markDriverRejectedFromDispatch = (rideId, driverId) => {
   const rejectedDriverIds = [...new Set([...state.rejectedDriverIds, String(driverId)])];
 
   saveDispatchState(rideId, { rejectedDriverIds });
+  await persistDispatchTrackingProgress({ rideId, rejectedDriverIds: [String(driverId)] });
 };
 
 const closeRideAsUnmatched = async (rideId) => {
@@ -586,6 +807,7 @@ const closeRideAsUnmatched = async (rideId) => {
   }
 
   await User.findByIdAndUpdate(ride.userId, { currentRideId: null });
+  await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
 
   emitToRoom(getUserRoom(ride.userId), 'rideCancelled', {
     rideId: String(ride._id),
@@ -613,11 +835,12 @@ const closeRideAsUnmatched = async (rideId) => {
 };
 
 export const cancelRideByAdmin = async (rideId) => {
-  stopDispatchFlow(rideId);
+  stopDispatchFlow(rideId, { releaseLease: false });
 
   const ride = await Ride.findById(rideId);
 
   if (!ride) {
+    stopDispatchFlow(rideId);
     return null;
   }
 
@@ -640,6 +863,7 @@ export const cancelRideByAdmin = async (rideId) => {
     User.findByIdAndUpdate(ride.userId, { currentRideId: null }),
     ride.driverId ? Driver.findByIdAndUpdate(ride.driverId, { isOnRide: false }) : Promise.resolve(),
   ]);
+  await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
 
   emitToRoom(getUserRoom(ride.userId), 'rideCancelled', {
     rideId: String(ride._id),
@@ -665,12 +889,13 @@ export const cancelRideByAdmin = async (rideId) => {
     liveStatus: ride.liveStatus,
   });
 
+  stopDispatchFlow(rideId);
   return ride;
 };
 
 export const cancelRideByUser = async ({ rideId, userId }) => {
   const dispatchState = getDispatchState(rideId);
-  stopDispatchFlow(rideId);
+  stopDispatchFlow(rideId, { releaseLease: false });
   const session = await mongoose.startSession();
   let ride = null;
   let cancellationSettlement = null;
@@ -682,6 +907,7 @@ export const cancelRideByUser = async ({ rideId, userId }) => {
 
     if (!ride) {
       await session.abortTransaction();
+      stopDispatchFlow(rideId);
       return null;
     }
 
@@ -691,6 +917,7 @@ export const cancelRideByUser = async ({ rideId, userId }) => {
 
     if (ride.status === RIDE_STATUS.CANCELLED || ride.liveStatus === RIDE_LIVE_STATUS.CANCELLED) {
       await session.commitTransaction();
+      stopDispatchFlow(rideId);
       return ride;
     }
 
@@ -719,10 +946,12 @@ export const cancelRideByUser = async ({ rideId, userId }) => {
     await session.commitTransaction();
   } catch (error) {
     await session.abortTransaction();
+    stopDispatchFlow(rideId);
     throw error;
   } finally {
     session.endSession();
   }
+  await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
 
   emitToRoom(getUserRoom(ride.userId), 'rideCancelled', {
     rideId: String(ride._id),
@@ -777,12 +1006,13 @@ export const cancelRideByUser = async ({ rideId, userId }) => {
     });
   }
 
+  stopDispatchFlow(rideId);
   return ride;
 };
 
 export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
   const dispatchState = getDispatchState(rideId);
-  stopDispatchFlow(rideId);
+  stopDispatchFlow(rideId, { releaseLease: false });
   const session = await mongoose.startSession();
   let ride = null;
   let cancellationSettlement = null;
@@ -794,6 +1024,7 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
 
     if (!ride) {
       await session.abortTransaction();
+      stopDispatchFlow(rideId);
       return null;
     }
 
@@ -810,6 +1041,7 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
 
     if (ride.status === RIDE_STATUS.CANCELLED || ride.liveStatus === RIDE_LIVE_STATUS.CANCELLED) {
       await session.commitTransaction();
+      stopDispatchFlow(rideId);
       return ride;
     }
 
@@ -838,10 +1070,12 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
     await session.commitTransaction();
   } catch (error) {
     await session.abortTransaction();
+    stopDispatchFlow(rideId);
     throw error;
   } finally {
     session.endSession();
   }
+  await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
 
   const cancelReason = 'Your scheduled ride was cancelled by the driver.';
 
@@ -905,6 +1139,7 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
     console.error('Failed to send user scheduled-ride cancellation push notification', error);
   });
 
+  stopDispatchFlow(rideId);
   return ride;
 };
 
@@ -926,6 +1161,12 @@ const getAttemptRadiusMeters = (baseDistanceMeters, attemptIndex) => {
 };
 
 const dispatchAttempt = async (rideId, attemptIndex = 0) => {
+  const ownsDispatch = await ensureDispatchLease(rideId);
+  if (!ownsDispatch) {
+    stopDispatchFlow(rideId, { releaseLease: false });
+    return;
+  }
+
   const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode');
 
   if (!ride || ride.status !== RIDE_STATUS.SEARCHING) {
@@ -934,13 +1175,13 @@ const dispatchAttempt = async (rideId, attemptIndex = 0) => {
   }
 
   try {
+    const dispatchState = hydrateDispatchStateFromRide(ride);
     const dispatchConfig = await resolveTransportDispatchConfig();
     const radius = getAttemptRadiusMeters(
       dispatchConfig.baseDistanceMeters || dispatchConfig.maxDistanceMeters,
       attemptIndex,
     );
     const dispatchVehicleTypeIds = getDispatchVehicleTypeIds(ride);
-    const dispatchState = getDispatchState(rideId);
     if (dispatchConfig.dispatchType === 'one_by_one' && attemptIndex > 0 && dispatchState.driverIds.length) {
       closeDriverRequestWindow(rideId, dispatchState.driverIds);
     }
@@ -984,6 +1225,10 @@ const dispatchAttempt = async (rideId, attemptIndex = 0) => {
       dispatchConfig,
       attemptIndex,
     });
+    await persistDispatchTrackingProgress({
+      rideId,
+      notifiedDriverIds: targetDrivers.map((driver) => String(driver._id)),
+    }).catch(() => null);
 
     emitToRoom(getUserRoom(ride.userId), 'rideSearchUpdate', {
       rideId: String(ride._id),
@@ -1022,8 +1267,21 @@ const dispatchAttempt = async (rideId, attemptIndex = 0) => {
   }
 };
 
-export const startDispatchFlow = async (ride) => {
-  stopDispatchFlow(ride._id);
+export const startDispatchFlow = async (ride, { forceRestart = false } = {}) => {
+  if (!ride?._id) {
+    return;
+  }
+
+  if (!forceRestart && hasLocalDispatchFlow(ride._id)) {
+    return;
+  }
+
+  stopDispatchFlow(ride._id, { releaseLease: false });
+
+  const ownsDispatch = await ensureDispatchLease(ride._id);
+  if (!ownsDispatch) {
+    return;
+  }
 
   const scheduledAt = ride?.scheduledAt ? new Date(ride.scheduledAt) : null;
   const delayMs = scheduledAt ? scheduledAt.getTime() - Date.now() : 0;
@@ -1054,12 +1312,29 @@ export const restoreScheduledDispatches = async () => {
   const rides = await Ride.find({
     status: RIDE_STATUS.SEARCHING,
     liveStatus: RIDE_LIVE_STATUS.SEARCHING,
-    scheduledAt: { $ne: null },
-  }).select('_id scheduledAt');
+  }).select('_id scheduledAt bookingMode dispatchTracking');
 
   for (const ride of rides) {
+    if (hasLocalDispatchFlow(ride._id)) {
+      continue;
+    }
+
     await startDispatchFlow(ride);
   }
+};
+
+export const startDispatchRecoveryLoop = () => {
+  if (dispatchRecoveryTimer) {
+    return;
+  }
+
+  dispatchRecoveryTimer = setInterval(() => {
+    restoreScheduledDispatches().catch((error) => {
+      console.error('Dispatch recovery sweep failed', error);
+    });
+  }, DISPATCH_RECOVERY_INTERVAL_MS);
+
+  dispatchRecoveryTimer.unref?.();
 };
 
 export const notifyLateAvailableDriver = async (driverId) => {
@@ -1067,81 +1342,101 @@ export const notifyLateAvailableDriver = async (driverId) => {
     return;
   }
 
-  const driver = await Driver.findById(driverId)
-    .select('_id isOnline isOnRide wallet location zoneId vehicleTypeId vehicleType vehicleIconType');
-
-  if (!driver?.isOnline || driver?.isOnRide || driver?.wallet?.isBlocked || !driver?.location?.coordinates?.length) {
+  const driverKey = String(driverId);
+  const lastNotifiedAt = lateDriverNotificationTimestamps.get(driverKey) || 0;
+  if (Date.now() - lastNotifiedAt < LATE_DRIVER_NOTIFICATION_COOLDOWN_MS) {
     return;
   }
 
-  const activeRideIds = Array.from(activeDispatches.keys());
+  if (lateDriverNotificationInflight.has(driverKey)) {
+    return lateDriverNotificationInflight.get(driverKey);
+  }
 
-  for (const rideId of activeRideIds) {
-    const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode');
+  const notifyPromise = (async () => {
+    lateDriverNotificationTimestamps.set(driverKey, Date.now());
 
-    if (!ride || ride.status !== RIDE_STATUS.SEARCHING) {
-      continue;
-    }
+    const driver = await Driver.findById(driverId)
+      .select('_id isOnline isOnRide wallet location zoneId vehicleTypeId vehicleType vehicleIconType');
 
-    const dispatchState = getDispatchState(rideId);
-    const driverKey = String(driver._id);
-
-    if (
-      dispatchState.notifiedDriverIds.includes(driverKey) ||
-      dispatchState.rejectedDriverIds.includes(driverKey)
-    ) {
-      continue;
+    if (!driver?.isOnline || driver?.isOnRide || driver?.wallet?.isBlocked || !driver?.location?.coordinates?.length) {
+      return;
     }
 
     const dispatchConfig = await resolveTransportDispatchConfig();
-    const attemptIndex = Number.isInteger(dispatchState.radiusIndex) ? dispatchState.radiusIndex : 0;
-    const radius = getAttemptRadiusMeters(
-      dispatchConfig.baseDistanceMeters || dispatchConfig.maxDistanceMeters,
-      attemptIndex,
-    );
-    const dispatchVehicleTypeIds = getDispatchVehicleTypeIds(ride);
-    const { zone, drivers, searchRadiusMeters } = await matchDispatchDrivers({
-      ride,
-      radius,
-      dispatchVehicleTypeIds,
-    });
+    const activeRideIds = Array.from(activeDispatches.keys());
 
-    const matchedDriver = drivers.find((item) => String(item._id) === driverKey);
-    if (!matchedDriver) {
-      continue;
+    for (const rideId of activeRideIds) {
+      const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode');
+
+      if (!ride || ride.status !== RIDE_STATUS.SEARCHING) {
+        continue;
+      }
+
+      const dispatchState = getDispatchState(rideId);
+
+      if (
+        dispatchState.notifiedDriverIds.includes(driverKey) ||
+        dispatchState.rejectedDriverIds.includes(driverKey)
+      ) {
+        continue;
+      }
+
+      const attemptIndex = Number.isInteger(dispatchState.radiusIndex) ? dispatchState.radiusIndex : 0;
+      const radius = getAttemptRadiusMeters(
+        dispatchConfig.baseDistanceMeters || dispatchConfig.maxDistanceMeters,
+        attemptIndex,
+      );
+      const dispatchVehicleTypeIds = getDispatchVehicleTypeIds(ride);
+      const { zone, drivers, searchRadiusMeters } = await matchDispatchDrivers({
+        ride,
+        radius,
+        dispatchVehicleTypeIds,
+      });
+
+      const matchedDriver = drivers.find((item) => String(item._id) === driverKey);
+      if (!matchedDriver) {
+        continue;
+      }
+
+      const effectiveRadius = Number.isFinite(searchRadiusMeters) && searchRadiusMeters > 0
+        ? searchRadiusMeters
+        : radius;
+
+      const nextNotifiedDriverIds = [...dispatchState.notifiedDriverIds, driverKey];
+      const nextDriverIds = dispatchConfig.dispatchType === 'broadcast'
+        ? [...new Set([...dispatchState.driverIds, driverKey])]
+        : dispatchState.driverIds.length
+          ? dispatchState.driverIds
+          : [driverKey];
+
+      saveDispatchState(rideId, {
+        driverIds: nextDriverIds,
+        notifiedDriverIds: nextNotifiedDriverIds,
+      });
+
+      await emitRideRequestToDrivers({
+        ride,
+        targetDrivers: [matchedDriver],
+        zone,
+        effectiveRadius,
+        dispatchVehicleTypeIds,
+        dispatchConfig,
+        attemptIndex,
+      });
     }
-
-    const effectiveRadius = Number.isFinite(searchRadiusMeters) && searchRadiusMeters > 0
-      ? searchRadiusMeters
-      : radius;
-
-    const nextNotifiedDriverIds = [...dispatchState.notifiedDriverIds, driverKey];
-    const nextDriverIds = dispatchConfig.dispatchType === 'broadcast'
-      ? [...new Set([...dispatchState.driverIds, driverKey])]
-      : dispatchState.driverIds.length
-        ? dispatchState.driverIds
-        : [driverKey];
-
-    saveDispatchState(rideId, {
-      driverIds: nextDriverIds,
-      notifiedDriverIds: nextNotifiedDriverIds,
+  })()
+    .finally(() => {
+      lateDriverNotificationInflight.delete(driverKey);
     });
 
-    await emitRideRequestToDrivers({
-      ride,
-      targetDrivers: [matchedDriver],
-      zone,
-      effectiveRadius,
-      dispatchVehicleTypeIds,
-      dispatchConfig,
-      attemptIndex,
-    });
-  }
+  lateDriverNotificationInflight.set(driverKey, notifyPromise);
+  return notifyPromise;
 };
 
 export const notifyRideAccepted = async (ride) => {
   const state = getDispatchState(ride._id);
   stopDispatchFlow(ride._id);
+  await persistDispatchTrackingProgress({ rideId: ride._id, reset: true }).catch(() => null);
 
   // Once one driver wins the race, the rider is updated and the rest are told to stop.
   const populatedRide = await Ride.findById(ride._id).populate(

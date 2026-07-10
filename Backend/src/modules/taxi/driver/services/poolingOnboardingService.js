@@ -214,7 +214,7 @@ export const startPoolingDriverOnboarding = async ({ phone }) => {
     },
     {
       upsert: true,
-      new: true,
+      returnDocument: 'after',
       setDefaultsOnInsert: true,
     },
   );

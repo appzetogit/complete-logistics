@@ -80,6 +80,7 @@ import {
   saveOnboardingPersonal,
   saveOnboardingReferral,
   saveOnboardingVehicle,
+  verifyOnboardingLicenseDocument,
   verifyOnboardingVehicleRc,
   registerDriver,
   requestDriverAccountDeletion,
@@ -587,6 +588,10 @@ driverRouter.patch(
 );
 driverRouter.patch("/onboarding/vehicle", asyncHandler(saveOnboardingVehicle));
 driverRouter.post("/onboarding/vehicle/verify-rc", asyncHandler(verifyOnboardingVehicleRc));
+driverRouter.post(
+  "/onboarding/documents/:documentKey/verify-license",
+  asyncHandler(verifyOnboardingLicenseDocument),
+);
 driverRouter.patch(
   "/onboarding/documents",
   asyncHandler(saveOnboardingDocuments),

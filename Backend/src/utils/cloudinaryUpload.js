@@ -91,3 +91,64 @@ export const uploadDataUrlToCloudinary = async ({
     raw: payload,
   };
 };
+
+export const uploadRawFileToCloudinary = async ({
+  dataUrl,
+  folder = env.cloudinary.folder,
+  publicIdPrefix = 'career-resume',
+  publicIdSuffix = '',
+}) => {
+  if (!env.cloudinary.cloudName || !env.cloudinary.apiKey || !env.cloudinary.apiSecret) {
+    throw new ApiError(500, 'Cloudinary credentials are not configured');
+  }
+
+  const { mimeType, base64, extension } = parseDataUrl(dataUrl);
+  const buffer = Buffer.from(base64, 'base64');
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const publicId = `${publicIdPrefix}-${Date.now()}${publicIdSuffix ? `-${publicIdSuffix}` : ''}`;
+  
+  const isImage = mimeType.startsWith('image/');
+  const resourceType = isImage ? 'image' : 'raw';
+
+  const params = {
+    folder,
+    public_id: publicId,
+    timestamp,
+  };
+  if (isImage) {
+    params.format = 'webp';
+  }
+
+  const signature = buildSignature(params, env.cloudinary.apiSecret);
+
+  const formData = new FormData();
+  formData.append('file', new Blob([buffer], { type: mimeType }), `upload.${extension}`);
+  formData.append('api_key', env.cloudinary.apiKey);
+  formData.append('timestamp', timestamp);
+  formData.append('folder', folder);
+  formData.append('public_id', publicId);
+  if (isImage) {
+    formData.append('format', 'webp');
+  }
+  formData.append('signature', signature);
+
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${env.cloudinary.cloudName}/${resourceType}/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new ApiError(response.status || 502, payload?.error?.message || 'Cloudinary upload failed');
+  }
+
+  return {
+    secureUrl: payload.secure_url,
+    publicId: payload.public_id,
+    resourceType: payload.resource_type,
+    format: payload.format,
+    bytes: payload.bytes,
+    raw: payload,
+  };
+};

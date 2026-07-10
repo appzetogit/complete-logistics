@@ -801,33 +801,55 @@ const ensureBusServiceEnabled = async () => {
   }
 };
 
+let lastBusSeatHoldCleanupAt = 0;
+const BUS_HOLD_CLEANUP_COOLDOWN_MS = 30_000;
+let busSeatHoldCleanupPromise = null;
+
 const cleanupExpiredBusSeatHolds = async () => {
-  const now = new Date();
+  const nowMs = Date.now();
+  if (nowMs - lastBusSeatHoldCleanupAt < BUS_HOLD_CLEANUP_COOLDOWN_MS) {
+    return;
+  }
 
-  const expiredBookings = await BusBooking.find({
-    status: 'pending',
-    expiresAt: { $lte: now },
-  })
-    .select('_id')
-    .lean();
+  if (busSeatHoldCleanupPromise) {
+    return busSeatHoldCleanupPromise;
+  }
 
-  if (expiredBookings.length > 0) {
-    const bookingIds = expiredBookings.map((item) => item._id);
-    await BusBooking.updateMany(
-      { _id: { $in: bookingIds } },
-      { $set: { status: 'expired' } },
-    );
+  busSeatHoldCleanupPromise = (async () => {
+    const now = new Date();
+
+    const expiredBookings = await BusBooking.find({
+      status: 'pending',
+      expiresAt: { $lte: now },
+    })
+      .select('_id')
+      .lean();
+
+    if (expiredBookings.length > 0) {
+      const bookingIds = expiredBookings.map((item) => item._id);
+      await BusBooking.updateMany(
+        { _id: { $in: bookingIds } },
+        { $set: { status: 'expired' } },
+      );
+      await BusSeatHold.deleteMany({
+        bookingId: { $in: bookingIds },
+        status: 'held',
+        expiresAt: { $lte: now },
+      });
+    }
+
     await BusSeatHold.deleteMany({
-      bookingId: { $in: bookingIds },
       status: 'held',
       expiresAt: { $lte: now },
     });
-  }
 
-  await BusSeatHold.deleteMany({
-    status: 'held',
-    expiresAt: { $lte: now },
-  });
+    lastBusSeatHoldCleanupAt = Date.now();
+  })()
+    .finally(() => {
+      busSeatHoldCleanupPromise = null;
+    });
+
+  return busSeatHoldCleanupPromise;
 };
 
 const createBusBookingCode = () =>

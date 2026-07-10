@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../../../../utils/asyncHandler.js';
 import { authenticate } from '../../middlewares/authMiddleware.js';
 import {
+  availableDriversRateLimit,
   paymentOrderRateLimit,
   rideCreationRateLimit,
 } from '../../middlewares/rateLimitMiddleware.js';
@@ -30,7 +31,7 @@ export const rideRouter = Router();
 rideRouter.post('/', authenticate(['user']), rideCreationRateLimit, asyncHandler(createRide));
 rideRouter.get('/', authenticate(['user', 'driver']), asyncHandler(listMyRides));
 rideRouter.get('/app-settings/tip', asyncHandler(getRideAppTipSettings));
-rideRouter.get('/available-drivers', asyncHandler(listAvailableDrivers));
+rideRouter.get('/available-drivers', availableDriversRateLimit, asyncHandler(listAvailableDrivers));
 rideRouter.get('/active/me', authenticate(['user', 'driver']), asyncHandler(getMyActiveRide));
 rideRouter.patch('/:rideId/cancel', authenticate(['user']), asyncHandler(cancelRide));
 rideRouter.get('/:rideId/bids', authenticate(['user']), asyncHandler(getRideBids));

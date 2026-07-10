@@ -204,5 +204,8 @@ const busBookingSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+busBookingSchema.index({ status: 1, expiresAt: 1 });
+busBookingSchema.index({ busServiceId: 1, travelDate: 1, scheduleId: 1, status: 1 });
+
 export const BusBooking =
   mongoose.models.TaxiBusBooking || mongoose.model('TaxiBusBooking', busBookingSchema);

@@ -145,8 +145,8 @@ const normalizeRechargeApiSettings = (settings = {}) => {
       card_bin: '/validation/cardValidate',
       upi_basic: '/validation/upiBasic',
       pan_verify: '/validation/verifyPANRequest',
-      dl_request: '/validation/driverLicenseRequest',
-      dl_verify: '/validation/verifyLicenseRequest',
+      dl_request: '/validation/verifyDL',
+      dl_verify: '/validation/verifyDL',
       gstin_verify: '/validation/verifyGSTIN',
       rc_verify: '/validation/rcAdvanceVerify',
       upi_advance: '/validation/upiAdvanceVerify',
@@ -175,8 +175,8 @@ const normalizeRechargeApiSettings = (settings = {}) => {
       card_bin: String(merged?.endpoints?.card_bin || '/validation/cardValidate').trim() || '/validation/cardValidate',
       upi_basic: String(merged?.endpoints?.upi_basic || '/validation/upiBasic').trim() || '/validation/upiBasic',
       pan_verify: String(merged?.endpoints?.pan_verify || '/validation/verifyPANRequest').trim() || '/validation/verifyPANRequest',
-      dl_request: String(merged?.endpoints?.dl_request || '/validation/driverLicenseRequest').trim() || '/validation/driverLicenseRequest',
-      dl_verify: String(merged?.endpoints?.dl_verify || '/validation/verifyLicenseRequest').trim() || '/validation/verifyLicenseRequest',
+      dl_request: String(merged?.endpoints?.dl_request || '/validation/verifyDL').trim() || '/validation/verifyDL',
+      dl_verify: String(merged?.endpoints?.dl_verify || '/validation/verifyDL').trim() || '/validation/verifyDL',
       gstin_verify: String(merged?.endpoints?.gstin_verify || '/validation/verifyGSTIN').trim() || '/validation/verifyGSTIN',
       rc_verify: String(merged?.endpoints?.rc_verify || '/validation/rcAdvanceVerify').trim() || '/validation/rcAdvanceVerify',
       upi_advance: String(merged?.endpoints?.upi_advance || '/validation/upiAdvanceVerify').trim() || '/validation/upiAdvanceVerify',
@@ -7737,6 +7737,16 @@ export const updateOwner = async (id, payload) => {
   if (payload.city !== undefined) owner.city = payload.city || null;
   if (payload.tax_number !== undefined) owner.tax_number = payload.tax_number || null;
   if (payload.no_of_vehicles !== undefined) owner.no_of_vehicles = Number(payload.no_of_vehicles || 0);
+  if (payload.documents !== undefined) {
+    if (!owner.user_snapshot) {
+      owner.user_snapshot = {};
+    }
+    owner.user_snapshot = {
+      ...owner.user_snapshot,
+      documents: payload.documents,
+    };
+    owner.markModified('user_snapshot');
+  }
 
   await owner.save();
 

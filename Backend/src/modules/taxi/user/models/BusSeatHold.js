@@ -60,6 +60,8 @@ busSeatHoldSchema.index(
   { busServiceId: 1, scheduleId: 1, travelDate: 1, seatId: 1 },
   { unique: true, name: 'unique_bus_travel_seat' },
 );
+busSeatHoldSchema.index({ status: 1, expiresAt: 1 });
+busSeatHoldSchema.index({ busServiceId: 1, travelDate: 1, status: 1, scheduleId: 1 });
 
 export const BusSeatHold =
   mongoose.models.TaxiBusSeatHold || mongoose.model('TaxiBusSeatHold', busSeatHoldSchema);

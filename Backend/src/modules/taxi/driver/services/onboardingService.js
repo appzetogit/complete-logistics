@@ -31,7 +31,10 @@ import {
 } from './loginOtpService.js';
 import { findZoneByPickup } from './locationService.js';
 import { sendOtpSms } from '../../services/smsService.js';
-import { verifyRcWithRecharge } from '../../services/rechargeVerificationService.js';
+import {
+  verifyDrivingLicenseWithRecharge,
+  verifyRcWithRecharge,
+} from '../../services/rechargeVerificationService.js';
 import { WalletTransaction } from '../models/WalletTransaction.js';
 import { BusDriver } from '../models/BusDriver.js';
 import { applyDriverWalletAdjustment } from './walletService.js';
@@ -128,6 +131,34 @@ const getPrimaryRegisterFor = (serviceCategories = [], fallback = 'taxi') => {
 const normalizeReferralCode = (value = '') => String(value || '').trim().toUpperCase();
 const buildOnboardingRcVerificationRequestId = (session) =>
   `RC-${String(session?.registrationId || '').replace(/[^A-Za-z0-9]/g, '').slice(-8) || 'ONBOARD'}-${Date.now()}`;
+const buildOnboardingLicenseVerificationRequestId = (session) =>
+  `DL-${String(session?.registrationId || '').replace(/[^A-Za-z0-9]/g, '').slice(-8) || 'ONBOARD'}-${Date.now()}`;
+
+const resolveRechargeVerificationState = (providerResponse = {}, fallbackMessage = '') => {
+  const normalizedStatus = String(providerResponse?.status ?? '').trim().toLowerCase();
+  const message = String(
+    providerResponse?.cardData?.response?.message ||
+    providerResponse?.cardData?.message ||
+    providerResponse?.msg ||
+    providerResponse?.message ||
+    fallbackMessage ||
+    '',
+  ).trim();
+  const lowerMessage = message.toLowerCase();
+  const explicitPending =
+    ['pending', 'processing', 'queued', 'in_progress', 'in progress'].includes(normalizedStatus) ||
+    lowerMessage.includes('pending') ||
+    lowerMessage.includes('processing') ||
+    lowerMessage.includes('try after sometime') ||
+    lowerMessage.includes('please try after sometime');
+  const succeeded = normalizedStatus === '1' || normalizedStatus === 'success' || normalizedStatus === 'verified' || Number(providerResponse?.status || 0) === 1;
+
+  return {
+    succeeded,
+    status: succeeded ? 'verified' : explicitPending ? 'pending' : 'failed',
+    message,
+  };
+};
 
 const parseRcManufacturingYear = (value = '') => {
   const normalized = String(value || '').trim();
@@ -144,6 +175,30 @@ const normalizeRcVerificationResult = (result = {}, rcNumber = '') => ({
   fuelType: String(result?.type || '').trim(),
   seatCapacity: String(result?.vehicle_seat_capacity || '').trim(),
   ownerName: String(result?.owner_name || '').trim(),
+  status: String(result?.status || '').trim(),
+  registrationDate: String(result?.reg_date || '').trim(),
+  insuranceUpto: String(result?.vehicle_insurance_upto || '').trim(),
+  fitnessUpto: String(result?.fitness_upto || result?.vehicle_fitness_upto || '').trim(),
+  permitNumber: String(result?.permit_no || result?.permit_number || '').trim(),
+  permitValidUpto: String(result?.permit_valid_upto || result?.permit_upto || '').trim(),
+  pucNumber: String(
+    result?.vehicle_pucc_number ||
+    result?.pucc_number ||
+    result?.pucc_no ||
+    result?.puc_number ||
+    result?.puc_no ||
+    '',
+  ).trim(),
+  pucValidUpto: String(
+    result?.vehicle_pucc_upto ||
+    result?.pucc_upto ||
+    result?.puc_valid_upto ||
+    result?.puc_upto ||
+    '',
+  ).trim(),
+  financer: String(result?.financer || result?.financer_name || '').trim(),
+  engineNumber: String(result?.engine_no || '').trim(),
+  chassisNumber: String(result?.chasi_no || result?.chassis_no || '').trim(),
   manufacturingMonthYear: String(result?.vehicle_manufacturing_month_year || '').trim(),
 });
 
@@ -545,6 +600,24 @@ const uploadRegistrationDocument = async (documentKey, value) => {
   const expiryDate = typeof value === 'object'
     ? String(value.expiryDate || value.expiry_date || value.expiry || value.expiresAt || '').trim()
     : '';
+  const birthDate = typeof value === 'object'
+    ? String(value.birthDate || value.birth_date || '').trim()
+    : '';
+  const requestNumber = typeof value === 'object'
+    ? String(value.requestNumber || value.request_no || '').trim()
+    : '';
+  const ifsc = typeof value === 'object'
+    ? String(value.ifsc || value.ifscCode || value.ifsc_code || '').trim().toUpperCase()
+    : '';
+  const accountHolderName = typeof value === 'object'
+    ? String(
+      value.accountHolderName ||
+      value.account_holder_name ||
+      value.beneficiaryName ||
+      value.benificiary_name ||
+      '',
+    ).trim()
+    : '';
 
   if (!dataUrl) {
     throw new ApiError(400, `${documentKey} must contain an image data URL`);
@@ -580,6 +653,17 @@ const uploadRegistrationDocument = async (documentKey, value) => {
     document_number: identifyNumber,
     expiryDate,
     expiry_date: expiryDate,
+    birthDate,
+    birth_date: birthDate,
+    requestNumber,
+    request_no: requestNumber,
+    ifsc,
+    ifscCode: ifsc,
+    ifsc_code: ifsc,
+    accountHolderName,
+    account_holder_name: accountHolderName,
+    beneficiaryName: accountHolderName,
+    benificiary_name: accountHolderName,
     cloudinary: uploaded,
   };
 };
@@ -1165,7 +1249,12 @@ export const saveDriverDocuments = async ({ registrationId, phone, documents = {
     const uploadedDocument = await uploadRegistrationDocument(documentKey, value);
 
     if (uploadedDocument) {
-      updatedDocuments[documentKey] = uploadedDocument;
+      const existingDocument = session.documents?.[documentKey];
+      updatedDocuments[documentKey] = normalizeStoredDocument({
+        ...(typeof existingDocument === 'object' && existingDocument ? existingDocument : {}),
+        ...uploadedDocument,
+        key: documentKey,
+      });
       uploadedDocumentKeys.push(documentKey);
     }
   }
@@ -1744,6 +1833,140 @@ export const verifyDriverVehicleRc = async ({
     message: String(providerResponse?.msg || 'RC verified successfully').trim(),
     rcNumber: normalizedRcNumber,
     vehicle,
+    verification: providerResponse,
+  };
+};
+
+export const verifyDriverOnboardingLicenseDocument = async ({
+  registrationId,
+  phone,
+  documentKey,
+  licenseNumber,
+  birthDate,
+  requestNumber,
+}) => {
+  const session = await getSession(registrationId, phone);
+
+  if (!session.personal?.fullName) {
+    throw new ApiError(400, 'Save personal details before DL verification');
+  }
+
+  const normalizedDocumentKey = String(documentKey || '').trim();
+  if (!normalizedDocumentKey) {
+    throw new ApiError(400, 'Document key is required');
+  }
+
+  const existingDocument = session.documents?.[normalizedDocumentKey] || {};
+  const normalizedLicenseNumber = String(
+    licenseNumber ||
+    existingDocument.identifyNumber ||
+    existingDocument.identify_number ||
+    existingDocument.documentNumber ||
+    existingDocument.document_number ||
+    '',
+  ).trim().toUpperCase();
+  const normalizedBirthDate = String(
+    birthDate ||
+    existingDocument.birthDate ||
+    existingDocument.birth_date ||
+    '',
+  ).trim();
+
+  if (!normalizedLicenseNumber) {
+    throw new ApiError(400, 'Driving license number is required before verification');
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedBirthDate) && !/^\d{2}\/\d{2}\/\d{4}$/.test(normalizedBirthDate)) {
+    throw new ApiError(400, 'Birth date must use YYYY-MM-DD or DD/MM/YYYY format before verification');
+  }
+
+  const providerResponse = await verifyDrivingLicenseWithRecharge({
+    licenseNumber: normalizedLicenseNumber,
+    birthDate: normalizedBirthDate,
+    partnerRequestId: buildOnboardingLicenseVerificationRequestId(session),
+    requestNumber: String(
+      requestNumber ||
+      existingDocument.requestNumber ||
+      existingDocument.request_no ||
+      '',
+    ).trim(),
+  });
+
+  const result = providerResponse?.cardData?.result || {};
+  const licenseDetails = result?.details_of_driving_licence || {};
+  const nonTransportValidity = result?.dl_validity?.non_transport || {};
+  const badgeDetails = Array.isArray(result?.badge_details) ? result.badge_details : [];
+  const firstBadge = badgeDetails[0] || {};
+  const verification = resolveRechargeVerificationState(
+    providerResponse,
+    String(licenseDetails?.status || '').trim(),
+  );
+  const verificationMessage = verification.message;
+
+  const updatedDocument = {
+    ...(typeof existingDocument === 'object' ? existingDocument : {}),
+    key: normalizedDocumentKey,
+    identifyNumber: normalizedLicenseNumber,
+    identify_number: normalizedLicenseNumber,
+    documentNumber: normalizedLicenseNumber,
+    document_number: normalizedLicenseNumber,
+    birthDate: normalizedBirthDate,
+    birth_date: normalizedBirthDate,
+    requestNumber: String(
+      providerResponse?.partnerreqid ||
+      providerResponse?.cardData?.request_id ||
+      providerResponse?.orderid ||
+      requestNumber ||
+      existingDocument.requestNumber ||
+      existingDocument.request_no ||
+      '',
+    ).trim(),
+    request_no: String(
+      providerResponse?.partnerreqid ||
+      providerResponse?.cardData?.request_id ||
+      providerResponse?.orderid ||
+      requestNumber ||
+      existingDocument.requestNumber ||
+      existingDocument.request_no ||
+      '',
+    ).trim(),
+    verificationStatus: verification.status,
+    verifiedAt: verification.succeeded ? new Date().toISOString() : existingDocument.verifiedAt || null,
+    verificationMessage,
+    verificationReferenceId: String(
+      providerResponse?.orderid ||
+      providerResponse?.partnerreqid ||
+      providerResponse?.cardData?.request_id ||
+      '',
+    ).trim(),
+    verifiedName: String(licenseDetails?.name || '').trim(),
+    verifiedDob: String(result?.dob || normalizedBirthDate).trim(),
+    dlStatus: String(licenseDetails?.status || '').trim(),
+    issuingRtoName: '',
+    relativeName: String(licenseDetails?.father_or_husband_name || '').trim(),
+    dlNumber: String(result?.dl_number || normalizedLicenseNumber).trim(),
+    nonTransportValidFrom: String(nonTransportValidity?.from || '').trim(),
+    nonTransportValidTo: String(nonTransportValidity?.to || '').trim(),
+    transportValidFrom: String(result?.dl_validity?.transport?.from || '').trim(),
+    transportValidTo: String(result?.dl_validity?.transport?.to || '').trim(),
+    badgeNumber: String(firstBadge?.badge_no || '').trim(),
+    badgeIssueDate: String(firstBadge?.badge_issue_date || '').trim(),
+    classOfVehicle: Array.isArray(firstBadge?.class_of_vehicle) ? firstBadge.class_of_vehicle : [],
+    verificationResponse: providerResponse,
+  };
+
+  session.documents = {
+    ...(session.documents || {}),
+    [normalizedDocumentKey]: updatedDocument,
+  };
+
+  session.markModified('documents');
+  await session.save();
+
+  return {
+    message: verificationMessage || 'Driving license verified successfully',
+    document: updatedDocument,
+    documents: session.documents || {},
     verification: providerResponse,
   };
 };

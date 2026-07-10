@@ -1,6 +1,7 @@
 import { ApiError } from '../../../../utils/ApiError.js';
 import { CareerJob } from '../models/CareerJob.js';
 import { CareerApplication } from '../models/CareerApplication.js';
+import { uploadRawFileToCloudinary } from '../../../../utils/cloudinaryUpload.js';
 
 // --- User / Public Handlers ---
 
@@ -59,6 +60,27 @@ export const submitApplication = async (req, res) => {
       status: application.status,
       createdAt: application.createdAt
     }
+  });
+};
+
+export const uploadApplicationFile = async (req, res) => {
+  const { dataUrl } = req.body;
+
+  if (!dataUrl) {
+    throw new ApiError(400, 'dataUrl is required');
+  }
+
+  const uploadResult = await uploadRawFileToCloudinary({
+    dataUrl,
+    publicIdPrefix: 'career-resume',
+  });
+
+  res.json({
+    success: true,
+    data: {
+      secureUrl: uploadResult.secureUrl,
+      publicId: uploadResult.publicId,
+    },
   });
 };
 
@@ -130,7 +152,7 @@ export const adminUpdateJob = async (req, res) => {
   if (type !== undefined) patch.type = type;
   if (active !== undefined) patch.active = Boolean(active);
 
-  const job = await CareerJob.findByIdAndUpdate(id, patch, { new: true });
+  const job = await CareerJob.findByIdAndUpdate(id, patch, { returnDocument: 'after' });
   if (!job) {
     throw new ApiError(404, 'Job position not found');
   }
@@ -209,7 +231,7 @@ export const adminUpdateApplicationStatus = async (req, res) => {
   const application = await CareerApplication.findByIdAndUpdate(
     id,
     { status },
-    { new: true }
+    { returnDocument: 'after' }
   ).populate('jobId', 'title department');
 
   if (!application) {
@@ -227,3 +249,18 @@ export const adminUpdateApplicationStatus = async (req, res) => {
     }
   });
 };
+
+// Delete a career application
+export const adminDeleteApplication = async (req, res) => {
+  const { id } = req.params;
+  const application = await CareerApplication.findByIdAndDelete(id);
+  if (!application) {
+    throw new ApiError(404, 'Career application not found');
+  }
+
+  res.json({
+    success: true,
+    data: { deleted: true }
+  });
+};
+

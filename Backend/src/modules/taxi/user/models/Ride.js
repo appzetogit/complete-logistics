@@ -52,6 +52,20 @@ const rideSchema = new mongoose.Schema(
       ],
       default: [],
     },
+    dispatchTracking: {
+      notifiedDriverIds: {
+        type: [String],
+        default: [],
+      },
+      rejectedDriverIds: {
+        type: [String],
+        default: [],
+      },
+      lastDispatchAttemptAt: {
+        type: Date,
+        default: null,
+      },
+    },
     vehicleIconType: {
       type: String,
       default: '',
@@ -625,5 +639,7 @@ const rideSchema = new mongoose.Schema(
 
 rideSchema.index({ userId: 1, createdAt: -1 });
 rideSchema.index({ driverId: 1, createdAt: -1 });
+rideSchema.index({ status: 1, liveStatus: 1, scheduledAt: 1, createdAt: -1 });
+rideSchema.index({ driverId: 1, scheduledAt: 1, status: 1, liveStatus: 1 });
 
 export const Ride = mongoose.models.TaxiRide || mongoose.model('TaxiRide', rideSchema);

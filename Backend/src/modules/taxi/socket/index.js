@@ -29,6 +29,43 @@ import { registerRideSocketHandlers } from './handlers/rideSocketHandler.js';
 import { authorizeRideRoomAccess } from './middleware/rideRoomAuth.js';
 import { attachSocketAuth } from './middleware/socketAuth.js';
 import { clearDriverRoute } from './services/driverRouteService.js';
+import { consumeScopedRateLimit } from '../middlewares/rateLimitMiddleware.js';
+
+const DRIVER_LOCATION_WRITE_MIN_DISTANCE_METERS = 25;
+const DRIVER_LOCATION_WRITE_MAX_INTERVAL_MS = 15000;
+const DRIVER_ZONE_REFRESH_MIN_DISTANCE_METERS = 120;
+const DRIVER_ZONE_REFRESH_MAX_INTERVAL_MS = 60000;
+const driverLocationState = new Map();
+
+const getSocketClientIp = (socket) => {
+  const forwardedFor = socket.handshake.headers?.['x-forwarded-for'];
+  if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
+    return forwardedFor.split(',')[0].trim();
+  }
+
+  return socket.handshake.address || socket.conn?.remoteAddress || 'unknown';
+};
+
+const toRadians = (value) => Number(value || 0) * (Math.PI / 180);
+
+const getDistanceMeters = (first = [], second = []) => {
+  const [firstLng, firstLat] = first;
+  const [secondLng, secondLat] = second;
+
+  if (![firstLng, firstLat, secondLng, secondLat].every((value) => Number.isFinite(Number(value)))) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const earthRadiusMeters = 6371000;
+  const deltaLat = toRadians(Number(secondLat) - Number(firstLat));
+  const deltaLng = toRadians(Number(secondLng) - Number(firstLng));
+  const startLat = toRadians(firstLat);
+  const endLat = toRadians(secondLat);
+  const haversine = Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(startLat) * Math.cos(endLat) * Math.sin(deltaLng / 2) ** 2;
+
+  return 2 * earthRadiusMeters * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+};
 
 const onAsync = (socket, handler) => async (payload = {}) => {
   try {
@@ -62,6 +99,11 @@ export const configureTaxiSocketServer = (httpServer) => {
 
     if (identity.role === 'driver') {
       await Driver.findByIdAndUpdate(identity.sub, { socketId: socket.id });
+      const previousDriverState = driverLocationState.get(identity.sub) || {};
+      driverLocationState.set(identity.sub, {
+        ...previousDriverState,
+        socketId: socket.id,
+      });
       notifyLateAvailableDriver(identity.sub).catch((error) => {
         console.error('Failed to notify late-available driver on socket connect', error);
       });
@@ -145,12 +187,39 @@ export const configureTaxiSocketServer = (httpServer) => {
 
         // Drivers push fresh GPS coordinates every few seconds so matching stays accurate.
         const normalizedCoords = normalizePoint(coordinates, 'coordinates');
-        const zone = await findZoneByPickup(normalizedCoords);
+        const now = Date.now();
+        const previousDriverState = driverLocationState.get(identity.sub) || {};
+        const distanceFromPrevious = Array.isArray(previousDriverState.coordinates)
+          ? getDistanceMeters(previousDriverState.coordinates, normalizedCoords)
+          : Number.POSITIVE_INFINITY;
+        const timeSincePreviousWrite = now - Number(previousDriverState.updatedAt || 0);
+        const shouldRefreshZone = !previousDriverState.zoneId ||
+          distanceFromPrevious >= DRIVER_ZONE_REFRESH_MIN_DISTANCE_METERS ||
+          now - Number(previousDriverState.zoneResolvedAt || 0) >= DRIVER_ZONE_REFRESH_MAX_INTERVAL_MS;
+        const zone = shouldRefreshZone
+          ? await findZoneByPickup(normalizedCoords)
+          : (previousDriverState.zoneId ? { _id: previousDriverState.zoneId } : null);
+        const nextZoneId = zone?._id ? String(zone._id) : null;
+        const shouldWriteDriverState = !Array.isArray(previousDriverState.coordinates) ||
+          distanceFromPrevious >= DRIVER_LOCATION_WRITE_MIN_DISTANCE_METERS ||
+          timeSincePreviousWrite >= DRIVER_LOCATION_WRITE_MAX_INTERVAL_MS ||
+          previousDriverState.socketId !== socket.id ||
+          String(previousDriverState.zoneId || '') !== String(nextZoneId || '');
 
-        await Driver.findByIdAndUpdate(identity.sub, {
+        if (shouldWriteDriverState) {
+          await Driver.findByIdAndUpdate(identity.sub, {
+            socketId: socket.id,
+            location: toPoint(normalizedCoords, 'coordinates'),
+            zoneId: zone?._id || null,
+          });
+        }
+
+        driverLocationState.set(identity.sub, {
+          coordinates: normalizedCoords,
+          updatedAt: shouldWriteDriverState ? now : Number(previousDriverState.updatedAt || 0),
+          zoneId: nextZoneId,
+          zoneResolvedAt: shouldRefreshZone ? now : Number(previousDriverState.zoneResolvedAt || 0),
           socketId: socket.id,
-          location: toPoint(normalizedCoords, 'coordinates'),
-          zoneId: zone?._id || null,
         });
         notifyLateAvailableDriver(identity.sub).catch((error) => {
           console.error('Failed to notify late-available driver on location update', error);
@@ -162,6 +231,20 @@ export const configureTaxiSocketServer = (httpServer) => {
       'requestRide',
       onAsync(socket, async ({ pickup, drop, fare, estimatedDistanceMeters, estimatedDurationMinutes, vehicleTypeId, vehicleIconType, paymentMethod, serviceType, intercity }) => {
         if (identity.role !== 'user') {
+          return;
+        }
+
+        const rateLimitOutcome = await consumeScopedRateLimit({
+          scope: 'ride_create_socket',
+          max: 10,
+          windowMs: 10 * 60 * 1000,
+          mode: 'auth_or_ip',
+          parts: [identity.sub || `ip:${getSocketClientIp(socket)}`],
+        });
+        if (!rateLimitOutcome.allowed) {
+          socket.emit('errorMessage', {
+            message: 'Too many ride requests. Please try again later.',
+          });
           return;
         }
 
@@ -252,7 +335,9 @@ export const configureTaxiSocketServer = (httpServer) => {
         return;
       }
 
-      markDriverRejectedFromDispatch(rideId, identity.sub);
+      markDriverRejectedFromDispatch(rideId, identity.sub).catch((error) => {
+        console.error('Failed to mark driver rejection from dispatch', error);
+      });
       socket.to(getRideRoom(rideId)).emit('driverRejectedRide', {
         rideId,
         driverId: identity.sub,
@@ -262,6 +347,13 @@ export const configureTaxiSocketServer = (httpServer) => {
     socket.on('disconnect', async () => {
       if (identity.role === 'driver') {
         clearDriverRoute(identity.sub);
+        const previousDriverState = driverLocationState.get(identity.sub);
+        if (previousDriverState) {
+          driverLocationState.set(identity.sub, {
+            ...previousDriverState,
+            socketId: null,
+          });
+        }
         await Driver.findByIdAndUpdate(identity.sub, { socketId: null });
       }
     });

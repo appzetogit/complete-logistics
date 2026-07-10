@@ -184,10 +184,9 @@ class SocketService {
     const preferWebsocketFirst = shouldPreferWebsocketFirst();
     this.socket = io(SOCKET_ORIGIN, {
       auth: { token },
-      // Prefer WebSocket on localhost to avoid noisy dev polling, but keep
-      // polling-first for production environments where some proxies still
-      // require the classic Socket.IO handshake path.
-      transports: preferWebsocketFirst ? ['websocket', 'polling'] : ['polling', 'websocket'],
+      // Prefer WebSocket first everywhere so realtime-heavy ride flows do not
+      // pay the polling handshake cost on every connection.
+      transports: preferWebsocketFirst ? ['websocket', 'polling'] : ['websocket', 'polling'],
       upgrade: true,
       rememberUpgrade: true,
       withCredentials: true,

@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { ApiError } from '../../../utils/ApiError.js';
+import { getOrLoadCachedValue } from '../../../utils/cache.js';
 import { normalizePoint, toPoint } from '../../../utils/geo.js';
 import { RIDE_LIVE_STATUS, RIDE_STATUS } from '../constants/index.js';
 import { AdminBusinessSetting } from '../admin/models/AdminBusinessSetting.js';
@@ -706,6 +707,8 @@ export const normalizeAllowedRidePaymentMethods = (paymentTypes = []) => {
   return unique.length ? unique : ['cash', 'online'];
 };
 
+const SET_PRICE_CACHE_TTL_MS = 30_000;
+
 export const resolveSetPriceForRide = async ({ zoneId = null, serviceLocationId = null, transportType = 'taxi', vehicleTypeId = null }) => {
   if (!vehicleTypeId) {
     return null;
@@ -763,14 +766,30 @@ export const resolveSetPriceForRide = async ({ zoneId = null, serviceLocationId 
     },
   ];
 
-  for (const filter of filters) {
-    const match = await SetPrice.findOne(filter).sort({ updatedAt: -1, createdAt: -1 }).lean();
-    if (match) {
-      return match;
-    }
-  }
+  const cacheKey = [
+    'cache:set_price',
+    String(zoneId || 'none'),
+    String(serviceLocationId || 'none'),
+    normalizedTransportType,
+    String(vehicleTypeId),
+  ].join(':');
 
-  return null;
+  return getOrLoadCachedValue(
+    cacheKey,
+    {
+      ttlMs: SET_PRICE_CACHE_TTL_MS,
+      load: async () => {
+        for (const filter of filters) {
+          const match = await SetPrice.findOne(filter).sort({ updatedAt: -1, createdAt: -1 }).lean();
+          if (match) {
+            return match;
+          }
+        }
+
+        return null;
+      },
+    },
+  );
 };
 
 export const getAllowedRidePaymentMethodsForPricing = async ({ zoneId = null, serviceLocationId = null, transportType = 'taxi', vehicleTypeId = null }) => {
@@ -1756,25 +1775,36 @@ export const appendRideMessage = async ({ rideId, role, senderId, message }) => 
 
 export const updateRideDriverLocation = async ({ rideId, driverId, coordinates, heading = null, speed = null }) => {
   const normalizedCoords = normalizePoint(coordinates, 'coordinates');
-  const ride = await Ride.findOne({ _id: rideId, driverId });
-
-  if (!ride) {
-    throw new ApiError(404, 'Assigned ride not found');
-  }
-
-  ride.lastDriverLocation = {
+  const nextDriverLocation = {
     type: 'Point',
     coordinates: normalizedCoords,
     heading: Number.isFinite(Number(heading)) ? Number(heading) : null,
     speed: Number.isFinite(Number(speed)) ? Number(speed) : null,
     updatedAt: new Date(),
   };
+  const ride = await Ride.findOneAndUpdate(
+    { _id: rideId, driverId },
+    {
+      $set: {
+        lastDriverLocation: nextDriverLocation,
+      },
+    },
+    {
+      returnDocument: 'after',
+      projection: {
+        _id: 1,
+        lastDriverLocation: 1,
+      },
+    },
+  ).lean();
 
-  await ride.save();
+  if (!ride) {
+    throw new ApiError(404, 'Assigned ride not found');
+  }
 
   return {
     rideId: String(ride._id),
-    coordinates: normalizedCoords,
+    coordinates: ride.lastDriverLocation?.coordinates || normalizedCoords,
     heading: ride.lastDriverLocation.heading,
     speed: ride.lastDriverLocation.speed,
     updatedAt: ride.lastDriverLocation.updatedAt,
@@ -1907,7 +1937,7 @@ export const increaseRideBidCeiling = async ({ rideId, userId, incrementSteps = 
         },
       },
       {
-        new: true,
+        returnDocument: 'after',
         runValidators: true,
       },
     );
@@ -1952,7 +1982,7 @@ export const increaseRideBidCeiling = async ({ rideId, userId, incrementSteps = 
       },
     },
     {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     },
   );

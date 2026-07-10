@@ -21,10 +21,9 @@ const formatDate = (value) => {
 
 const getDocumentReviewStatus = (document = {}) =>
   String(
-    document?.status ||
-    document?.verificationStatus ||
     document?.approvalStatus ||
     document?.reviewStatus ||
+    document?.status ||
     '',
   ).trim().toLowerCase();
 

@@ -25,6 +25,30 @@ const driverLifecycleStatuses = new Set([
   RIDE_LIVE_STATUS.ARRIVED,
   RIDE_LIVE_STATUS.COMPLETED,
 ]);
+const RIDE_LOCATION_PERSIST_MIN_DISTANCE_METERS = 12;
+const RIDE_LOCATION_PERSIST_MAX_INTERVAL_MS = 4000;
+const rideLocationPersistState = new Map();
+
+const toRadians = (value) => Number(value || 0) * (Math.PI / 180);
+
+const getDistanceMeters = (first = [], second = []) => {
+  const [firstLng, firstLat] = first;
+  const [secondLng, secondLat] = second;
+
+  if (![firstLng, firstLat, secondLng, secondLat].every((value) => Number.isFinite(Number(value)))) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const earthRadiusMeters = 6371000;
+  const deltaLat = toRadians(Number(secondLat) - Number(firstLat));
+  const deltaLng = toRadians(Number(secondLng) - Number(firstLng));
+  const startLat = toRadians(firstLat);
+  const endLat = toRadians(secondLat);
+  const haversine = Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(startLat) * Math.cos(endLat) * Math.sin(deltaLng / 2) ** 2;
+
+  return 2 * earthRadiusMeters * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+};
 
 export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
   const emitRideState = (ride) => {
@@ -103,30 +127,55 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
       }
 
       await authorizeRideRoomAccess({ socket, rideId });
-
-      const locationUpdate = await updateRideDriverLocation({
-        rideId,
-        driverId: socket.auth.sub,
-        coordinates: normalizePoint(coordinates, 'coordinates'),
-        heading,
-        speed,
-      });
+      const normalizedCoordinates = normalizePoint(coordinates, 'coordinates');
+      const persistKey = `${rideId}:${socket.auth.sub}`;
+      const now = Date.now();
+      const previousPersistState = rideLocationPersistState.get(persistKey) || {};
+      const distanceFromPrevious = Array.isArray(previousPersistState.coordinates)
+        ? getDistanceMeters(previousPersistState.coordinates, normalizedCoordinates)
+        : Number.POSITIVE_INFINITY;
+      const shouldPersistLocation = !Array.isArray(previousPersistState.coordinates) ||
+        distanceFromPrevious >= RIDE_LOCATION_PERSIST_MIN_DISTANCE_METERS ||
+        now - Number(previousPersistState.persistedAt || 0) >= RIDE_LOCATION_PERSIST_MAX_INTERVAL_MS;
+      const fallbackLocationUpdate = {
+        rideId: String(rideId),
+        coordinates: normalizedCoordinates,
+        heading: Number.isFinite(Number(heading)) ? Number(heading) : null,
+        speed: Number.isFinite(Number(speed)) ? Number(speed) : null,
+        updatedAt: new Date().toISOString(),
+      };
+      const locationUpdate = shouldPersistLocation
+        ? await updateRideDriverLocation({
+            rideId,
+            driverId: socket.auth.sub,
+            coordinates: normalizedCoordinates,
+            heading,
+            speed,
+          })
+        : fallbackLocationUpdate;
 
       io.to(getRideRoom(rideId)).emit(SOCKET_EVENTS.RIDE_DRIVER_LOCATION_UPDATED, locationUpdate);
-      setImmediate(() => {
-        mirrorRideDriverLocation({
-          rideId,
-          coordinates: locationUpdate.coordinates,
-          heading: locationUpdate.heading,
-          speed: locationUpdate.speed,
-        }).catch(() => {});
+      if (shouldPersistLocation) {
+        setImmediate(() => {
+          mirrorRideDriverLocation({
+            rideId,
+            coordinates: locationUpdate.coordinates,
+            heading: locationUpdate.heading,
+            speed: locationUpdate.speed,
+          }).catch(() => {});
+        });
+      }
+
+      rideLocationPersistState.set(persistKey, {
+        coordinates: normalizedCoordinates,
+        persistedAt: shouldPersistLocation ? now : Number(previousPersistState.persistedAt || 0),
       });
 
       updateDriverRoute({
         io,
         rideId,
         driverId: socket.auth.sub,
-        coordinates: locationUpdate.coordinates,
+        coordinates: normalizedCoordinates,
       });
     }),
   );
@@ -174,6 +223,7 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
           });
         }
         clearDriverRoute(socket.auth.sub);
+        rideLocationPersistState.delete(`${rideId}:${socket.auth.sub}`);
       }
     }),
   );

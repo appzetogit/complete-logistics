@@ -72,6 +72,8 @@ const DEFAULT_MAP_CENTER = {
 };
 
 const DEFAULT_MAP_COORDS = [75.8577, 22.7196];
+const ONLINE_LOCATION_EMIT_MIN_DISTANCE_METERS = 25;
+const ONLINE_LOCATION_EMIT_MIN_INTERVAL_MS = 12000;
 
 const getGeoLocationErrorMessage = (error, { purpose = 'generic' } = {}) => {
     const code = Number(error?.code);
@@ -439,6 +441,17 @@ const calculateDistanceMeters = (startPoint, endPoint) => {
     return earthRadiusMeters * arc;
 };
 
+const calculateCoordinateDistanceMeters = (startCoordinates, endCoordinates) => {
+    if (!Array.isArray(startCoordinates) || !Array.isArray(endCoordinates)) {
+        return Number.POSITIVE_INFINITY;
+    }
+
+    return calculateDistanceMeters(
+        { coordinates: startCoordinates },
+        { coordinates: endCoordinates },
+    );
+};
+
 const formatTripDistance = (job = {}) => {
     const estimatedMeters = Number(
         job.estimatedDistanceMeters ||
@@ -527,10 +540,9 @@ const getDocumentExpiryValue = (document = {}) => (
 );
 
 const getDocumentReviewStatus = (document = {}) => String(
-    document?.status
-    || document?.verificationStatus
-    || document?.approvalStatus
+    document?.approvalStatus
     || document?.reviewStatus
+    || document?.status
     || '',
 ).trim().toLowerCase();
 
@@ -673,6 +685,10 @@ const DriverHome = () => {
     const recoveryInFlightRef = useRef(false);
     const lastDutyToggleAtRef = useRef(0);
     const isHandlingHistoryNavigationRef = useRef(false);
+    const lastOnlineLocationEmitRef = useRef({
+        coordinates: null,
+        emittedAt: 0,
+    });
     const driverPosition = useMemo(() => toLatLng(driverCoords || DEFAULT_MAP_COORDS), [driverCoords]);
     const mapVehicleIcon = useMemo(
         () => getMapIconForVehicle(vehicleIconUrl || vehicleIconType),
@@ -842,6 +858,31 @@ const DriverHome = () => {
     useEffect(() => {
         currentRequestRef.current = currentRequest;
     }, [currentRequest]);
+
+    const emitOnlineLocationUpdate = useCallback((coordinates, { force = false } = {}) => {
+        if (!Array.isArray(coordinates) || coordinates.length < 2) {
+            return false;
+        }
+
+        const now = Date.now();
+        const lastEmission = lastOnlineLocationEmitRef.current;
+        const movedDistance = calculateCoordinateDistanceMeters(lastEmission.coordinates, coordinates);
+        const shouldEmit = force ||
+            !Array.isArray(lastEmission.coordinates) ||
+            movedDistance >= ONLINE_LOCATION_EMIT_MIN_DISTANCE_METERS ||
+            now - Number(lastEmission.emittedAt || 0) >= ONLINE_LOCATION_EMIT_MIN_INTERVAL_MS;
+
+        if (!shouldEmit) {
+            return false;
+        }
+
+        socketService.emit('locationUpdate', { coordinates });
+        lastOnlineLocationEmitRef.current = {
+            coordinates,
+            emittedAt: now,
+        };
+        return true;
+    }, []);
 
     useEffect(() => {
         const syncLocalDriverPreferences = () => {
@@ -1307,7 +1348,7 @@ const DriverHome = () => {
                 },
                 coordinates: finalCoords,
             });
-            socketService.emit('locationUpdate', { coordinates: finalCoords });
+            emitOnlineLocationUpdate(finalCoords, { force: true });
             
             setStatusMessage(
                 routeBookingPreferences.enabled
@@ -1327,7 +1368,7 @@ const DriverHome = () => {
         } finally {
             setIsTogglingDuty(false);
         }
-    }, [expiredDocumentNames, refreshTodaySummary, routeBookingPreferences.coordinates, routeBookingPreferences.enabled, updateDriverLocation, vehicleReapprovalPending, walletAlertState]);
+    }, [emitOnlineLocationUpdate, expiredDocumentNames, refreshTodaySummary, routeBookingPreferences.coordinates, routeBookingPreferences.enabled, updateDriverLocation, vehicleReapprovalPending, walletAlertState]);
 
     const goOffline = useCallback(async () => {
         setIsTogglingDuty(true);
@@ -1565,7 +1606,7 @@ const DriverHome = () => {
             }
 
             if (nextCoords) {
-                socketService.emit('locationUpdate', { coordinates: nextCoords });
+                emitOnlineLocationUpdate(nextCoords, { force: true });
             }
 
             try {
@@ -1597,7 +1638,7 @@ const DriverHome = () => {
         } finally {
             recoveryInFlightRef.current = false;
         }
-    }, [fetchActiveJob, isHydratingDriver, isOnline, isTogglingDuty, openActiveJob, updateDriverLocation]);
+    }, [emitOnlineLocationUpdate, fetchActiveJob, isHydratingDriver, isOnline, isTogglingDuty, openActiveJob, updateDriverLocation]);
 
     const scheduleRecoveryBurst = useCallback(({ reason = 'resume' } = {}) => {
         if (!isOnline || isHydratingDriver || isTogglingDuty) {
@@ -1634,7 +1675,7 @@ const DriverHome = () => {
             setSocketStatus(socket.connected ? 'connected' : 'reconnecting');
 
             if (driverCoordsRef.current) {
-                socketService.emit('locationUpdate', { coordinates: driverCoordsRef.current });
+                emitOnlineLocationUpdate(driverCoordsRef.current, { force: true });
                 console.info('[driver-home] emitted initial locationUpdate from effect', driverCoordsRef.current);
             }
 
@@ -1862,8 +1903,10 @@ const DriverHome = () => {
                             },
                             coordinates,
                         });
-                        socketService.emit('locationUpdate', { coordinates });
-                        console.info('[driver-home] periodic locationUpdate emitted', coordinates);
+                        const emitted = emitOnlineLocationUpdate(coordinates);
+                        if (emitted) {
+                            console.info('[driver-home] periodic locationUpdate emitted', coordinates);
+                        }
                     })
                     .catch((error) => {
                         console.warn('[driver-home] periodic location update skipped', error?.message || error);
@@ -1893,7 +1936,7 @@ const DriverHome = () => {
             socketService.disconnect();
         }
         return undefined;
-    }, [clearAcceptRecovery, clearRecoveryBurst, fetchActiveJob, isOnline, isOwnerManagedDriver, loadScheduledRides, navigate, scheduleRecoveryBurst]);
+    }, [clearAcceptRecovery, clearRecoveryBurst, emitOnlineLocationUpdate, fetchActiveJob, isOnline, isOwnerManagedDriver, loadScheduledRides, navigate, scheduleRecoveryBurst]);
 
     useEffect(() => {
         if (!isOnline) {
