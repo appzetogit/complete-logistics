@@ -1,0 +1,36 @@
+
+> appzeto-taxi-backend@0.1.0 dev
+> nodemon server.js
+
+[33m[nodemon] 3.1.14[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: js,mjs,cjs,json[39m
+[32m[nodemon] starting `node server.js`[39m
+MongoDB connected to ac-xl50eqo-shard-00-00.6ifoxfu.mongodb.net/appzeto_taxi
+Taxi backend listening on port 5000
+[0mGET /api/v1/admin/drivers?page=1&limit=10&approve=true&search= [36m304[0m 611.795 ms - -[0m
+[0mGET /api/v1/admin/drivers?page=1&limit=10&approve=true&search= [36m304[0m 176.958 ms - -[0m
+[0mGET /api/v1/admin/drivers?page=1&limit=10&approve=true&search= [36m304[0m 133.406 ms - -[0m
+[0mGET /api/v1/admin/drivers?page=1&limit=10&approve=false&search= [36m304[0m 97.735 ms - -[0m
+[0mGET /api/v1/admin/drivers?page=1&limit=10&approve=false&search= [36m304[0m 74.573 ms - -[0m
+[0mGET /api/v1/admin/drivers?page=1&limit=10&approve=false&search= [36m304[0m 68.995 ms - -[0m
+[0mGET /api/v1/admin/drivers?page=1&limit=10&approve=true&search= [36m304[0m 142.423 ms - -[0m
+[0mGET /api/v1/admin/drivers?page=1&limit=10&approve=true&search= [36m304[0m 124.333 ms - -[0m
+[0mGET /api/v1/admin/drivers?page=1&limit=10&approve=true&search= [36m304[0m 120.778 ms - -[0m
+[0mGET /api/v1/admin/driver-subscriptions/plans/list [36m304[0m 162.488 ms - -[0m
+[0mGET /api/v1/admin/wallet/drivers/withdrawals?page=1&limit=10 [36m304[0m 102.374 ms - -[0m
+[0mGET /api/v1/admin/wallet/drivers/withdrawals?page=1&limit=10 [36m304[0m 153.971 ms - -[0m
+[0mGET /api/v1/admin/wallet/drivers/withdrawals?page=1&limit=10 [36m304[0m 95.216 ms - -[0m
+[0mGET /api/v1/admin/wallet/drivers/negative-balance?page=1&limit=10 [36m304[0m 75.255 ms - -[0m
+[0mGET /api/v1/admin/wallet/drivers/negative-balance?page=1&limit=10 [36m304[0m 85.475 ms - -[0m
+[0mGET /api/v1/admin/wallet/drivers/negative-balance?page=1&limit=10 [36m304[0m 72.651 ms - -[0m
+[0mGET /api/v1/admin/drivers/delete-requests [32m200[0m 77.329 ms - 634[0m
+[0mGET /api/v1/admin/owner-management/driver-needed-document [32m200[0m 76.513 ms - 1159[0m
+[0mGET /api/v1/admin/payment-methods [36m304[0m 128.163 ms - -[0m
+[0mGET /api/v1/admin/drivers?page=1&limit=10&approve=true&search= [32m200[0m 123.733 ms - 6130[0m
+[0mGET /api/v1/admin/driver-subscriptions/settings [0m-[0m - ms - -[0m
+[0mGET /api/v1/admin/driver-ratings [36m304[0m 50429.353 ms - -[0m
+[31m[nodemon] app crashed - waiting for file changes before starting...[39m
+[32m[nodemon] restarting child process[39m
+[32m[nodemon] starting `node server.js`[39m

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="India flag">
+  <rect width="48" height="48" rx="6" fill="#ffffff"/>
+  <clipPath id="r">
+    <rect width="48" height="48" rx="6"/>
+  </clipPath>
+  <g clip-path="url(#r)">
+    <rect width="48" height="16" y="0" fill="#FF9933"/>
+    <rect width="48" height="16" y="16" fill="#ffffff"/>
+    <rect width="48" height="16" y="32" fill="#138808"/>
+    <circle cx="24" cy="24" r="5.5" fill="none" stroke="#000080" stroke-width="1.6"/>
+    <circle cx="24" cy="24" r="0.9" fill="#000080"/>
+    <g stroke="#000080" stroke-width="1.1" stroke-linecap="round">
+      <line x1="24" y1="18.5" x2="24" y2="29.5"/>
+      <line x1="18.5" y1="24" x2="29.5" y2="24"/>
+      <line x1="20.1" y1="20.1" x2="27.9" y2="27.9"/>
+      <line x1="27.9" y1="20.1" x2="20.1" y2="27.9"/>
+      <line x1="19.2" y1="22.1" x2="28.8" y2="25.9"/>
+      <line x1="28.8" y1="22.1" x2="19.2" y2="25.9"/>
+    </g>
+  </g>
+</svg>

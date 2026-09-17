@@ -1,0 +1,47 @@
+:root {
+  /* Driver Module Centralized Theme Tokens */
+  --driver-primary: #000000;         /* Primary Brand Color (Black for sleek SaaS look) */
+  --driver-primary-hover: #1A1A1A;   /* Primary Color Hover */
+  --driver-primary-light: #F0F0F0;  /* Light version for backgrounds/badges */
+  
+  --driver-accent: #FFD700;          /* Accent Color (Gold/Yellow for visibility) */
+  --driver-accent-light: #FFF9E6;    /* Light Accent */
+  
+  --driver-success: #10B981;         /* Success Green */
+  --driver-error: #EF4444;           /* Error Red */
+  --driver-warning: #F59E0B;         /* Warning Amber */
+  
+  --driver-bg: #F8F9FA;              /* Main Background */
+  --driver-card: #FFFFFF;            /* Card Background */
+  --driver-border: #F1F5F9;          /* Border Color */
+  
+  --driver-text-main: #0F172A;       /* Heading Text */
+  --driver-text-sub: #64748B;        /* Subtext / Body */
+  --driver-text-white: #FFFFFF;      /* Text on Dark Backgrounds */
+  
+  /* Shadow Tokens */
+  --driver-shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.03);
+  --driver-shadow-premium: 0 10px 40px rgba(0, 0, 0, 0.08);
+}
+
+/* Localized Tailwind Overrides for Driver Module */
+.driver-module {
+  --tw-primary: var(--driver-primary);
+  --tw-primary-hover: var(--driver-primary-hover);
+  --tw-bg-main: var(--driver-bg);
+}
+
+.driver-btn-primary {
+  background-color: var(--driver-primary);
+  color: var(--driver-text-white);
+}
+
+.driver-text-primary {
+  color: var(--driver-primary);
+}
+
+.driver-card {
+  background-color: var(--driver-card);
+  box-shadow: var(--driver-shadow-soft);
+  border: 1px solid var(--driver-border);
+}

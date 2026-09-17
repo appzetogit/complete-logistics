@@ -1,0 +1,146 @@
+[
+    {
+        "id": 1,
+        "name": "Afghanistan",
+        "dial_code": "+93",
+        "code": "AF",
+        "currency_name": "afghani",
+        "currency_code": "AFN",
+        "currency_symbol": "؋"
+    },
+    {
+        "id": 102,
+        "name": "India",
+        "dial_code": "+91",
+        "code": "IN",
+        "currency_name": "Indian rupee",
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+    },
+    {
+        "id": 194,
+        "name": "Saudi Arabia",
+        "dial_code": "+966",
+        "code": "SA",
+        "currency_name": "riyal",
+        "currency_code": "SAR",
+        "currency_symbol": "﷼"
+    },
+    {
+        "id": 11,
+        "name": "Australia",
+        "dial_code": "+61",
+        "code": "AU",
+        "currency_name": "Australian dollar",
+        "currency_code": "AUD",
+        "currency_symbol": "$"
+    },
+    {
+        "id": 5,
+        "name": "American Samoa",
+        "dial_code": "+1",
+        "code": "AS",
+        "currency_name": "US dollar",
+        "currency_code": "USD",
+        "currency_symbol": "$"
+    },
+    {
+        "id": 18,
+        "name": "Belgium",
+        "dial_code": "+32",
+        "code": "BE",
+        "currency_name": "euro",
+        "currency_code": "EUR",
+        "currency_symbol": "€"
+    },
+    {
+        "id": 111,
+        "name": "Japan",
+        "dial_code": "+81",
+        "code": "JP",
+        "currency_name": "yen (inv.)",
+        "currency_code": "JPY",
+        "currency_symbol": "¥"
+    },
+    {
+        "id": 131,
+        "name": "Malaysia",
+        "dial_code": "+60",
+        "code": "MY",
+        "currency_name": "ringgit (inv.)",
+        "currency_code": "MYR",
+        "currency_symbol": "RM"
+    },
+    {
+        "id": 167,
+        "name": "Pakistan",
+        "dial_code": "+92",
+        "code": "PK",
+        "currency_name": "Pakistani rupee",
+        "currency_code": "PKR",
+        "currency_symbol": "₨"
+    },
+    {
+        "id": 172,
+        "name": "Philippines",
+        "dial_code": "+63",
+        "code": "PH",
+        "currency_name": "Philippine peso",
+        "currency_code": "PHP",
+        "currency_symbol": "Php"
+    },
+    {
+        "id": 199,
+        "name": "Singapore",
+        "dial_code": "+65",
+        "code": "SG",
+        "currency_name": "Singapore dollar",
+        "currency_code": "SGD",
+        "currency_symbol": "$"
+    },
+    {
+        "id": 213,
+        "name": "Sweden",
+        "dial_code": "+46",
+        "code": "SE",
+        "currency_name": "krona (pl. kronor)",
+        "currency_code": "SEK",
+        "currency_symbol": "kr"
+    },
+    {
+        "id": 224,
+        "name": "Turkey",
+        "dial_code": "+90",
+        "code": "TR",
+        "currency_name": "Turkish lira",
+        "currency_code": "TRY",
+        "currency_symbol": "TL"
+    },
+    {
+        "id": 226,
+        "name": "United Arab Emirates",
+        "dial_code": "+971",
+        "code": "AE",
+        "currency_name": "UAE dirham",
+        "currency_code": "AED",
+        "currency_symbol": "AED"
+    },
+    {
+        "id": 227,
+        "name": "United Kingdom",
+        "dial_code": "+44",
+        "code": "GB",
+        "currency_name": "pound sterling",
+        "currency_code": "GBP",
+        "currency_symbol": "£"
+    },
+    {
+        "id": 228,
+        "name": "United States",
+        "dial_code": "+1",
+        "code": "US",
+        "currency_name": "US dollar",
+        "currency_code": "USD",
+        "currency_symbol": "$"
+    }
+]

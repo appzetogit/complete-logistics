@@ -1,0 +1,33 @@
+{
+  "name": "appzeto-taxi-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@phonepe-pg/pg-sdk-node": "^2.0.6",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "firebase-admin": "^13.8.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.4.1",
+    "morgan": "^1.10.0",
+    "nodemailer": "^8.0.6",
+    "qrcode": "^1.5.4",
+    "razorpay": "^2.9.6",
+    "redis": "^4.7.1",
+    "simplify-js": "^1.2.4",
+    "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}

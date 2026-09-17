@@ -1,0 +1,1186 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
+
+@import "tailwindcss";
+
+:root {
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: #1C2833;
+  background-color: #F9F9F9;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif !important;
+}
+
+#root {
+  width: 100%;
+}
+
+@theme {
+  --color-primary: #E85D04;
+  --color-secondary: #F48C06;
+  --font-sans: 'Outfit', system-ui, sans-serif;
+  --font-display: 'Outfit', sans-serif;
+  
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-3xl: 2rem;
+  
+  --shadow-premium: 0 10px 40px -10px rgba(0,0,0,0.1);
+  --shadow-soft: 0 4px 20px -2px rgba(0,0,0,0.05);
+}
+
+/* Global scrollbar hiding for a cleaner mobile experience */
+* {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+}
+
+*::-webkit-scrollbar {
+    display: none; /* Chrome, Safari and Opera */
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Premium Driver-Specific Theme Layer */
+.driver-theme {
+    /* Centralized Color Controls - Update these to change the entire driver module appearance */
+    --color-primary: #1C2833;      /* Driver Brand Primary (Dark Navy/Slate for professional SaaS feel) */
+    --color-secondary: #334155;    /* Driver Brand Secondary (Lighter Slate) */
+    
+    /* Dedicated Variable-Based Mapping */
+    --driver-accent: #FFD700;
+    --driver-bg-soft: #F8F9FA;
+    --driver-card-white: #FFFFFF;
+    
+    background-color: var(--driver-bg-soft);
+    color: #0F172A;
+    font-family: 'Outfit', sans-serif;
+}
+
+/* Localize Tailwind's color mapping for the driver module */
+.driver-theme .text-primary { color: var(--color-primary); }
+.driver-theme .bg-primary { background-color: var(--color-primary); }
+.driver-theme .border-primary { border-color: var(--color-primary); }
+.driver-theme .shadow-premium { --tw-shadow: 0 10px 40px -10px rgba(0,0,0,0.15); box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow); }
+
+.glass-morphism {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.admin-user-field,
+.admin-user-field:focus {
+  color-scheme: light;
+  background-color: #ffffff !important;
+  color: #000000 !important;
+}
+
+.admin-user-field::placeholder {
+  color: #6b7280 !important;
+  opacity: 1;
+}
+
+.admin-user-field option {
+  background-color: #ffffff;
+  color: #000000;
+}
+
+.admin-user-field:-webkit-autofill,
+.admin-user-field:-webkit-autofill:hover,
+.admin-user-field:-webkit-autofill:focus,
+.admin-user-field:-webkit-autofill:active {
+  -webkit-text-fill-color: #000000 !important;
+  caret-color: #000000 !important;
+  box-shadow: 0 0 0 1000px #ffffff inset !important;
+  transition: background-color 9999s ease-out 0s;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.skeleton {
+  background-color: #f1f5f9;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0,
+    rgba(255, 255, 255, 0.2) 20%,
+    rgba(255, 255, 255, 0.5) 60%,
+    rgba(255, 255, 255, 0)
+  );
+  animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* ==========================================================================
+   REDIGO CENTRALIZED ADMIN THEME & TYPOGRAPHY
+   This layer unifies typography, alignment, form fields, cards, and tables
+   specifically inside the Admin Panel, scoped under .redigo-admin-root.
+   ========================================================================== */
+
+/* 1. Global Font and Typography Unification */
+.redigo-admin-root,
+.redigo-admin-root * {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+}
+
+/* Normalise oversized headers and weight discrepancies */
+.redigo-admin-root h1 {
+  font-size: 1.5rem !important; /* Unified to 24px */
+  font-weight: 800 !important; /* Sleek bold */
+  letter-spacing: -0.025em !important;
+}
+
+.redigo-admin-root h2 {
+  font-size: 1.25rem !important; /* Unified to 20px */
+  font-weight: 700 !important;
+  letter-spacing: -0.02em !important;
+}
+
+.redigo-admin-root h3 {
+  font-size: 1rem !important; /* Unified to 16px */
+  font-weight: 600 !important;
+}
+
+/* Adjust overly heavy weights (900/black) to professional bold/semibold */
+.redigo-admin-root .font-black {
+  font-weight: 800 !important;
+}
+.redigo-admin-root .font-extrabold {
+  font-weight: 800 !important;
+}
+
+/* 2. Text Color Normalization */
+.redigo-admin-root .text-slate-900,
+.redigo-admin-root .text-gray-900 {
+  color: #0f172a !important; /* slate-900 */
+}
+
+.redigo-admin-root .text-slate-800,
+.redigo-admin-root .text-gray-800 {
+  color: #1e293b !important; /* slate-800 */
+}
+
+.redigo-admin-root .text-slate-700,
+.redigo-admin-root .text-gray-700 {
+  color: #334155 !important; /* slate-700 */
+}
+
+.redigo-admin-root .text-slate-500,
+.redigo-admin-root .text-gray-500 {
+  color: #64748b !important; /* slate-500 */
+}
+
+.redigo-admin-root .text-slate-400,
+.redigo-admin-root .text-gray-400 {
+  color: #94a3b8 !important; /* slate-400 */
+}
+
+/* 3. Outer Padding and Alignment Standardization */
+/* Prevents double padding between AdminLayout's main container and standalone page wrappers */
+.redigo-admin-root main > div,
+.redigo-admin-root main > section,
+.redigo-admin-root main > form {
+  padding: 0 !important;
+  background-color: transparent !important;
+  min-height: auto !important;
+}
+
+/* 4. Form Field Standardization (Inputs, Selects, Textareas) */
+.redigo-admin-root input[type="text"],
+.redigo-admin-root input[type="number"],
+.redigo-admin-root input[type="email"],
+.redigo-admin-root input[type="tel"],
+.redigo-admin-root input[type="password"],
+.redigo-admin-root select,
+.redigo-admin-root textarea {
+  border-radius: 8px !important; /* unified rounded-lg */
+  border-color: #cbd5e1 !important; /* slate-300 */
+  background-color: #ffffff !important;
+  color: #1e293b !important; /* slate-800 */
+  font-size: 0.875rem !important; /* text-sm */
+  transition: all 0.2s ease-in-out !important;
+}
+
+.redigo-admin-root input[type="text"]:focus,
+.redigo-admin-root input[type="number"]:focus,
+.redigo-admin-root input[type="email"]:focus,
+.redigo-admin-root input[type="tel"]:focus,
+.redigo-admin-root input[type="password"]:focus,
+.redigo-admin-root select:focus,
+.redigo-admin-root textarea:focus {
+  border-color: #4f46e5 !important; /* Indigo-600 */
+  outline: 2px solid transparent !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 1px #4f46e5 !important;
+}
+
+/* 5. Card and Border Uniformity */
+.redigo-admin-root .rounded-xl,
+.redigo-admin-root .rounded-2xl,
+.redigo-admin-root .rounded-\[28px\] {
+  border-radius: 16px !important; /* Standardize premium rounded cards */
+}
+
+.redigo-admin-root .border-slate-200,
+.redigo-admin-root .border-gray-200 {
+  border-color: #e2e8f0 !important; /* Standard slate-200 */
+}
+
+.redigo-admin-root .border-slate-100,
+.redigo-admin-root .border-gray-100 {
+  border-color: #f1f5f9 !important; /* Standard slate-100 */
+}
+
+/* 6. Unified Table Design */
+.redigo-admin-root thead {
+  background-color: #f8fafc !important; /* slate-50 */
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+.redigo-admin-root th {
+  color: #64748b !important; /* slate-500 */
+  font-size: 0.75rem !important;
+  font-weight: 700 !important;
+}
+
+.redigo-admin-root td {
+  border-color: #f1f5f9 !important;
+}
+
+/* ==========================================================================
+   USER APP PREMIUM REDESIGN - DARK & LIGHT THEME STYLING
+   ========================================================================== */
+
+/* 1. Global Font and Typography for User App */
+/* 1. Global Font and Typography for User App */
+.user-app-theme,
+.user-app-theme * {
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif !important;
+  box-sizing: border-box !important;
+}
+
+/* Explicitly map all Tailwind font-override utility classes in user app to Outfit */
+.user-app-theme .font-sans,
+.user-app-theme .font-display,
+.user-app-theme [class*="font-['Plus_Jakarta_Sans'"],
+.user-app-theme [class*="font-['Inter'"],
+.user-app-theme [class*="font-['Plus_Jakarta_Sans']"],
+.user-app-theme [class*="font-['Inter']"] {
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif !important;
+}
+
+/* 2. Color Schemes for Dark Mode (Default) */
+.user-app-theme.dark {
+  --user-bg: #07111f;
+  --user-card-bg: #0f1b2d;
+  --user-card-soft: #162238;
+  --user-text-primary: #ffffff;
+  --user-text-secondary: #b8c2d6;
+  --user-text-muted: #7d8aa5;
+  --user-border: rgba(255,255,255,0.12);
+  --user-accent: #ffc400;
+}
+
+/* 3. Color Schemes for Light Mode */
+.user-app-theme.light {
+  --user-bg: #f6f7fb;
+  --user-card-bg: #ffffff;
+  --user-card-soft: #f1f3f8;
+  --user-text-primary: #0b1220;
+  --user-text-secondary: #334155;
+  --user-text-muted: #64748b;
+  --user-border: rgba(15,23,42,0.12);
+  --user-accent: #ffc400;
+}
+
+/* 4. Adaptive Utility Class Mappings inside User App */
+.user-app-theme {
+  background-color: var(--user-bg) !important;
+  color: var(--user-text-primary) !important;
+}
+
+.user-app-theme .bg-white,
+.user-app-theme .bg-white\/70,
+.user-app-theme .bg-white\/75,
+.user-app-theme .bg-white\/80,
+.user-app-theme .bg-white\/85,
+.user-app-theme .bg-white\/90,
+.user-app-theme .bg-white\/92,
+.user-app-theme .bg-white\/95,
+.user-app-theme .bg-slate-50,
+.user-app-theme .bg-gray-50,
+.user-app-theme .bg-gray-50\/50,
+.user-app-theme .bg-slate-900,
+.user-app-theme .bg-slate-950,
+.user-app-theme .bg-zinc-950,
+.user-app-theme .bg-neutral-950,
+.user-app-theme .bg-slate-900\/90,
+.user-app-theme .bg-slate-900\/95,
+.user-app-theme .bg-slate-900\/80,
+.user-app-theme .bg-black\/60,
+.user-app-theme .bg-slate-950\/70,
+.user-app-theme .bg-slate-950\/85,
+.user-app-theme .bg-slate-950\/80,
+.user-app-theme .bg-zinc-900,
+.user-app-theme .bg-zinc-900\/80 {
+  background-color: var(--user-card-bg) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+
+/* Text Primary overrides */
+.user-app-theme .text-slate-950,
+.user-app-theme .text-slate-900,
+.user-app-theme .text-slate-800,
+.user-app-theme .text-gray-900,
+.user-app-theme .text-gray-800,
+.user-app-theme .text-black,
+.user-app-theme .text-white,
+.user-app-theme .text-zinc-100 {
+  color: var(--user-text-primary) !important;
+}
+
+/* Text Secondary overrides */
+.user-app-theme .text-slate-700,
+.user-app-theme .text-slate-600,
+.user-app-theme .text-slate-400,
+.user-app-theme .text-gray-700,
+.user-app-theme .text-gray-600,
+.user-app-theme .text-gray-400,
+.user-app-theme .text-zinc-400,
+.user-app-theme .text-slate-300 {
+  color: var(--user-text-secondary) !important;
+}
+
+/* Text Muted overrides */
+.user-app-theme .text-slate-500,
+.user-app-theme .text-gray-500,
+.user-app-theme .text-zinc-500 {
+  color: var(--user-text-muted) !important;
+}
+
+/* Border overrides */
+.user-app-theme .border-white,
+.user-app-theme .border-white\/10,
+.user-app-theme .border-white\/80,
+.user-app-theme .border-slate-100,
+.user-app-theme .border-slate-200,
+.user-app-theme .border-slate-200\/40,
+.user-app-theme .border-slate-50,
+.user-app-theme .border-slate-800,
+.user-app-theme .border-slate-850,
+.user-app-theme .border-slate-800\/80,
+.user-app-theme .border-zinc-800,
+.user-app-theme .border-slate-300,
+.user-app-theme .border-slate-350,
+.user-app-theme .border-gray-100,
+.user-app-theme .border-gray-200,
+.user-app-theme .border-gray-300 {
+  border-color: var(--user-border) !important;
+}
+
+.user-app-theme .shadow-sm,
+.user-app-theme .shadow-md,
+.user-app-theme .shadow-lg,
+.user-app-theme .shadow-xl,
+.user-app-theme .shadow-2xl,
+.user-app-theme .shadow-premium {
+  box-shadow: 0 12px 30px -10px rgba(0,0,0,0.15) !important;
+}
+
+/* Accent overrides */
+.user-app-theme .text-primary,
+.user-app-theme .text-amber-500,
+.user-app-theme .text-orange-500,
+.user-app-theme .text-\[\#FFB300\],
+.user-app-theme .text-yellow-400,
+.user-app-theme .text-yellow-500 {
+  color: var(--user-accent) !important;
+}
+
+.user-app-theme .bg-primary,
+.user-app-theme .bg-orange-500,
+.user-app-theme .bg-amber-500,
+.user-app-theme .bg-\[\#FFB300\],
+.user-app-theme .bg-yellow-400,
+.user-app-theme .bg-yellow-500 {
+  background-color: var(--user-accent) !important;
+  color: #0b1220 !important;
+}
+
+/* Glassmorphism custom components */
+.user-glass-card {
+  background: var(--user-card-bg) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid var(--user-border) !important;
+  border-radius: 24px !important;
+}
+
+/* For Inputs */
+.user-app-theme input,
+.user-app-theme select,
+.user-app-theme textarea {
+  background-color: var(--user-card-soft) !important;
+  color: var(--user-text-primary) !important;
+  border-color: var(--user-border) !important;
+}
+
+.user-app-theme input.bg-transparent,
+.user-app-theme textarea.bg-transparent {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.user-app-theme input:focus,
+.user-app-theme select:focus,
+.user-app-theme textarea:focus {
+  border-color: var(--user-accent) !important;
+  box-shadow: 0 0 0 1px var(--user-accent) !important;
+}
+
+/* Lighter grey badges, card inner sections, and alerts map to card-soft */
+.user-app-theme .bg-slate-100,
+.user-app-theme .bg-gray-100,
+.user-app-theme .bg-slate-200,
+.user-app-theme .bg-gray-200,
+.user-app-theme .bg-slate-300,
+.user-app-theme .bg-gray-300,
+.user-app-theme .bg-slate-50\/50,
+.user-app-theme .bg-slate-50\/60,
+.user-app-theme .bg-slate-50\/70,
+.user-app-theme .bg-slate-50\/80,
+.user-app-theme .bg-slate-50\/90,
+.user-app-theme .bg-slate-100\/40,
+.user-app-theme .bg-slate-100\/50,
+.user-app-theme .bg-slate-100\/60,
+.user-app-theme .bg-slate-100\/70,
+.user-app-theme .bg-white\/10,
+.user-app-theme .bg-white\/20,
+.user-app-theme .bg-white\/30,
+.user-app-theme .bg-slate-200\/50,
+.user-app-theme .bg-orange-50,
+.user-app-theme .bg-orange-50\/60,
+.user-app-theme .bg-orange-50\/70,
+.user-app-theme .bg-orange-100,
+.user-app-theme .bg-orange-100\/60,
+.user-app-theme .bg-emerald-50,
+.user-app-theme .bg-emerald-50\/30,
+.user-app-theme .bg-emerald-50\/50,
+.user-app-theme .bg-emerald-50\/70,
+.user-app-theme .bg-emerald-100,
+.user-app-theme .bg-emerald-100\/50,
+.user-app-theme .bg-emerald-100\/70,
+.user-app-theme .bg-blue-50,
+.user-app-theme .bg-blue-50\/60,
+.user-app-theme .bg-blue-50\/70,
+.user-app-theme .bg-blue-100,
+.user-app-theme .bg-blue-100\/50,
+.user-app-theme .bg-indigo-50,
+.user-app-theme .bg-indigo-50\/50,
+.user-app-theme .bg-indigo-50\/70,
+.user-app-theme .bg-red-50,
+.user-app-theme .bg-rose-50,
+.user-app-theme .bg-rose-50\/60,
+.user-app-theme .bg-rose-50\/70,
+.user-app-theme .bg-rose-100,
+.user-app-theme .bg-amber-50,
+.user-app-theme .bg-amber-50\/60,
+.user-app-theme .bg-amber-100,
+.user-app-theme .bg-yellow-50,
+.user-app-theme .bg-yellow-50\/60,
+.user-app-theme .bg-yellow-100,
+.user-app-theme .bg-slate-900\/60,
+.user-app-theme .bg-slate-950\/60,
+.user-app-theme .bg-slate-950\/75,
+.user-app-theme .bg-zinc-800 {
+  background-color: var(--user-card-soft) !important;
+}
+
+.user-app-theme select option {
+  background-color: var(--user-card-bg) !important;
+  color: var(--user-text-primary) !important;
+}
+
+.user-app-theme button.bg-slate-900,
+.user-app-theme button.bg-black,
+.user-app-theme a.bg-slate-900,
+.user-app-theme a.bg-black {
+  background-color: var(--user-accent) !important;
+  color: #0b1220 !important;
+}
+
+@media (min-width: 768px) {
+  /* Let the main container and user pages expand on desktop for a spacious web-app feel */
+  main.max-w-lg,
+  div.max-w-lg {
+    max-width: 72rem !important; /* 1152px */
+  }
+
+  /* Keep the bottom navigation bar and float overlays centered and compact */
+  nav.max-w-lg,
+  .fixed.max-w-lg,
+  .fixed.left-1\/2 {
+    max-width: 32rem !important; /* 512px */
+  }
+}
+
+/* Custom page container background overrides to support dynamic light/dark mode */
+.user-app-theme,
+.user-app-theme main,
+.user-app-theme .min-h-screen {
+  background-color: var(--user-bg) !important;
+}
+
+.user-app-theme [class*="bg-[linear-gradient"],
+.user-app-theme [class*="bg-[#FAFBFF]"],
+.user-app-theme [class*="bg-[#FDFDFD]"],
+.user-app-theme [class*="bg-[#F8FAFC]"],
+.user-app-theme [class*="bg-[#E7F5E8]"],
+.user-app-theme [class*="bg-[#f5f7fb]"] {
+  background: var(--user-bg) !important;
+  background-image: none !important;
+}
+
+/* User App login page Redesign CSS */
+.login-page {
+  width: 100%;
+  max-width: 100%;
+  min-height: 100dvh;
+  background: var(--user-bg) !important;
+  color: var(--user-text-primary) !important;
+  overflow: hidden;
+  font-family: "Outfit", "Plus Jakarta Sans", "Inter", sans-serif !important;
+}
+
+.login-hero {
+  position: relative;
+  height: 58dvh;
+  overflow: hidden;
+}
+
+.login-hero-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.login-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(8, 7, 22, 0.05) 0%,
+    rgba(8, 7, 22, 0.25) 45%,
+    var(--user-bg) 100%
+  ) !important;
+  z-index: 1;
+}
+
+.login-logo {
+  position: absolute;
+  top: 28px;
+  left: 26px;
+  z-index: 10;
+}
+
+.login-hero-text {
+  position: absolute;
+  left: 28px;
+  right: 28px;
+  bottom: 55px;
+  z-index: 2;
+}
+
+.login-card {
+  position: relative;
+  z-index: 3;
+  margin-top: -35px;
+  min-height: 45dvh;
+  background: var(--user-card-bg) !important;
+  border-radius: 32px 32px 0 0;
+  padding: 28px;
+  border-top: 1px solid var(--user-border);
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.1) !important;
+}
+
+.login-primary-text {
+  color: var(--user-text-primary) !important;
+}
+
+.login-accent-text {
+  color: var(--user-accent) !important;
+}
+
+.login-subtitle {
+  color: var(--user-text-secondary) !important;
+}
+
+.login-button {
+  width: 100%;
+  height: 58px;
+  background: var(--user-accent) !important;
+  color: #080716 !important;
+  border-radius: 14px;
+  font-weight: 800;
+  margin-top: 40px;
+  transition: all 0.25s ease;
+  box-shadow: 0 8px 24px rgba(255, 196, 0, 0.2) !important;
+}
+
+.login-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(255, 196, 0, 0.35) !important;
+  background: #ffc400 !important;
+}
+
+.login-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.login-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none !important;
+}
+
+.login-page input {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.login-page input:focus {
+  border: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Shake Animation */
+@keyframes otpShake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-8px); }
+  40%, 80% { transform: translateX(8px); }
+}
+
+.shake-animation {
+  animation: otpShake 0.4s ease-in-out;
+}
+
+/* Custom OTP Input Style */
+.otp-input-field {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background-color: var(--user-card-soft) !important;
+  border: 2px solid var(--user-border) !important;
+  color: var(--user-text-primary) !important;
+}
+
+.otp-input-field:focus {
+  border-color: var(--user-accent) !important;
+  background-color: var(--user-card-bg) !important;
+  box-shadow: 0 0 12px rgba(255, 196, 0, 0.2) !important;
+}
+
+/* Theme Toggle Button Style */
+.theme-toggle-floating {
+  position: absolute;
+  top: 28px;
+  right: 26px;
+  z-index: 10;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.3) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  color: #ffffff !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+}
+
+.theme-toggle-floating:hover {
+  transform: scale(1.08);
+  background: rgba(0, 0, 0, 0.45) !important;
+}
+
+.theme-toggle-floating:active {
+  transform: scale(0.95);
+}
+
+.user-app-theme.light .theme-toggle-floating {
+  background: rgba(255, 255, 255, 0.7) !important;
+  border: 1px solid rgba(15, 23, 42, 0.12) !important;
+  color: #0b1220 !important;
+}
+
+.user-app-theme.light .theme-toggle-floating:hover {
+  background: rgba(255, 255, 255, 0.9) !important;
+}
+
+/* Custom Search Button Overrides to bypass global button overrides */
+.user-app-theme .search-button-dark {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(63, 63, 70, 0.8) !important;
+}
+
+/* User Theme Custom Variables */
+:root {
+  --user-bg: #0F172A;
+  --user-card-bg: #111827;
+  --user-card-soft: #162238;
+  --user-text-primary: #FFFFFF;
+  --user-text-secondary: #CBD5E1;
+  --user-border: rgba(255,255,255,0.10);
+  --user-accent: #FFC400;
+  --user-profile-header-bg: #090d16;
+  --user-profile-header-gradient: linear-gradient(180deg, rgba(255, 196, 0, 0.06) 0%, rgba(15, 23, 42, 1) 100%);
+}
+
+.user-app-theme.light,
+.user-app-theme .light,
+.user-app-theme[class*="light"] {
+  --user-bg: #F8FAFC;
+  --user-card-bg: #FFFFFF;
+  --user-card-soft: #f1f3f8;
+  --user-text-primary: #0B1220;
+  --user-text-secondary: #64748B;
+  --user-border: rgba(15,23,42,0.10);
+  --user-accent: #FFC400;
+  --user-profile-header-bg: #FFFFFF;
+  --user-profile-header-gradient: linear-gradient(180deg, rgba(238, 242, 255, 0.5) 0%, rgba(248, 250, 252, 0) 100%);
+}
+
+.user-app-theme.dark,
+.user-app-theme .dark,
+.user-app-theme[class*="dark"] {
+  --user-bg: #05070D;
+  --user-card-bg: #101827;
+  --user-card-soft: #162238;
+  --user-text-primary: #FFFFFF;
+  --user-text-secondary: #CBD5E1;
+  --user-border: rgba(255,255,255,0.12);
+  --user-accent: #FFC400;
+  --user-profile-header-bg: #090d16;
+  --user-profile-header-gradient: linear-gradient(180deg, rgba(255, 196, 0, 0.06) 0%, rgba(5, 7, 13, 1) 100%);
+}
+
+/* Theme variable mapping utilities */
+.user-app-theme {
+  background-color: var(--user-bg) !important;
+  color: var(--user-text-primary) !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+@media (max-width: 1023px) {
+  .user-app-theme {
+    max-width: 430px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+}
+
+/* Shortcut image background blob */
+.shortcut-image-bg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 20px;
+  width: 60px;
+  height: 60px;
+  padding: 10px;
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+}
+
+.user-app-theme.light .shortcut-image-bg,
+.user-app-theme .light .shortcut-image-bg,
+.user-app-theme[class*="light"] .shortcut-image-bg {
+  background: linear-gradient(135deg, #fff7cc, #eef4ff);
+}
+
+.user-app-theme.dark .shortcut-image-bg,
+.user-app-theme .dark .shortcut-image-bg,
+.user-app-theme[class*="dark"] .shortcut-image-bg {
+  background: linear-gradient(135deg, rgba(255,196,0,0.18), rgba(255,255,255,0.08));
+}
+
+.user-bottom-nav {
+  position: fixed !important;
+  left: 50% !important;
+  bottom: max(16px, env(safe-area-inset-bottom)) !important;
+  transform: translateX(-50%) !important;
+  z-index: 9997 !important;
+  width: calc(100% - 32px) !important;
+  max-width: 390px !important;
+  pointer-events: auto !important;
+}
+
+.user-home-scroll {
+  padding-bottom: 140px;
+}
+
+/* HTML and Body scroll configurations */
+html, body, #root {
+  min-height: 100%;
+}
+
+.user-app,
+.user-home,
+.user-home-page {
+  min-height: 100vh !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+/* Rapido layout styling */
+.user-home {
+  position: relative !important;
+  min-height: 100vh !important;
+  width: 100% !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  background: var(--user-bg) !important;
+  box-sizing: border-box !important;
+}
+@media (max-width: 1023px) {
+  .user-home {
+    max-width: 430px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+}
+
+.map-header {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: 240px !important;
+  z-index: 1 !important;
+  overflow: hidden !important;
+}
+
+.map-header .google-map,
+.map-header iframe,
+.map-header .map-container {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.pickup-address-pill {
+  position: absolute !important;
+  left: 16px !important;
+  right: 16px !important;
+  bottom: 18px !important;
+  z-index: 20 !important;
+}
+
+.home-sheet {
+  position: relative !important;
+  z-index: 5 !important;
+  margin-top: 220px !important;
+  border-radius: 28px 28px 0 0 !important;
+  background: var(--user-bg) !important;
+  padding: 16px 16px 110px 16px !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  overflow-x: hidden !important;
+}
+
+.user-search-bar {
+  position: sticky !important;
+  top: 10px !important;
+  z-index: 50 !important;
+}
+
+/* All Services Modal Overlay */
+.all-services-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  background: rgba(0, 0, 0, 0.70) !important;
+  backdrop-blur: none !important;
+  z-index: 9998 !important;
+}
+
+.all-services-sheet {
+  position: fixed !important;
+  left: 50% !important;
+  bottom: 0 !important;
+  transform: translateX(-50%) !important;
+  width: 100% !important;
+  max-width: 430px !important;
+  height: 85vh !important;
+  background: var(--user-bg) !important;
+  border-radius: 36px 36px 0 0 !important;
+  z-index: 9999 !important;
+  overflow-y: auto !important;
+  padding: 20px !important;
+}
+
+/* Centrally force all max-w-lg page wrapper elements to be mobile responsive */
+.max-w-lg {
+  /* Let tailwind handle max-w-lg or we can override below */
+}
+@media (max-width: 1023px) {
+  .max-w-lg {
+    width: 100% !important;
+    max-width: 430px !important;
+  }
+}
+
+/* Centrally enforce Outfit font-family globally across all elements to override explicit custom font families */
+*, ::before, ::after,
+.redigo-app,
+.redigo-app * {
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif !important;
+}
+
+/* Custom Utility overrides to force dark text on light elements (like yellow cards) inside dark mode */
+.user-app-theme .text-dark-force {
+  color: #0f172a !important;
+}
+.user-app-theme .text-dark-force-muted {
+  color: #475569 !important;
+}
+
+/* User App Promo Banner Carousel Rules */
+.promo-carousel {
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+  border-radius: 22px;
+}
+
+.promo-track {
+  display: flex;
+  transition: transform 0.45s ease;
+  will-change: transform;
+}
+
+.promo-slide {
+  flex: 0 0 100%;
+  min-width: 100%;
+  position: relative;
+}
+
+.promo-slide img {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  display: block;
+  border-radius: 22px;
+}
+
+.promo-dots {
+  position: absolute;
+  right: 14px;
+  bottom: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 5;
+}
+
+.promo-dots button {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.45);
+}
+
+.promo-dots button.active {
+  width: 18px;
+  background: #FFC400;
+}
+
+/* Home page spacing and layout alignment rules */
+.user-app,
+.mobile-app-shell {
+  width: 100% !important;
+  overflow-x: hidden !important;
+}
+@media (max-width: 1023px) {
+  .user-app,
+  .mobile-app-shell {
+    max-width: 430px !important;
+  }
+}
+
+.home-section,
+.everything-section,
+.explore-section,
+.promo-section,
+.go-places-section,
+.go-appzeto-section {
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+.user-search-bar,
+.promo-carousel,
+.go-appzeto-banner {
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.everything-grid {
+  width: 100% !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+}
+
+.everything-card {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.go-appzeto-banner {
+  position: relative !important;
+  text-align: center !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.go-appzeto-banner img,
+.go-appzeto-banner video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+
+.go-appzeto-content {
+  position: absolute !important;
+  inset: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  padding: 20px !important;
+}
+
+/* Splash screen specific styles */
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  min-height: 100dvh;
+  background: #05070D;
+  z-index: 99999;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  overflow-x: hidden !important;
+}
+
+body.splash-active {
+  overflow: hidden;
+}
+
+@media (min-width: 768px) {
+  .login-page {
+    display: flex !important;
+    flex-direction: row !important;
+    height: 100vh !important;
+    min-height: 100vh !important;
+    overflow: hidden !important;
+  }
+  .login-hero {
+    width: 50% !important;
+    height: 100vh !important;
+  }
+  .login-hero-img {
+    height: 100vh !important;
+  }
+  .login-card {
+    margin-top: 0 !important;
+    border-radius: 28px !important;
+    max-width: 440px !important;
+    width: 100% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25) !important;
+    border: 1px solid var(--user-border) !important;
+  }
+}
+
+@media (min-width: 768px) {
+  .user-app-theme,
+  .user-home,
+  .user-app,
+  .mobile-app-shell,
+  .all-services-sheet {
+    max-width: 100% !important;
+  }
+}

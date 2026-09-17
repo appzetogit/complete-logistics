@@ -1,0 +1,116 @@
+import mongoose from 'mongoose';
+
+const objectId = () => new mongoose.Types.ObjectId().toString();
+
+export const createDefaultThirdPartySettings = () => {
+  return {
+    scope: 'default',
+    firebase: {
+      firebase_database_url: '',
+      firebase_api_key: '',
+      firebase_auth_domain: '',
+      firebase_project_id: '',
+      firebase_storage_bucket: '',
+      firebase_messaging_sender_id: '',
+      firebase_app_id: '',
+      firebase_json_name: 'firebase-service-account.json',
+    },
+    map_apis: {
+      map_type: 'google_map',
+      google_map_key_for_web_apps: '',
+      google_map_key_for_distance_matrix: '',
+    },
+    mail: {
+      mail_driver: 'smtp',
+      mail_host: 'smtp.gmail.com',
+      mail_port: '587',
+      mail_username: '',
+      mail_password: '',
+      mail_encryption: 'tls',
+      mail_from_address: 'noreply@appzeto.com',
+      mail_from_name: 'Appzeto',
+    },
+    sms: {
+      firebase: { enabled: '1' },
+      twilio: {
+        enabled: '0',
+        sid: 'ACxxxxxxxxdemo',
+        token: 'twilio-token-demo',
+        from_number: '+919999999999',
+      },
+      smsala: {
+        enabled: '0',
+        api_key: '',
+        secret_key: '',
+        token: '',
+        from_number: '',
+      },
+      india_hub: {
+        enabled: '0',
+        api_key: '',
+        sid: '',
+      },
+    },
+    payment: {
+      razor_pay: {
+        enabled: '1',
+        environment: 'test',
+        test_api_key: 'rzp_test_demo_key',
+        test_secret_key: 'rzp_test_demo_secret',
+        live_api_key: '',
+        live_secret_key: '',
+      },
+      phone_pay: {
+        enabled: '0',
+        environment: 'test',
+        merchant_id: '',
+        salt_key: '',
+        salt_index: '1',
+      },
+      stripe: {
+        enabled: '0',
+        environment: 'test',
+        test_secret_key: 'sk_test_demo',
+        test_publishable_key: 'pk_test_demo',
+        live_secret_key: '',
+        live_publishable_key: '',
+      },
+    },
+    recharge_api: {
+      enabled: '0',
+      provider_name: 'RechargeKit Verify',
+      base_url: 'https://verify.rechargkit.biz',
+      auth_header_name: 'Authorization',
+      auth_header_prefix: 'Bearer',
+      api_token: '',
+      token_generated_at: null,
+      callback_mode: 'auto',
+      callback_url: '',
+      callback_secret: '',
+      allowed_ip_addresses: [],
+      notes: '',
+      endpoints: {
+        bank_verify_penny_less: '/validation/verifyBankRequest',
+        bank_verify_penny_drop: '/validation/penny-drop',
+        bank_verify_v3: '/validation/v3/pennyDropVerify',
+        card_bin: '/validation/cardValidate',
+        upi_basic: '/validation/upiBasic',
+        pan_verify: '/validation/verifyPANRequest',
+        dl_request: '/validation/verifyDL',
+        dl_verify: '/validation/verifyDL',
+        gstin_verify: '/validation/verifyGSTIN',
+        rc_verify: '/validation/rcAdvanceVerify',
+        upi_advance: '/validation/upiAdvanceVerify',
+      },
+    },
+    notification_channels: [
+      { _id: objectId(), topic_name: 'Trip Request', for_user: true, push_notification: true, mail: true },
+      { _id: objectId(), topic_name: 'Trip Acceptance', for_user: true, push_notification: true, mail: true },
+      { _id: objectId(), topic_name: 'Driver Arrival', for_user: true, push_notification: true, mail: false },
+      { _id: objectId(), topic_name: 'New Message', for_user: true, push_notification: true, mail: false },
+      { _id: objectId(), topic_name: 'Wallet Topup', for_user: true, push_notification: true, mail: true },
+      { _id: objectId(), topic_name: 'New Bookings', for_user: false, push_notification: true, mail: true },
+      { _id: objectId(), topic_name: 'System Alerts', for_user: false, push_notification: true, mail: true },
+    ],
+  };
+};
