@@ -720,6 +720,24 @@ const VehicleType = ({ mode: propMode }) => {
     }
   };
 
+  const handleToggleStatus = async (vehicle) => {
+    const nextActive = vehicle.active === false;
+    const applyActive = (active) =>
+      setVehicles((prev) =>
+        prev.map((item) =>
+          String(item.id) === String(vehicle.id) ? { ...item, active, status: active ? 1 : 0 } : item,
+        ),
+      );
+
+    applyActive(nextActive);
+    try {
+      await api.patch(`/admin/types/vehicle-types/${vehicle.id}`, { status: nextActive ? 1 : 0 });
+    } catch (error) {
+      applyActive(!nextActive);
+      setErrorMessage(error.message || 'Could not update vehicle status.');
+    }
+  };
+
   const handleDelete = async (vehicleId) => {
     if (!window.confirm('Delete this vehicle type?')) {
       return;
@@ -846,7 +864,7 @@ const VehicleType = ({ mode: propMode }) => {
                     </td>
                     <td className="px-6 py-5 text-sm font-medium text-slate-700">{vehicle.trip_dispatch_type || vehicle.dispatch_type || 'normal'}</td>
                     <td className="px-6 py-5">
-                      <StatusToggle active={vehicle.active !== false} onToggle={() => {}} />
+                      <StatusToggle active={vehicle.active !== false} onToggle={() => handleToggleStatus(vehicle)} />
                     </td>
                     <td className="px-6 py-5">
                       <div className="flex items-center justify-end gap-2">
