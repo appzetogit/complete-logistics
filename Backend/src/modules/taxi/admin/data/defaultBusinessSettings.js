@@ -9,8 +9,8 @@ export const createDefaultBusinessSettings = () => ({
     footer_2: 'Design & Develop by Appzeto',
     default_lat: '22.7196',
     default_lng: '75.8577',
-    logo: '',
-    favicon: '',
+    logo: '/uploads/branding/logo.png',
+    favicon: '/uploads/branding/logo.png',
   },
   customization: {
     admin_theme_color: '#405189',

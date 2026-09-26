@@ -889,6 +889,7 @@ export const createRideRecord = async ({
   vehicleIconUrl,
   paymentMethod,
   serviceType,
+  tripMode,
   parcel,
   intercity,
   promo_code,
@@ -1096,6 +1097,7 @@ export const createRideRecord = async ({
       vehicleIconType: vehicleIconType || '',
       vehicleIconUrl: resolvedVehicleIconUrl,
       serviceType: normalizedServiceType,
+      tripMode: String(tripMode || '').toLowerCase() === 'round_trip' ? 'round_trip' : 'one_way',
       pickupLocation: toPoint(pickupCoords, 'pickup'),
       pickupAddress: normalizeAddress(pickupAddress),
       dropLocation: toPoint(dropCoords, 'drop'),
@@ -1245,12 +1247,46 @@ const populateRideRealtime = async (rideId) =>
     .populate('userId', 'name phone')
     .populate('driverId', 'name phone profileImage vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel vehicleImage rating');
 
+/// Combines the Delivery mirror with the ride's own parcel record, letting the
+/// ride win field by field. Returns null when neither side has anything, so
+/// passenger rides still serialize `parcel: null`.
+const mergeParcelRecords = (mirror, authoritative) => {
+  const toPlain = (value) => {
+    if (!value) return null;
+    return typeof value.toObject === 'function' ? value.toObject() : value;
+  };
+
+  const base = toPlain(mirror);
+  const primary = toPlain(authoritative);
+
+  if (!base && !primary) return null;
+  if (!base) return primary;
+  if (!primary) return base;
+
+  const merged = { ...base };
+
+  for (const [key, value] of Object.entries(primary)) {
+    const isEmpty =
+      value === null ||
+      value === undefined ||
+      value === '' ||
+      (Array.isArray(value) && value.length === 0);
+
+    if (!isEmpty) {
+      merged[key] = value;
+    }
+  }
+
+  return merged;
+};
+
 export const serializeRideRealtime = (ride) => ({
   rideId: String(ride._id),
   room: getRideRoom(ride._id),
   deliveryId: ride.deliveryId?._id ? String(ride.deliveryId._id) : ride.deliveryId ? String(ride.deliveryId) : null,
   type: ride.serviceType || 'ride',
   serviceType: ride.serviceType || 'ride',
+  tripMode: ride.tripMode || 'one_way',
   status: ride.status,
   liveStatus: ride.liveStatus,
   fare: ride.fare,
@@ -1306,7 +1342,11 @@ export const serializeRideRealtime = (ride) => ({
       }
     : null,
   otp: ride.otp || '',
-  parcel: ride.deliveryId?.parcel || ride.parcel || null,
+  // The ride carries the authoritative parcel record — the fare engine writes
+  // the paid add-ons and the driver's proof photos onto it. The Delivery
+  // mirror holds only the booking basics, so it fills gaps rather than
+  // shadowing the richer copy.
+  parcel: mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel),
   intercity: ride.intercity || null,
   commissionAmount: ride.commissionAmount,
   driverEarnings: ride.driverEarnings,
@@ -1502,6 +1542,7 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
     deliveryId: ride.deliveryId?._id ? String(ride.deliveryId._id) : ride.deliveryId ? String(ride.deliveryId) : null,
     type: ride.serviceType || 'ride',
     serviceType: ride.serviceType || 'ride',
+    tripMode: ride.tripMode || 'one_way',
     status: ride.status,
     liveStatus: ride.liveStatus,
     fare: ride.fare,
@@ -1517,7 +1558,11 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
     estimatedDurationMinutes: ride.estimatedDurationMinutes || 0,
     paymentMethod: ride.paymentMethod,
     otp: ride.otp || '',
-    parcel: ride.deliveryId?.parcel || ride.parcel || null,
+    // The ride carries the authoritative parcel record — the fare engine writes
+  // the paid add-ons and the driver's proof photos onto it. The Delivery
+  // mirror holds only the booking basics, so it fills gaps rather than
+  // shadowing the richer copy.
+  parcel: mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel),
     intercity: ride.intercity || null,
     pricingSnapshot: ride.pricingSnapshot || null,
     commissionAmount: ride.commissionAmount,
@@ -1551,7 +1596,7 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
   };
 };
 
-export const acceptRideAssignment = async ({ rideId, driverId }) => {
+export const acceptRideAssignment = async ({ rideId, driverId, selfieUrl = '' }) => {
   let lastError = null;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1608,6 +1653,13 @@ export const acceptRideAssignment = async ({ rideId, driverId }) => {
       ride.status = RIDE_STATUS.ACCEPTED;
       ride.liveStatus = RIDE_LIVE_STATUS.ACCEPTED;
       ride.acceptedAt = new Date();
+      if (selfieUrl) {
+        ride.acceptSelfie = {
+          imageUrl: selfieUrl,
+          driverId: driver._id,
+          capturedAt: new Date(),
+        };
+      }
       driver.isOnRide = !isRideScheduledForFuture(ride);
 
       await ride.save({ session });
@@ -1644,21 +1696,58 @@ const rideStatusConfig = {
     persistedStatus: RIDE_STATUS.ACCEPTED,
     allowedCurrent: [RIDE_LIVE_STATUS.ACCEPTED, RIDE_LIVE_STATUS.ARRIVING],
   },
+  // Parcel only: the consignment is loaded and photographed at the pickup
+  // before the trip may start.
+  [RIDE_LIVE_STATUS.GOODS_LOADED]: {
+    persistedStatus: RIDE_STATUS.ONGOING,
+    allowedCurrent: [RIDE_LIVE_STATUS.ARRIVING, RIDE_LIVE_STATUS.ACCEPTED, RIDE_LIVE_STATUS.GOODS_LOADED],
+    parcelOnly: true,
+    requiresProof: 'pickupProof',
+  },
   [RIDE_LIVE_STATUS.STARTED]: {
     persistedStatus: RIDE_STATUS.ONGOING,
-    allowedCurrent: [RIDE_LIVE_STATUS.ACCEPTED, RIDE_LIVE_STATUS.ARRIVING, RIDE_LIVE_STATUS.STARTED],
+    allowedCurrent: [
+      RIDE_LIVE_STATUS.ACCEPTED,
+      RIDE_LIVE_STATUS.ARRIVING,
+      RIDE_LIVE_STATUS.GOODS_LOADED,
+      RIDE_LIVE_STATUS.STARTED,
+    ],
   },
   [RIDE_LIVE_STATUS.ARRIVED]: {
     persistedStatus: RIDE_STATUS.ONGOING,
     allowedCurrent: [RIDE_LIVE_STATUS.STARTED, RIDE_LIVE_STATUS.ARRIVED],
   },
+  // Parcel only: handover is photographed at the drop before completion.
+  [RIDE_LIVE_STATUS.GOODS_DELIVERED]: {
+    persistedStatus: RIDE_STATUS.ONGOING,
+    allowedCurrent: [RIDE_LIVE_STATUS.ARRIVED, RIDE_LIVE_STATUS.STARTED, RIDE_LIVE_STATUS.GOODS_DELIVERED],
+    parcelOnly: true,
+    requiresProof: 'dropProof',
+  },
   [RIDE_LIVE_STATUS.COMPLETED]: {
     persistedStatus: RIDE_STATUS.COMPLETED,
-    allowedCurrent: [RIDE_LIVE_STATUS.STARTED, RIDE_LIVE_STATUS.ARRIVED, RIDE_LIVE_STATUS.ARRIVING, RIDE_LIVE_STATUS.ACCEPTED],
+    allowedCurrent: [
+      RIDE_LIVE_STATUS.STARTED,
+      RIDE_LIVE_STATUS.ARRIVED,
+      RIDE_LIVE_STATUS.GOODS_DELIVERED,
+      RIDE_LIVE_STATUS.ARRIVING,
+      RIDE_LIVE_STATUS.ACCEPTED,
+    ],
   },
 };
 
-export const updateRideLifecycle = async ({ rideId, driverId, nextStatus, paymentMethod }) => {
+const isParcelRide = (ride) =>
+  String(ride?.serviceType || ride?.type || 'ride').toLowerCase() === 'parcel';
+
+export const updateRideLifecycle = async ({
+  rideId,
+  driverId,
+  nextStatus,
+  paymentMethod,
+  proofImageUrl,
+  proofNote,
+  receivedBy,
+}) => {
   const config = rideStatusConfig[nextStatus];
 
   if (!config) {
@@ -1671,8 +1760,40 @@ export const updateRideLifecycle = async ({ rideId, driverId, nextStatus, paymen
     throw new ApiError(404, 'Assigned ride not found');
   }
 
+  if (config.parcelOnly && !isParcelRide(ride)) {
+    throw new ApiError(400, `${nextStatus} applies to delivery jobs only`);
+  }
+
   if (!config.allowedCurrent.includes(ride.liveStatus)) {
     throw new ApiError(409, `Ride cannot move from ${ride.liveStatus} to ${nextStatus}`);
+  }
+
+  // The loading and handover steps exist to capture evidence, so the photo is
+  // required rather than optional — a step recorded without one proves nothing.
+  if (config.requiresProof) {
+    const imageUrl = String(proofImageUrl || '').trim();
+
+    if (!imageUrl) {
+      throw new ApiError(400, 'A photo of the consignment is required for this step');
+    }
+
+    ride.parcel = ride.parcel || {};
+    ride.parcel[config.requiresProof] = {
+      imageUrl,
+      capturedAt: new Date(),
+      note: String(proofNote || '').trim(),
+      ...(config.requiresProof === 'dropProof'
+        ? { receivedBy: String(receivedBy || '').trim() }
+        : {}),
+    };
+    ride.markModified('parcel');
+  }
+
+  // A delivery cannot be completed until the handover has been photographed.
+  if (nextStatus === RIDE_LIVE_STATUS.COMPLETED && isParcelRide(ride)) {
+    if (!String(ride.parcel?.dropProof?.imageUrl || '').trim()) {
+      throw new ApiError(409, 'Capture the delivery photo before completing this job');
+    }
   }
 
   ride.liveStatus = nextStatus;

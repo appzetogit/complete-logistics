@@ -296,7 +296,7 @@ const razorpayRequest = async ({ method, path, body, keyId, keySecret }) => {
 };
 
 export const createRide = async (req, res) => {
-  const { pickup, drop, pickupAddress, dropAddress, fare, estimatedDistanceMeters, estimatedDurationMinutes, vehicleTypeId, vehicleTypeIds, vehicleIconType, vehicleIconUrl, paymentMethod, serviceType, intercity, promo_code, zone_id, service_location_id, transport_type, scheduledAt, bookingMode, userMaxBidFare, bidStepAmount } =
+  const { pickup, drop, pickupAddress, dropAddress, fare, estimatedDistanceMeters, estimatedDurationMinutes, vehicleTypeId, vehicleTypeIds, vehicleIconType, vehicleIconUrl, paymentMethod, serviceType, tripMode, intercity, promo_code, zone_id, service_location_id, transport_type, scheduledAt, bookingMode, userMaxBidFare, bidStepAmount } =
     req.body;
 
   if (!pickup || !drop) {
@@ -326,6 +326,7 @@ export const createRide = async (req, res) => {
     vehicleIconUrl,
     paymentMethod,
     serviceType,
+    tripMode,
     intercity,
     promo_code,
     zone_id,
@@ -404,8 +405,18 @@ export const updateRideStatus = async (req, res) => {
 
   const nextStatus = String(req.body.status || '').trim().toLowerCase();
 
-  if (![RIDE_LIVE_STATUS.ACCEPTED, RIDE_LIVE_STATUS.ARRIVING, RIDE_LIVE_STATUS.STARTED, RIDE_LIVE_STATUS.ARRIVED, RIDE_LIVE_STATUS.COMPLETED].includes(nextStatus)) {
-    throw new ApiError(400, 'status must be accepted, arriving, started, arrived, or completed');
+  const driverSettableStatuses = [
+    RIDE_LIVE_STATUS.ACCEPTED,
+    RIDE_LIVE_STATUS.ARRIVING,
+    RIDE_LIVE_STATUS.GOODS_LOADED,
+    RIDE_LIVE_STATUS.STARTED,
+    RIDE_LIVE_STATUS.ARRIVED,
+    RIDE_LIVE_STATUS.GOODS_DELIVERED,
+    RIDE_LIVE_STATUS.COMPLETED,
+  ];
+
+  if (!driverSettableStatuses.includes(nextStatus)) {
+    throw new ApiError(400, `status must be one of ${driverSettableStatuses.join(', ')}`);
   }
 
   const ride = await updateRideLifecycle({
@@ -413,6 +424,10 @@ export const updateRideStatus = async (req, res) => {
     driverId: req.auth.sub,
     nextStatus,
     paymentMethod: req.body.paymentMethod,
+    // Carried on the two goods steps; ignored for every other transition.
+    proofImageUrl: req.body.proofImageUrl,
+    proofNote: req.body.proofNote,
+    receivedBy: req.body.receivedBy,
   });
 
   try {

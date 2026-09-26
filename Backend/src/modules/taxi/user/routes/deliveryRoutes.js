@@ -6,10 +6,12 @@ import {
   getDelivery,
   getMyActiveDelivery,
   listMyDeliveries,
+  quoteDelivery,
 } from '../controllers/deliveryController.js';
 
 export const deliveryRouter = Router();
 
+deliveryRouter.post('/quote', authenticate(['user']), asyncHandler(quoteDelivery));
 deliveryRouter.post('/', authenticate(['user']), asyncHandler(createDelivery));
 deliveryRouter.get('/', authenticate(['user']), asyncHandler(listMyDeliveries));
 deliveryRouter.get('/active/me', authenticate(['user', 'driver']), asyncHandler(getMyActiveDelivery));

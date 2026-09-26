@@ -173,6 +173,28 @@ const buildVehicleFormData = (selectedVehicle = {}) => ({
   image: selectedVehicle.image || '',
   map_icon: selectedVehicle.map_icon || selectedVehicle.icon || selectedVehicle.image || '',
   capacity: Number(selectedVehicle.capacity || 0),
+  load_capacity_ton: String(selectedVehicle.load_capacity_ton ?? ''),
+  capacity_label: String(selectedVehicle.capacity_label || ''),
+  load_height_options: Array.isArray(selectedVehicle.load_height_options)
+    ? selectedVehicle.load_height_options.map((row) => ({
+        key: String(row?.key || ''),
+        label: String(row?.label || ''),
+        height_ft: String(row?.height_ft ?? ''),
+        price: String(row?.price ?? ''),
+      }))
+    : [],
+  extra_options: Array.isArray(selectedVehicle.extra_options)
+    ? selectedVehicle.extra_options.map((row) => ({
+        key: String(row?.key || ''),
+        label: String(row?.label || ''),
+        price: String(row?.price ?? ''),
+      }))
+    : [],
+  price_per_km: String(selectedVehicle.price_per_km ?? ''),
+  taxi_eta_minutes: String(selectedVehicle.taxi_eta_minutes ?? ''),
+  taxi_sequence: String(selectedVehicle.taxi_sequence ?? ''),
+  delivery_eta_minutes: String(selectedVehicle.delivery_eta_minutes ?? ''),
+  delivery_sequence: String(selectedVehicle.delivery_sequence ?? ''),
   size: String(selectedVehicle.size || ''),
   is_taxi: selectedVehicle.is_taxi || resolveVehicleTransportType(selectedVehicle),
   is_accept_share_ride: Number(selectedVehicle.is_accept_share_ride || 0),
@@ -217,6 +239,15 @@ const defaultFormData = {
   image: '',
   map_icon: '',
   capacity: 0,
+  load_capacity_ton: '',
+  capacity_label: '',
+  load_height_options: [],
+  extra_options: [],
+  price_per_km: '',
+  taxi_eta_minutes: '',
+  taxi_sequence: '',
+  delivery_eta_minutes: '',
+  delivery_sequence: '',
   size: '',
   is_taxi: 'taxi',
   is_accept_share_ride: 0,
@@ -556,8 +587,34 @@ const VehicleType = ({ mode: propMode }) => {
     [formData.transport_type],
   );
 
+  const showsTaxiFields = useMemo(
+    () => ['taxi', 'both'].includes(normalizeTransportType(formData.transport_type)),
+    [formData.transport_type],
+  );
+
   const updateForm = (field, value) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  // Repeatable rows (load heights / extras). Blank rows are harmless -- the
+  // backend drops any row without a label, so an accidental empty row never
+  // reaches the app.
+  const addOptionRow = (field, blank) => {
+    setFormData((prev) => ({ ...prev, [field]: [...(prev[field] || []), blank] }));
+  };
+
+  const updateOptionRow = (field, index, key, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      [field]: (prev[field] || []).map((row, i) => (i === index ? { ...row, [key]: value } : row)),
+    }));
+  };
+
+  const removeOptionRow = (field, index) => {
+    setFormData((prev) => ({
+      ...prev,
+      [field]: (prev[field] || []).filter((_, i) => i !== index),
+    }));
   };
 
   const handleImageChange = async (event, field = 'image') => {
@@ -591,6 +648,32 @@ const VehicleType = ({ mode: propMode }) => {
         icon: formData.map_icon || '',
         map_icon: formData.map_icon || '',
         capacity: Number(formData.capacity || 0),
+        load_capacity_ton: showsDeliveryCategorySelector ? Number(formData.load_capacity_ton || 0) : 0,
+        capacity_label: showsDeliveryCategorySelector ? formData.capacity_label.trim() : '',
+        load_height_options: showsDeliveryCategorySelector
+          ? formData.load_height_options
+              .filter((row) => String(row.label || '').trim())
+              .map((row) => ({
+                key: row.key || '',
+                label: String(row.label).trim(),
+                height_ft: Number(row.height_ft || 0),
+                price: Number(row.price || 0),
+              }))
+          : [],
+        extra_options: showsDeliveryCategorySelector
+          ? formData.extra_options
+              .filter((row) => String(row.label || '').trim())
+              .map((row) => ({
+                key: row.key || '',
+                label: String(row.label).trim(),
+                price: Number(row.price || 0),
+              }))
+          : [],
+        price_per_km: Number(formData.price_per_km || 0),
+        taxi_eta_minutes: showsTaxiFields ? Number(formData.taxi_eta_minutes || 0) : 0,
+        taxi_sequence: showsTaxiFields ? Number(formData.taxi_sequence || 0) : 0,
+        delivery_eta_minutes: showsDeliveryCategorySelector ? Number(formData.delivery_eta_minutes || 0) : 0,
+        delivery_sequence: showsDeliveryCategorySelector ? Number(formData.delivery_sequence || 0) : 0,
         size: formData.size,
         is_taxi: normalizeTaxiMode(formData.is_taxi || formData.transport_type),
         is_accept_share_ride: Number(formData.is_accept_share_ride || 0),
@@ -1191,15 +1274,272 @@ const VehicleType = ({ mode: propMode }) => {
             </div>
 
             <div>
-              <label className={labelClass}>Maximum Weight / Capacity *</label>
+              <label className={labelClass}>Seating Capacity (Seater)</label>
               <input
                 type="number"
+                min="0"
                 value={formData.capacity}
                 onChange={(e) => updateForm('capacity', e.target.value)}
                 className={inputClass}
-                placeholder="12"
+                placeholder="4"
+              />
+              <p className="mt-1 text-[11px] font-medium text-slate-400">
+                Shown as &quot;4 Seater&quot; on passenger vehicle cards.
+              </p>
+            </div>
+
+            {showsDeliveryCategorySelector ? (
+              <>
+                <div>
+                  <label className={labelClass}>Load Capacity (Ton) *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={formData.load_capacity_ton}
+                    onChange={(e) => updateForm('load_capacity_ton', e.target.value)}
+                    className={inputClass}
+                    placeholder="16"
+                  />
+                  <p className="mt-1 text-[11px] font-medium text-slate-400">
+                    Shown as &quot;16 Ton&quot; on the goods vehicle card. Decimals are allowed for
+                    sub-tonne vehicles, e.g. 0.05 for a parcel bike.
+                  </p>
+                </div>
+
+                <div>
+                  <label className={labelClass}>Load Range Label</label>
+                  <input
+                    type="text"
+                    value={formData.capacity_label}
+                    onChange={(e) => updateForm('capacity_label', e.target.value)}
+                    className={inputClass}
+                    placeholder="9 Ton - 16 Ton"
+                  />
+                  <p className="mt-1 text-[11px] font-medium text-slate-400">
+                    Optional. Use only when a range reads better than a single number — it replaces
+                    the load capacity above on the card.
+                  </p>
+                </div>
+              </>
+            ) : null}
+
+            <div>
+              <label className={labelClass}>Headline Rate (₹ / km)</label>
+              <input
+                type="number"
+                min="0"
+                value={formData.price_per_km}
+                onChange={(e) => updateForm('price_per_km', e.target.value)}
+                className={inputClass}
+                placeholder="38"
               />
             </div>
+
+            {showsTaxiFields ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                <p className="mb-3 text-[12px] font-black uppercase tracking-wide text-slate-500">
+                  Passenger list
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>Pickup ETA (minutes)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={formData.taxi_eta_minutes}
+                      onChange={(e) => updateForm('taxi_eta_minutes', e.target.value)}
+                      className={inputClass}
+                      placeholder="4"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Sequence</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={formData.taxi_sequence}
+                      onChange={(e) => updateForm('taxi_sequence', e.target.value)}
+                      className={inputClass}
+                      placeholder="1"
+                    />
+                  </div>
+                </div>
+                <p className="mt-2 text-[11px] font-medium text-slate-400">
+                  Position on the passenger transport screen. 1 shows first; leave blank or 0 to send
+                  it to the bottom of the list.
+                </p>
+              </div>
+            ) : null}
+
+            {showsDeliveryCategorySelector ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                <p className="mb-3 text-[12px] font-black uppercase tracking-wide text-slate-500">
+                  Goods list
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>Pickup ETA (minutes)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={formData.delivery_eta_minutes}
+                      onChange={(e) => updateForm('delivery_eta_minutes', e.target.value)}
+                      className={inputClass}
+                      placeholder="35"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Sequence</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={formData.delivery_sequence}
+                      onChange={(e) => updateForm('delivery_sequence', e.target.value)}
+                      className={inputClass}
+                      placeholder="1"
+                    />
+                  </div>
+                </div>
+                <p className="mt-2 text-[11px] font-medium text-slate-400">
+                  Position on the goods transport screen. 1 shows first; leave blank or 0 to send it
+                  to the bottom of the list.
+                </p>
+              </div>
+            ) : null}
+
+            {showsDeliveryCategorySelector ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-[12px] font-black uppercase tracking-wide text-slate-500">
+                    Load Height Options
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => addOptionRow('load_height_options', { key: '', label: '', height_ft: '', price: '' })}
+                    className="inline-flex items-center gap-1 rounded-lg bg-yellow-400 px-3 py-1.5 text-[11px] font-bold text-slate-900 transition hover:bg-yellow-300"
+                  >
+                    <Plus size={13} /> Add height
+                  </button>
+                </div>
+
+                {formData.load_height_options.length === 0 ? (
+                  <p className="text-[11px] font-medium text-slate-400">
+                    No heights added. The rider will not see a height selector for this vehicle.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-12 gap-2 px-1 text-[10px] font-bold uppercase text-slate-400">
+                      <span className="col-span-5">Label</span>
+                      <span className="col-span-3">Height (ft)</span>
+                      <span className="col-span-3">Extra charge</span>
+                      <span className="col-span-1" />
+                    </div>
+                    {formData.load_height_options.map((row, index) => (
+                      <div key={index} className="grid grid-cols-12 items-center gap-2">
+                        <input
+                          type="text"
+                          value={row.label}
+                          onChange={(e) => updateOptionRow('load_height_options', index, 'label', e.target.value)}
+                          className={inputClass + ' col-span-5 !px-3 !py-2'}
+                          placeholder="6.5 ft"
+                        />
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={row.height_ft}
+                          onChange={(e) => updateOptionRow('load_height_options', index, 'height_ft', e.target.value)}
+                          className={inputClass + ' col-span-3 !px-3 !py-2'}
+                          placeholder="6.5"
+                        />
+                        <input
+                          type="number"
+                          min="0"
+                          value={row.price}
+                          onChange={(e) => updateOptionRow('load_height_options', index, 'price', e.target.value)}
+                          className={inputClass + ' col-span-3 !px-3 !py-2'}
+                          placeholder="0"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeOptionRow('load_height_options', index)}
+                          className="col-span-1 flex justify-center text-slate-400 transition hover:text-red-500"
+                          aria-label="Remove height option"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-2 text-[11px] font-medium text-slate-400">
+                  The rider picks one. Extra charge is added to the fare; leave it 0 for the standard height.
+                </p>
+              </div>
+            ) : null}
+
+            {showsDeliveryCategorySelector ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-[12px] font-black uppercase tracking-wide text-slate-500">
+                    Extra Options
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => addOptionRow('extra_options', { key: '', label: '', price: '' })}
+                    className="inline-flex items-center gap-1 rounded-lg bg-yellow-400 px-3 py-1.5 text-[11px] font-bold text-slate-900 transition hover:bg-yellow-300"
+                  >
+                    <Plus size={13} /> Add extra
+                  </button>
+                </div>
+
+                {formData.extra_options.length === 0 ? (
+                  <p className="text-[11px] font-medium text-slate-400">
+                    No extras added. The rider will not see add-on checkboxes for this vehicle.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-12 gap-2 px-1 text-[10px] font-bold uppercase text-slate-400">
+                      <span className="col-span-8">Label</span>
+                      <span className="col-span-3">Charge</span>
+                      <span className="col-span-1" />
+                    </div>
+                    {formData.extra_options.map((row, index) => (
+                      <div key={index} className="grid grid-cols-12 items-center gap-2">
+                        <input
+                          type="text"
+                          value={row.label}
+                          onChange={(e) => updateOptionRow('extra_options', index, 'label', e.target.value)}
+                          className={inputClass + ' col-span-8 !px-3 !py-2'}
+                          placeholder="Helper Required"
+                        />
+                        <input
+                          type="number"
+                          min="0"
+                          value={row.price}
+                          onChange={(e) => updateOptionRow('extra_options', index, 'price', e.target.value)}
+                          className={inputClass + ' col-span-3 !px-3 !py-2'}
+                          placeholder="0"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeOptionRow('extra_options', index)}
+                          className="col-span-1 flex justify-center text-slate-400 transition hover:text-red-500"
+                          aria-label="Remove extra option"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-2 text-[11px] font-medium text-slate-400">
+                  Ticked by the rider and passed to the driver. Set 0 for ones that only tell the driver
+                  what to bring, e.g. Diesel Only.
+                </p>
+              </div>
+            ) : null}
 
             <div>
               <label className={labelClass}>Short Description *</label>

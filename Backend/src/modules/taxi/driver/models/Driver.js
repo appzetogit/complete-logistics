@@ -150,6 +150,13 @@ const driverSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    /// Manufacturing year, kept as a string because drivers enter it freehand
+    /// and the RC often carries a month/year pair rather than a bare number.
+    vehicleYear: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     registerFor: {
       type: String,
       default: 'taxi',

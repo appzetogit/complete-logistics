@@ -1,5 +1,6 @@
 import { Server } from 'socket.io';
 import { env } from '../../../config/env.js';
+import { ApiError } from '../../../utils/ApiError.js';
 import { normalizePoint, toPoint } from '../../../utils/geo.js';
 import { Driver } from '../driver/models/Driver.js';
 import {
@@ -281,13 +282,21 @@ export const configureTaxiSocketServer = (httpServer) => {
 
     socket.on(
       'acceptRide',
-      onAsync(socket, async ({ rideId }) => {
+      onAsync(socket, async ({ rideId, selfieUrl }) => {
         if (identity.role !== 'driver' || !rideId) {
           return;
         }
 
+        // Selfie is optional during rollout so drivers on the old app build can still
+        // accept rides. Once all drivers are on the new build, reject a missing/invalid
+        // URL instead of passing an empty string through.
+        const safeSelfieUrl = String(selfieUrl || '').trim();
+        if (safeSelfieUrl && !/^https:\/\//i.test(safeSelfieUrl)) {
+          throw new ApiError(400, 'Selfie image URL is invalid');
+        }
+
         // First successful transaction wins; later accepts are rejected by the service layer.
-        const ride = await acceptRideAssignment({ rideId, driverId: identity.sub });
+        const ride = await acceptRideAssignment({ rideId, driverId: identity.sub, selfieUrl: safeSelfieUrl });
         joinRideRoom(socket, ride._id);
         await notifyRideAccepted(ride);
 

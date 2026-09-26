@@ -80,9 +80,94 @@ const vehicleSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    /// Seating capacity, in seats. Passenger side only — the goods flow reads
+    /// `load_capacity_ton` instead, because reusing one number for both meant
+    /// a parcel bike advertised itself as '73 Ton'.
     capacity: {
       type: Number,
       default: 0,
+    },
+    /// Load capacity in tonnes, shown on the goods vehicle card as 'X Ton'.
+    /// Fractional values are allowed so sub-tonne vehicles (parcel bikes,
+    /// small carriers) can be described honestly.
+    load_capacity_ton: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    /// Optional free-text override for the load figure when a single number
+    /// will not do, e.g. '9 Ton - 16 Ton'. Wins over `load_capacity_ton` when
+    /// set.
+    capacity_label: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    /// Body heights this vehicle can be booked with, e.g. 6ft / 6.5ft / 7ft.
+    /// The rider picks exactly one on the vehicle options screen; `price` is
+    /// added to the fare, so a taller body can cost more.
+    load_height_options: {
+      type: [
+        {
+          _id: false,
+          /// Stable identifier the apps send back, e.g. '6_5ft'.
+          key: { type: String, required: true, trim: true },
+          /// What the rider sees on the chip, e.g. '6.5 ft'.
+          label: { type: String, required: true, trim: true },
+          height_ft: { type: Number, default: 0, min: 0 },
+          price: { type: Number, default: 0, min: 0 },
+        },
+      ],
+      default: [],
+    },
+    /// Optional add-ons the rider can tick, e.g. Extra Tirpal, Helper Required.
+    /// Each carries its own charge; leave `price` at 0 for ones that only tell
+    /// the driver what to bring.
+    extra_options: {
+      type: [
+        {
+          _id: false,
+          key: { type: String, required: true, trim: true },
+          label: { type: String, required: true, trim: true },
+          price: { type: Number, default: 0, min: 0 },
+        },
+      ],
+      default: [],
+    },
+    /// Headline '₹X/km' rate shown on the vehicle card. Kept separate from
+    /// delivery_distance_pricing.distance_price so marketing can advertise a
+    /// 'from' rate without touching the fare engine.
+    price_per_km: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    /// Typical pickup ETA in minutes, and the position the vehicle takes in
+    /// its list. Held per module because a `transport_type: 'both'` vehicle is
+    /// a different proposition on each screen — a car may be 4 minutes away for
+    /// a ride and 15 for a parcel run, and belong near the top of one list and
+    /// the bottom of the other.
+    ///
+    /// `sequence` sorts ascending; 0 means "unset" and sinks to the bottom.
+    taxi_eta_minutes: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    taxi_sequence: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    delivery_eta_minutes: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    delivery_sequence: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
     size: {
       type: String,

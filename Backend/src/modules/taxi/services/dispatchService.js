@@ -13,6 +13,7 @@ import {
   RIDE_STATUS,
 } from '../constants/index.js';
 import { Delivery } from '../user/models/Delivery.js';
+import { Vehicle } from '../admin/models/Vehicle.js';
 import { getRideRoom, resolveSetPriceForRide } from './rideService.js';
 import { SOCKET_EVENTS } from '../socket/events.js';
 import { resolveTransportDispatchConfig } from './transportSettingsService.js';
@@ -697,6 +698,15 @@ const emitRideRequestToDrivers = async ({
     return;
   }
 
+  // The tier the rider booked, by name. Without it the offer only carries an
+  // opaque vehicleTypeId, so a driver deciding whether to accept a goods job
+  // cannot see whether it was booked as a Small Truck or a Heavy Truck.
+  const bookedVehicle = ride.vehicleTypeId
+    ? await Vehicle.findById(ride.vehicleTypeId)
+        .select('name capacity_label load_capacity_ton')
+        .lean()
+    : null;
+
   const requestExpiresAt = new Date(Date.now() + dispatchConfig.retryDelayMs).toISOString();
 
   for (const driver of targetDrivers) {
@@ -719,6 +729,10 @@ const emitRideRequestToDrivers = async ({
       estimatedDistanceMeters: ride.estimatedDistanceMeters || 0,
       estimatedDurationMinutes: ride.estimatedDurationMinutes || 0,
       vehicleTypeId: ride.vehicleTypeId ? String(ride.vehicleTypeId) : null,
+      vehicleTypeName: bookedVehicle?.name || '',
+      vehicleCapacityLabel:
+        bookedVehicle?.capacity_label ||
+        (Number(bookedVehicle?.load_capacity_ton || 0) > 0 ? `${bookedVehicle.load_capacity_ton} Ton` : ''),
       vehicleTypeIds: dispatchVehicleTypeIds,
       vehicleIconType: ride.vehicleIconType,
       vehicleIconUrl: ride.vehicleIconUrl || '',

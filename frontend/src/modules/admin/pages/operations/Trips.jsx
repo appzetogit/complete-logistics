@@ -45,6 +45,8 @@ const normalizeRow = (row = {}) => ({
   transportType: row.transportType || row.transport_type || row.service_type || row.module || '--',
   tripStatus: String(row.tripStatus || row.trip_status || row.status || '').toUpperCase(),
   paymentOption: String(row.paymentOption || row.payment_option || row.payment_method || 'CASH').toUpperCase(),
+  acceptSelfieUrl: row.acceptSelfieUrl || row.accept_selfie_url || '',
+  acceptSelfieAt: row.acceptSelfieAt || row.accept_selfie_at || null,
 });
 
 const TripDetailsModal = ({ trip, onClose }) => {
@@ -76,6 +78,21 @@ const TripDetailsModal = ({ trip, onClose }) => {
               <p className="text-[11px] uppercase tracking-wider font-bold text-gray-400 mb-1">Driver Name</p>
               <p className="text-[13px] font-bold text-gray-900">{trip.driverName}</p>
             </div>
+            {trip.acceptSelfieUrl && (
+              <div className="col-span-2 pt-2 border-t border-gray-50">
+                <p className="text-[11px] uppercase tracking-wider font-bold text-gray-400 mb-2">Accept Selfie</p>
+                <div className="flex items-center gap-3">
+                  <img
+                    src={trip.acceptSelfieUrl}
+                    alt="Driver accept selfie"
+                    className="w-16 h-16 rounded-lg object-cover border border-gray-200"
+                  />
+                  <p className="text-[12px] text-gray-500">
+                    Accepted at {formatDate(trip.acceptSelfieAt)}
+                  </p>
+                </div>
+              </div>
+            )}
             <div>
               <p className="text-[11px] uppercase tracking-wider font-bold text-gray-400 mb-1">Transport Type</p>
               <p className="text-[13px] font-bold text-gray-900 capitalize">{String(trip.transportType).toLowerCase()}</p>

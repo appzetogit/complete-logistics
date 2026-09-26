@@ -88,6 +88,16 @@ const rideSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    /// Whether the rider booked a one-way or a return journey. Drives the fare
+    /// on the app side and is surfaced on the driver's request card so they
+    /// know the job involves a return leg before accepting.
+    tripMode: {
+      type: String,
+      enum: ['one_way', 'round_trip'],
+      default: 'one_way',
+      lowercase: true,
+      trim: true,
+    },
     intercity: {
       bookingId: {
         type: String,
@@ -186,6 +196,56 @@ const rideSchema = new mongoose.Schema(
         type: String,
         default: '',
         trim: true,
+      },
+      /// Optional handling note the sender types at booking — lift access,
+      /// fragile contents, call before arriving.
+      instructions: {
+        type: String,
+        default: '',
+        trim: true,
+      },
+      /// Body height the rider paid for. Declared here because the fare engine
+      /// writes it on every goods booking; without it Mongoose silently
+      /// dropped the field and the driver was never told what to bring.
+      loadHeight: {
+        key: { type: String, default: '', trim: true },
+        label: { type: String, default: '', trim: true },
+        height_ft: { type: Number, default: 0 },
+        price: { type: Number, default: 0 },
+      },
+      /// Paid add-ons the rider ticked, e.g. tarpaulin sheet, roof carrier,
+      /// helper. The driver has to know what the job requires before accepting.
+      extras: {
+        type: [
+          {
+            _id: false,
+            key: { type: String, default: '', trim: true },
+            label: { type: String, default: '', trim: true },
+            price: { type: Number, default: 0 },
+          },
+        ],
+        default: [],
+      },
+      /// Loading/unloading waiting terms disclosed with the quote and settled
+      /// at completion.
+      detention: {
+        freeMinutes: { type: Number, default: 0 },
+        chargePerHour: { type: Number, default: 0 },
+      },
+      /// Proof the consignment was collected — photographed by the driver at
+      /// the pickup before the trip may start.
+      pickupProof: {
+        imageUrl: { type: String, default: '', trim: true },
+        capturedAt: { type: Date, default: null },
+        note: { type: String, default: '', trim: true },
+      },
+      /// Proof the consignment was handed over at the drop, captured before
+      /// the delivery may be completed.
+      dropProof: {
+        imageUrl: { type: String, default: '', trim: true },
+        capturedAt: { type: Date, default: null },
+        note: { type: String, default: '', trim: true },
+        receivedBy: { type: String, default: '', trim: true },
       },
     },
     scheduledAt: {
@@ -583,6 +643,11 @@ const rideSchema = new mongoose.Schema(
     acceptedAt: {
       type: Date,
       default: null,
+    },
+    acceptSelfie: {
+      imageUrl: { type: String, default: '', trim: true },
+      driverId: { type: mongoose.Schema.Types.ObjectId, ref: 'TaxiDriver', default: null },
+      capturedAt: { type: Date, default: null },
     },
     arrivedAt: {
       type: Date,

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { storeDataUrlImage } from '../../../../utils/localImageStore.js';
 import { randomBytes } from 'node:crypto';
 import { ApiError } from '../../../../utils/ApiError.js';
 import { env } from '../../../../config/env.js';
@@ -594,6 +595,84 @@ const normalizeDeliveryDistancePricing = (value = {}, fallback = {}) => {
     distance_price: Number(source.distance_price ?? defaults.distance_price ?? 0),
     free_time: Number(source.free_time ?? defaults.free_time ?? 0),
     time_price: Number(source.time_price ?? defaults.time_price ?? 0),
+  };
+};
+
+/// Slug used as the stable id for a height/extra when the admin did not supply
+/// one. Derived from the label so existing rows keep working after a rename of
+/// the display text only if the key was already stored.
+const toOptionKey = (value = '') =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+/// A non-negative money/measure amount, preserving decimals (6.5 ft, ₹99.50).
+const normalizeOptionAmount = (value) => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+};
+
+/// Rider-selectable rows on a vehicle type: the load heights and the add-ons.
+/// Both share a shape — key, label, price — so they normalize the same way.
+/// Rows without a usable label are dropped rather than persisted half-formed,
+/// and duplicate keys collapse to the first occurrence so the apps can treat
+/// `key` as unique.
+const normalizeVehicleOptionRows = (value, { withHeight = false } = {}) => {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set();
+  const rows = [];
+
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+
+    const label = String(entry.label ?? '').trim();
+    if (!label) continue;
+
+    const key = toOptionKey(entry.key || label);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+
+    const row = { key, label, price: normalizeOptionAmount(entry.price) };
+    if (withHeight) row.height_ft = normalizeOptionAmount(entry.height_ft);
+    rows.push(row);
+  }
+
+  return rows;
+};
+
+const normalizeLoadHeightOptions = (value) =>
+  normalizeVehicleOptionRows(value, { withHeight: true });
+
+const normalizeVehicleExtraOptions = (value) => normalizeVehicleOptionRows(value);
+
+/// A non-negative whole number, or 0 when the admin left the box empty.
+const normalizeVehicleCounter = (value) => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
+};
+
+/// Card-facing copy for a vehicle type: the load figure, headline per-km rate,
+/// and the pickup ETA / list position for each module. Display values only --
+/// the fare engine still reads delivery_distance_pricing.
+const normalizeVehicleDisplayFields = (item = {}) => {
+  const source = item && typeof item === 'object' ? item : {};
+  const pricePerKm = Number(source.price_per_km ?? 0);
+  const loadCapacityTon = Number(source.load_capacity_ton ?? 0);
+
+  return {
+    load_capacity_ton:
+      Number.isFinite(loadCapacityTon) && loadCapacityTon > 0 ? loadCapacityTon : 0,
+    capacity_label: String(source.capacity_label ?? '').trim(),
+    price_per_km: Number.isFinite(pricePerKm) && pricePerKm > 0 ? pricePerKm : 0,
+    load_height_options: normalizeLoadHeightOptions(source.load_height_options),
+    extra_options: normalizeVehicleExtraOptions(source.extra_options),
+    taxi_eta_minutes: normalizeVehicleCounter(source.taxi_eta_minutes),
+    taxi_sequence: normalizeVehicleCounter(source.taxi_sequence),
+    delivery_eta_minutes: normalizeVehicleCounter(source.delivery_eta_minutes),
+    delivery_sequence: normalizeVehicleCounter(source.delivery_sequence),
   };
 };
 
@@ -5911,6 +5990,8 @@ const toAdminRideRow = (ride) => {
       vehicleType: ride.driverId.vehicleType || '',
       vehicleNumber: ride.driverId.vehicleNumber || '',
     } : null,
+    acceptSelfieUrl: ride.acceptSelfie?.imageUrl || '',
+    acceptSelfieAt: ride.acceptSelfie?.capturedAt || null,
   };
 };
 
@@ -5954,6 +6035,8 @@ const toAdminDeliveryRow = (ride) => {
       senderName: parcel.senderName || '',
       receiverName: parcel.receiverName || '',
     },
+    acceptSelfieUrl: ride.acceptSelfie?.imageUrl || '',
+    acceptSelfieAt: ride.acceptSelfie?.capturedAt || null,
   };
 };
 
@@ -6485,12 +6568,13 @@ export const listVehicleTypes = async (queryParams = {}) => {
       : { $in: [normalizedTransportType, 'both'] };
   }
   const items = await Vehicle.find(query)
-    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active createdAt updatedAt')
+    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity load_capacity_ton capacity_label load_height_options extra_options price_per_km taxi_eta_minutes taxi_sequence delivery_eta_minutes delivery_sequence image icon map_icon status active createdAt updatedAt')
     .sort({ createdAt: -1 })
     .lean();
   const results = items.map((item) => ({
     ...item,
     ...normalizeVehicleCommissionConfig(item),
+    ...normalizeVehicleDisplayFields(item),
     category: item.category || '',
     icon: item.map_icon || item.icon || item.image || '',
     map_icon: item.map_icon || item.icon || item.image || '',
@@ -6520,6 +6604,7 @@ export const listVehicleCatalog = async () => {
   const results = items.map((item) => ({
     ...item,
     ...normalizeVehicleCommissionConfig(item),
+    ...normalizeVehicleDisplayFields(item),
     id: String(item._id),
     category: item.category || '',
     icon: item.map_icon || item.icon || item.image || '',
@@ -6583,6 +6668,7 @@ export const getVehicleTypeById = async (id) => {
   return {
     ...item,
     ...normalizeVehicleCommissionConfig(item),
+    ...normalizeVehicleDisplayFields(item),
     id: String(item._id),
     category: item.category || '',
     icon: item.map_icon || item.icon || item.image || '',
@@ -6606,7 +6692,7 @@ export const listPublicVehicleCatalog = async () => {
   }
 
   const items = await Vehicle.find()
-    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity image icon map_icon status active')
+    .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity load_capacity_ton capacity_label load_height_options extra_options price_per_km taxi_eta_minutes taxi_sequence delivery_eta_minutes delivery_sequence image icon map_icon status active')
     .sort({ createdAt: -1 })
     .lean();
 
@@ -6624,6 +6710,7 @@ export const listPublicVehicleCatalog = async () => {
     delivery_distance_pricing: normalizeDeliveryDistancePricing(item.delivery_distance_pricing),
     service_tax: normalizeDeliveryServiceTax(item.service_tax),
     ...normalizeVehicleCommissionConfig(item),
+    ...normalizeVehicleDisplayFields(item),
     capacity: Number(item.capacity || 0),
     image: item.image || '',
     map_icon: item.map_icon || item.icon || item.image || '',
@@ -6688,6 +6775,7 @@ export const createVehicleType = async (payload) => {
     icon_types: payload.icon_types || 'car',
     category: String(payload.category || '').trim().toLowerCase(),
     capacity: Number(payload.capacity || 0),
+    ...normalizeVehicleDisplayFields(payload),
     size: payload.size ?? '',
     is_taxi: payload.is_taxi || transportType,
     is_accept_share_ride: Number(payload.is_accept_share_ride || 0) ? 1 : 0,
@@ -6750,15 +6838,38 @@ export const updateVehicleType = async (id, payload) => {
     vehicle.category = String(payload.category || '').trim().toLowerCase();
   }
   if (payload.image !== undefined) {
-    vehicle.image = payload.image ?? '';
+    // Panels post icons as base64. Persist the file, store only its URL --
+    // every ride booked with this vehicle copies whatever is saved here.
+    vehicle.image = await storeDataUrlImage(payload.image ?? '', 'vehicles');
   }
   if (payload.icon !== undefined || payload.map_icon !== undefined || payload.mapIcon !== undefined || payload.image !== undefined) {
     const mapIcon = payload.map_icon ?? payload.mapIcon ?? payload.icon ?? payload.image ?? '';
-    vehicle.icon = mapIcon;
-    vehicle.map_icon = mapIcon;
+    const storedMapIcon = await storeDataUrlImage(mapIcon, 'vehicles');
+    vehicle.icon = storedMapIcon;
+    vehicle.map_icon = storedMapIcon;
   }
   if (payload.capacity !== undefined) {
     vehicle.capacity = Number(payload.capacity || 0);
+  }
+  if (payload.load_capacity_ton !== undefined) {
+    vehicle.load_capacity_ton = normalizeVehicleDisplayFields(payload).load_capacity_ton;
+  }
+  if (payload.capacity_label !== undefined) {
+    vehicle.capacity_label = String(payload.capacity_label ?? '').trim();
+  }
+  if (payload.load_height_options !== undefined) {
+    vehicle.load_height_options = normalizeLoadHeightOptions(payload.load_height_options);
+  }
+  if (payload.extra_options !== undefined) {
+    vehicle.extra_options = normalizeVehicleExtraOptions(payload.extra_options);
+  }
+  if (payload.price_per_km !== undefined) {
+    vehicle.price_per_km = normalizeVehicleDisplayFields(payload).price_per_km;
+  }
+  for (const field of ['taxi_eta_minutes', 'taxi_sequence', 'delivery_eta_minutes', 'delivery_sequence']) {
+    if (payload[field] !== undefined) {
+      vehicle[field] = normalizeVehicleCounter(payload[field]);
+    }
   }
   if (payload.size !== undefined) {
     vehicle.size = payload.size ?? '';

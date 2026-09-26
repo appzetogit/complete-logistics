@@ -21,8 +21,12 @@ import { clearDriverRoute, updateDriverRoute } from '../services/driverRouteServ
 const driverLifecycleStatuses = new Set([
   RIDE_LIVE_STATUS.ACCEPTED,
   RIDE_LIVE_STATUS.ARRIVING,
+  // Parcel-only loading/handover steps. The service layer rejects them on a
+  // passenger ride, so listing them here only widens what may be attempted.
+  RIDE_LIVE_STATUS.GOODS_LOADED,
   RIDE_LIVE_STATUS.STARTED,
   RIDE_LIVE_STATUS.ARRIVED,
+  RIDE_LIVE_STATUS.GOODS_DELIVERED,
   RIDE_LIVE_STATUS.COMPLETED,
 ]);
 const RIDE_LOCATION_PERSIST_MIN_DISTANCE_METERS = 12;
@@ -182,7 +186,7 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
 
   socket.on(
     SOCKET_EVENTS.RIDE_STATUS_UPDATE,
-    onAsync(socket, async ({ rideId, status, paymentMethod }) => {
+    onAsync(socket, async ({ rideId, status, paymentMethod, proofImageUrl, proofNote, receivedBy }) => {
       if (socket.auth.role !== 'driver') {
         throw new Error('Only drivers can update ride status');
       }
@@ -198,6 +202,9 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
         driverId: socket.auth.sub,
         nextStatus: status,
         paymentMethod,
+        proofImageUrl,
+        proofNote,
+        receivedBy,
       });
       const populatedRide = await getRideDetails(rideId);
 

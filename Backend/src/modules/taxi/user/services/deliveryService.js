@@ -107,7 +107,59 @@ const calculateDistanceKm = (fromCoords = [], toCoords = []) => {
   return earthRadiusKm * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 };
 
-const computeDeliveryFareBreakdown = ({ vehicle = {}, pickupCoords = [], dropCoords = [] }) => {
+/// Resolves the rider's chosen body height against the vehicle's configured
+/// options. Returns null when nothing was chosen or the key is unknown, so a
+/// stale key from an old app build cannot silently apply someone else's price.
+const resolveLoadHeight = (vehicle = {}, loadHeightKey = '') => {
+  const key = String(loadHeightKey || '').trim();
+  if (!key) return null;
+
+  const options = Array.isArray(vehicle?.load_height_options) ? vehicle.load_height_options : [];
+  const match = options.find((option) => String(option?.key || '') === key);
+  if (!match) return null;
+
+  return {
+    key: match.key,
+    label: match.label || '',
+    height_ft: Math.max(0, Number(match.height_ft || 0)),
+    price: Math.max(0, Number(match.price || 0)),
+  };
+};
+
+/// Resolves the rider's ticked add-ons the same way. Unknown keys are dropped
+/// rather than trusted, and the catalog order is preserved so the fare
+/// breakdown reads the same as the options screen.
+const resolveExtras = (vehicle = {}, extraKeys = []) => {
+  const wanted = new Set(
+    (Array.isArray(extraKeys) ? extraKeys : []).map((key) => String(key || '').trim()).filter(Boolean),
+  );
+  if (!wanted.size) return [];
+
+  const options = Array.isArray(vehicle?.extra_options) ? vehicle.extra_options : [];
+  return options
+    .filter((option) => wanted.has(String(option?.key || '')))
+    .map((option) => ({
+      key: option.key,
+      label: option.label || '',
+      price: Math.max(0, Number(option.price || 0)),
+    }));
+};
+
+/// Detention terms are disclosed with the quote but never added to it — the
+/// charge depends on how long loading actually takes, so it is settled at trip
+/// completion. The rider and driver both see the terms up front.
+const resolveDetentionTerms = (pricing = {}) => ({
+  freeMinutes: Math.max(0, Number(pricing?.free_time || 0)),
+  chargePerHour: Math.max(0, Number(pricing?.time_price || 0)),
+});
+
+const computeDeliveryFareBreakdown = ({
+  vehicle = {},
+  pickupCoords = [],
+  dropCoords = [],
+  loadHeightKey = '',
+  extraKeys = [],
+}) => {
   const pricing = vehicle?.delivery_distance_pricing || {};
   const enabled = Boolean(
     pricing?.enabled ||
@@ -115,30 +167,101 @@ const computeDeliveryFareBreakdown = ({ vehicle = {}, pickupCoords = [], dropCoo
     Number(pricing?.distance_price || 0) > 0
   );
 
+  const serviceTaxPercentage = Math.max(0, Number(vehicle?.service_tax || 0));
+  const loadHeight = resolveLoadHeight(vehicle, loadHeightKey);
+  const extras = resolveExtras(vehicle, extraKeys);
+  const detention = resolveDetentionTerms(pricing);
+  const distanceKm = Math.max(0, calculateDistanceKm(pickupCoords, dropCoords));
+  const baseDistance = Math.max(0, Number(pricing?.base_distance ?? pricing?.free_distance ?? 0));
+
+  // With distance pricing unconfigured there is no fare to quote. The rider's
+  // selections still ride along so the driver is told what to bring even when
+  // the operator prices the job off-platform.
   if (!enabled) {
     return {
       total: 0,
       subtotal: 0,
-      serviceTaxPercentage: Math.max(0, Number(vehicle?.service_tax || 0)),
+      distanceKm: roundCurrency(distanceKm),
+      baseDistanceKm: roundCurrency(baseDistance),
+      basePrice: 0,
+      distanceCharge: 0,
+      loadHeight,
+      loadHeightCharge: 0,
+      extras,
+      extrasCharge: 0,
+      detention,
+      serviceTaxPercentage,
       serviceTaxAmount: 0,
+      priced: false,
     };
   }
 
-  const distanceKm = Math.max(0, calculateDistanceKm(pickupCoords, dropCoords));
   const basePrice = Math.max(0, Number(pricing?.base_price || 0));
-  const baseDistance = Math.max(0, Number(pricing?.base_distance ?? pricing?.free_distance ?? 0));
   const distancePrice = Math.max(0, Number(pricing?.distance_price || 0));
   const extraDistanceKm = Math.max(distanceKm - baseDistance, 0);
   const distanceCharge = extraDistanceKm * distancePrice;
-  const subtotal = basePrice + distanceCharge;
-  const serviceTaxPercentage = Math.max(0, Number(vehicle?.service_tax || 0));
+  const loadHeightCharge = loadHeight ? loadHeight.price : 0;
+  const extrasCharge = extras.reduce((sum, extra) => sum + extra.price, 0);
+  const subtotal = basePrice + distanceCharge + loadHeightCharge + extrasCharge;
   const serviceTaxAmount = (subtotal * serviceTaxPercentage) / 100;
 
   return {
     total: roundCurrency(subtotal + serviceTaxAmount),
     subtotal: roundCurrency(subtotal),
+    distanceKm: roundCurrency(distanceKm),
+    baseDistanceKm: roundCurrency(baseDistance),
+    basePrice: roundCurrency(basePrice),
+    distanceCharge: roundCurrency(distanceCharge),
+    loadHeight,
+    loadHeightCharge: roundCurrency(loadHeightCharge),
+    extras,
+    extrasCharge: roundCurrency(extrasCharge),
+    detention,
     serviceTaxPercentage: roundCurrency(serviceTaxPercentage),
     serviceTaxAmount: roundCurrency(serviceTaxAmount),
+    priced: true,
+  };
+};
+
+/// Fields the fare engine needs off a vehicle type. Kept in one place because
+/// the quote and the booking must load exactly the same set — if they drift,
+/// the rider gets quoted one price and charged another.
+const DELIVERY_FARE_VEHICLE_FIELDS =
+  'name delivery_distance_pricing service_tax load_height_options extra_options load_capacity_ton capacity_label';
+
+/// Priced quote for a pickup/drop pair, used by the vehicle options screen
+/// before the rider commits. Runs the identical breakdown the booking uses.
+export const quoteDeliveryFare = async ({
+  vehicleTypeId,
+  pickup,
+  drop,
+  loadHeightKey,
+  extraKeys,
+  parcel,
+}) => {
+  if (!vehicleTypeId) {
+    throw new ApiError(400, 'vehicleTypeId is required');
+  }
+
+  await ensureDeliveryVehicleAllowed({ vehicleTypeId, parcel });
+
+  const vehicle = await Vehicle.findById(vehicleTypeId).select(DELIVERY_FARE_VEHICLE_FIELDS).lean();
+  if (!vehicle) {
+    throw new ApiError(404, 'Vehicle type not found');
+  }
+
+  const breakdown = computeDeliveryFareBreakdown({
+    vehicle,
+    pickupCoords: normalizePoint(pickup, 'pickup'),
+    dropCoords: normalizePoint(drop, 'drop'),
+    loadHeightKey,
+    extraKeys,
+  });
+
+  return {
+    vehicleTypeId: String(vehicle._id),
+    vehicleName: vehicle.name || '',
+    ...breakdown,
   };
 };
 
@@ -168,14 +291,22 @@ export const createDeliveryRecord = async ({
   vehicleIconUrl,
   paymentMethod,
   parcel,
+  loadHeightKey,
+  extraKeys,
 }) => {
   await ensureDeliveryVehicleAllowed({ vehicleTypeId, parcel });
   const pickupCoords = normalizePoint(pickup, 'pickup');
   const dropCoords = normalizePoint(drop, 'drop');
   const vehicle = vehicleTypeId
-    ? await Vehicle.findById(vehicleTypeId).select('delivery_distance_pricing service_tax').lean()
+    ? await Vehicle.findById(vehicleTypeId).select(DELIVERY_FARE_VEHICLE_FIELDS).lean()
     : null;
-  const fareBreakdown = computeDeliveryFareBreakdown({ vehicle, pickupCoords, dropCoords });
+  const fareBreakdown = computeDeliveryFareBreakdown({
+    vehicle,
+    pickupCoords,
+    dropCoords,
+    loadHeightKey,
+    extraKeys,
+  });
   const resolvedFare = fareBreakdown.total > 0 ? fareBreakdown.total : Number(fare || 0);
 
   const ride = await createRideRecord({
@@ -192,7 +323,12 @@ export const createDeliveryRecord = async ({
     paymentMethod,
     transport_type: 'delivery',
     serviceType: 'parcel',
-    parcel,
+    parcel: {
+      ...(parcel || {}),
+      loadHeight: fareBreakdown.loadHeight,
+      extras: fareBreakdown.extras,
+      detention: fareBreakdown.detention,
+    },
   });
 
   await startDispatchFlow(ride);
@@ -228,7 +364,7 @@ export const getDeliveryById = async ({ deliveryId, role, entityId }) => {
 };
 
 export const listDeliveriesForIdentity = async ({ role, entityId, limit }) => {
-  const rides = await listRideHistoryForIdentity({ role, entityId, limit });
+  const { results: rides } = await listRideHistoryForIdentity({ role, entityId, limit });
   return rides
     .filter((ride) => String(ride.serviceType || ride.type || 'ride').toLowerCase() === 'parcel')
     .map((ride) => ({

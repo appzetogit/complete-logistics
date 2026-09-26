@@ -1,7 +1,7 @@
-import { createDeliveryRecord, getActiveDeliveryForIdentity, getDeliveryById, listDeliveriesForIdentity } from '../services/deliveryService.js';
+import { createDeliveryRecord, getActiveDeliveryForIdentity, getDeliveryById, listDeliveriesForIdentity, quoteDeliveryFare } from '../services/deliveryService.js';
 
 export const createDelivery = async (req, res) => {
-  const { pickup, drop, pickupAddress, dropAddress, fare, vehicleTypeId, vehicleTypeIds, vehicleIconType, vehicleIconUrl, paymentMethod, parcel } = req.body;
+  const { pickup, drop, pickupAddress, dropAddress, fare, vehicleTypeId, vehicleTypeIds, vehicleIconType, vehicleIconUrl, paymentMethod, parcel, loadHeightKey, extraKeys } = req.body;
 
   const delivery = await createDeliveryRecord({
     userId: req.auth.sub,
@@ -16,11 +16,32 @@ export const createDelivery = async (req, res) => {
     vehicleIconUrl,
     paymentMethod,
     parcel,
+    loadHeightKey,
+    extraKeys,
   });
 
   res.status(201).json({
     success: true,
     data: delivery,
+  });
+};
+
+/// Priced quote for the vehicle options screen, before the rider commits.
+export const quoteDelivery = async (req, res) => {
+  const { vehicleTypeId, pickup, drop, loadHeightKey, extraKeys, parcel } = req.body;
+
+  const quote = await quoteDeliveryFare({
+    vehicleTypeId,
+    pickup,
+    drop,
+    loadHeightKey,
+    extraKeys,
+    parcel,
+  });
+
+  res.json({
+    success: true,
+    data: quote,
   });
 };
 

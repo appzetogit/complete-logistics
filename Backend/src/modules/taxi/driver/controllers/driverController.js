@@ -1701,14 +1701,36 @@ const serializeEmergencyContact = (contact = {}) => ({
       : "manual",
 });
 
-const resolveVehicleMapIcon = async (vehicleTypeId) => {
+/// Map art plus the catalog labels the driver apps show. `vehicleType` on the
+/// driver is only the dispatch family ('bike'/'auto'/'car'), so the app has no
+/// way to name the tier the driver actually registered for — 'Heavy Truck',
+/// 'Small Auto', 'Sedan' — unless it is resolved from the catalog here.
+const resolveVehicleTypeSummary = async (vehicleTypeId) => {
+  const empty = { iconUrl: "", name: "", capacityLabel: "" };
+
   if (!vehicleTypeId) {
-    return "";
+    return empty;
   }
 
-  const vehicle = await Vehicle.findById(vehicleTypeId).select("icon map_icon image").lean();
-  return vehicle?.map_icon || vehicle?.icon || vehicle?.image || "";
+  const vehicle = await Vehicle.findById(vehicleTypeId)
+    .select("icon map_icon image name capacity_label load_capacity_ton")
+    .lean();
+
+  if (!vehicle) {
+    return empty;
+  }
+
+  const tons = Number(vehicle.load_capacity_ton || 0);
+
+  return {
+    iconUrl: vehicle.map_icon || vehicle.icon || vehicle.image || "",
+    name: vehicle.name || "",
+    capacityLabel: vehicle.capacity_label || (tons > 0 ? `${tons} Ton` : ""),
+  };
 };
+
+const resolveVehicleMapIcon = async (vehicleTypeId) =>
+  (await resolveVehicleTypeSummary(vehicleTypeId)).iconUrl;
 
 const normalizePhone = (value) =>
   String(value || "")
@@ -3003,8 +3025,15 @@ export const getCurrentDriver = async (req, res) => {
   }
 
   await clearDriverActiveRideIfStale(driver);
-  const vehicleIconUrl = await resolveVehicleMapIcon(driver.vehicleTypeId);
+  const vehicleTypeSummary = await resolveVehicleTypeSummary(driver.vehicleTypeId);
+  const vehicleIconUrl = vehicleTypeSummary.iconUrl;
   const todaySummary = await syncDriverTodaySummaryDocument(driver);
+  // Lifetime completed trips for the profile header. Counted rather than
+  // stored so it cannot drift away from the ride records.
+  const totalTrips = await Ride.countDocuments({
+    driverId: driver._id,
+    status: "completed",
+  });
 
   res.json({
     success: true,
@@ -3019,10 +3048,15 @@ export const getCurrentDriver = async (req, res) => {
       gender: driver.gender,
       vehicleType: driver.vehicleType,
       vehicleTypeId: driver.vehicleTypeId,
+      // Catalog labels for the tier the driver registered for, so the app can
+      // show 'Heavy Truck' rather than the 'car' dispatch family.
+      vehicleTypeName: vehicleTypeSummary.name,
+      vehicleCapacityLabel: vehicleTypeSummary.capacityLabel,
       vehicleIconType: driver.vehicleIconType,
       vehicleIconUrl,
       vehicleMake: driver.vehicleMake,
       vehicleModel: driver.vehicleModel,
+      vehicleYear: driver.vehicleYear || "",
       registerFor: driver.registerFor,
       vehicleNumber: driver.vehicleNumber,
       vehicleColor: driver.vehicleColor,
@@ -3056,6 +3090,7 @@ export const getCurrentDriver = async (req, res) => {
         : [],
       onboarding: driver.onboarding || {},
       todaySummary: todaySummary || buildDriverTodaySummaryFromDocument(driver),
+      totalTrips,
     },
   });
 };
@@ -7363,6 +7398,7 @@ export const updateDriverVehicle = async (req, res) => {
     vehicleColor,
     vehicleMake,
     vehicleModel,
+    vehicleYear,
     vehicleImage,
   } = req.body;
 
@@ -7436,6 +7472,13 @@ export const updateDriverVehicle = async (req, res) => {
       vehicleChanged = true;
     }
   }
+  if (vehicleYear !== undefined) {
+    const normalizedVehicleYear = String(vehicleYear || "").trim();
+    update.vehicleYear = normalizedVehicleYear;
+    if (String(driver.vehicleYear || "") !== normalizedVehicleYear) {
+      vehicleChanged = true;
+    }
+  }
   if (vehicleImage !== undefined) {
     const normalizedVehicleImage = String(vehicleImage || "").trim();
     update.vehicleImage = normalizedVehicleImage;
@@ -7454,7 +7497,8 @@ export const updateDriverVehicle = async (req, res) => {
     returnDocument: 'after',
   });
 
-  const vehicleIconUrl = await resolveVehicleMapIcon(updatedDriver.vehicleTypeId);
+  const vehicleTypeSummary = await resolveVehicleTypeSummary(updatedDriver.vehicleTypeId);
+  const vehicleIconUrl = vehicleTypeSummary.iconUrl;
 
   res.json({
     success: true,
@@ -7467,10 +7511,13 @@ export const updateDriverVehicle = async (req, res) => {
       phone: updatedDriver.phone,
       vehicleType: updatedDriver.vehicleType,
       vehicleTypeId: updatedDriver.vehicleTypeId,
+      vehicleTypeName: vehicleTypeSummary.name,
+      vehicleCapacityLabel: vehicleTypeSummary.capacityLabel,
       vehicleIconType: updatedDriver.vehicleIconType,
       vehicleIconUrl,
       vehicleMake: updatedDriver.vehicleMake,
       vehicleModel: updatedDriver.vehicleModel,
+      vehicleYear: updatedDriver.vehicleYear || "",
       vehicleNumber: updatedDriver.vehicleNumber,
       vehicleColor: updatedDriver.vehicleColor,
       vehicleImage: updatedDriver.vehicleImage || "",
