@@ -19,7 +19,7 @@ export const normalizeAssetUrl = (url = '') => {
 const DEFAULT_SETTINGS_CONTEXT = {
   settings: {
     general: {
-      app_name: 'Appzeto 24 Trawler',
+      app_name: 'Rentol',
       logo: '',
       favicon: '',
     },
@@ -257,7 +257,7 @@ export const SettingsProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    const appName = settings.general?.app_name || 'Appzeto 24 Trawler';
+    const appName = settings.general?.app_name || 'Rentol';
     document.title = appName;
 
     const favicon = settings.general?.favicon || settings.customization?.favicon;

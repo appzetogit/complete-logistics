@@ -1530,7 +1530,7 @@ const AdminLayout = () => {
                   className="flex flex-col"
                 >
                   <h3 className="text-sm font-bold leading-tight text-slate-900 tracking-tight">
-                    {mode === OWNER_MODE ? 'Owner Panel' : appName || 'APPZETO'}
+                    {mode === OWNER_MODE ? 'Owner Panel' : appName || 'Rentol'}
                   </h3>
                   <div className="mt-0.5 flex items-center gap-1.5">
                     <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
@@ -1927,7 +1927,7 @@ const AdminLayout = () => {
                   >
                     <div className="px-3 py-2 border-b border-slate-100 mb-1 bg-slate-50/50 rounded-t-lg">
                       <p className="text-[10px] font-semibold text-slate-500 mb-0.5">Account</p>
-                      <p className="text-[12px] font-medium text-slate-900 truncate">{adminProfile?.email || 'root@Appzeto .cloud'}</p>
+                      <p className="text-[12px] font-medium text-slate-900 truncate">{adminProfile?.email || 'root@rentol.cloud'}</p>
                     </div>
 
                     <div className="p-1 space-y-0.5">

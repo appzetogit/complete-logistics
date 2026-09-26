@@ -9,7 +9,7 @@ export const HAS_VALID_GOOGLE_MAPS_KEY =
 
 export const INDIA_CENTER = { lat: 22.7196, lng: 75.8577 };
 export const DELHI_CENTER = { lat: 28.6139, lng: 77.209 };
-export const GOOGLE_MAPS_LOADER_ID = 'appzeto-google-maps';
+export const GOOGLE_MAPS_LOADER_ID = 'rentol-google-maps';
 export const GOOGLE_MAPS_LIBRARIES = ['drawing', 'places', 'routes'];
 
 export const getLatLng = (source, fallback = INDIA_CENTER) => {

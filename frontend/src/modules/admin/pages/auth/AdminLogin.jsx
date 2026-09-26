@@ -33,7 +33,7 @@ const AdminLogin = () => {
   const navigate = useNavigate();
 
   const appLogo = settings.general?.logo || settings.customization?.logo;
-  const appName = settings.general?.app_name || 'Appzeto ';
+  const appName = settings.general?.app_name || 'Rentol';
 
   const resetMessages = () => {
     setError('');

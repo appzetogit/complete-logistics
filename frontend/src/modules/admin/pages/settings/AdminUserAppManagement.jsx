@@ -20,7 +20,7 @@ import { uploadService } from '../../../../shared/services/uploadService';
 import api from '../../../../shared/api/axiosInstance';
 import { useSettings } from '../../../../shared/context/SettingsContext';
 
-const STORAGE_KEY = 'Appzeto :admin:user-app-settings';
+const STORAGE_KEY = 'rentol:admin:user-app-settings';
 
 const defaultSettings = {
   homeSections: {
@@ -43,7 +43,7 @@ const defaultSettings = {
     { id: '4', title: 'Bike', image: '', route: '/taxi/user/ride/select-location', order: 4, status: 'active' }
   ],
   promos: [
-    { id: '1', title: 'Experience A New Standard With Appzeto', subtitle: 'A premier private hire service where luxury and reliability converge.', image: '', route: '/taxi/user/ride/select-location', order: 1, status: 'active' },
+    { id: '1', title: 'Experience A New Standard With Rentol', subtitle: 'A premier private hire service where luxury and reliability converge.', image: '', route: '/taxi/user/ride/select-location', order: 1, status: 'active' },
     { id: '2', title: 'Need to Send Packages? Try Parcel!', subtitle: 'Fast and secure delivery across Indore at affordable prices.', image: '', route: '/taxi/user/parcel/type', order: 2, status: 'active' }
   ],
   goPlaces: [
@@ -52,7 +52,7 @@ const defaultSettings = {
     { id: '3', title: 'Ride to Bus Terminal', image: '', route: '/taxi/user/ride/select-location', order: 3, status: 'active' }
   ],
   footer: {
-    hashtag: '#goAppzeto',
+    hashtag: '#goRentol',
     line1: 'Made for India',
     line2: 'Crafted for riders'
   }
@@ -89,7 +89,7 @@ const AdminUserAppManagement = ({ tab: initialTab }) => {
         const bannersData = bannersRes.data?.data?.results || bannersRes.data?.results || bannersRes.data || [];
         fetchedPromos = bannersData.map((b, idx) => ({
           id: b._id || b.id || String(idx + 1),
-          title: b.title || 'Experience A New Standard With Appzeto',
+          title: b.title || 'Experience A New Standard With Rentol',
           subtitle: b.subtitle || 'A premier private hire service where luxury and reliability converge.',
           imageUrl: b.image || '',
           image: b.image || '',
@@ -554,7 +554,7 @@ const AdminUserAppManagement = ({ tab: initialTab }) => {
                     value={settings.footer.hashtag}
                     onChange={(e) => handleFooterChange('hashtag', e.target.value)}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:border-[#405189] text-[13px] font-semibold"
-                    placeholder="#goAppzeto"
+                    placeholder="#goRentol"
                   />
                 </div>
                 <div>
