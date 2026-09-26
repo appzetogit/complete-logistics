@@ -41,6 +41,13 @@ const attachResolvedAuth = (req, payload) => {
   };
 };
 
+// Every authenticated request loads the account behind the token. Only these
+// fields are read below, so fetch just them and skip mongoose hydration --
+// building a full document per request is pure overhead on every endpoint.
+// Mirrors what socket/middleware/socketAuth.js already does.
+const AUTH_ENTITY_FIELDS =
+  '_id active admin_type approve deletedAt email isActive name permissions poolingEnabled role service_location_ids status zone_ids';
+
 export const authenticate = (allowedRoles = [], options = {}) => async (req, _res, next) => {
   try {
     const allowPending = options?.allowPending === true;
@@ -66,7 +73,7 @@ export const authenticate = (allowedRoles = [], options = {}) => async (req, _re
       throw new ApiError(401, 'Unsupported auth role');
     }
 
-    const entity = await Model.findById(payload.sub);
+    const entity = await Model.findById(payload.sub).select(AUTH_ENTITY_FIELDS).lean();
 
     if (!entity) {
       throw new ApiError(401, 'Authenticated account no longer exists');

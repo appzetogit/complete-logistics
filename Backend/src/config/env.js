@@ -66,6 +66,11 @@ export const env = {
     process.env.PHONEPE_CALLBACK_BASE_URL ||
     process.env.PUBLIC_PHONEPE_REDIRECT_URL ||
     '',
+  uploadDir: path.resolve(
+    __dirname,
+    '../..',
+    process.env.UPLOAD_DIR || process.env.UPLOAD_PATH || 'uploads',
+  ),
   cloudinary: {
     cloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
     apiKey: process.env.CLOUDINARY_API_KEY || '',
@@ -104,6 +109,12 @@ export const env = {
     commissionPercent: Number.isFinite(Number(process.env.DRIVER_COMMISSION_PERCENT))
       ? Number(process.env.DRIVER_COMMISSION_PERCENT)
       : 20,
+  },
+  uploads: {
+    // Absolute path nginx serves at /uploads/ (see sites-enabled/udanxpress.conf).
+    dir: process.env.UPLOAD_DIR || '/var/www/uploads',
+    // Absolute so mobile clients can use the URL without knowing the API host.
+    publicBaseUrl: `${(process.env.PUBLIC_BACKEND_URL || process.env.BACKEND_URL || '').replace(/\/+$/, '')}/uploads`,
   },
   redis: {
     url: readEnv('REDIS_URL'),

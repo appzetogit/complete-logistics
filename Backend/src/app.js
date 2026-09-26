@@ -1,8 +1,6 @@
 import cors from 'cors';
 import express from 'express';
 import morgan from 'morgan';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { env } from './config/env.js';
 import { errorHandler, notFoundHandler } from './modules/taxi/middlewares/errorMiddleware.js';
 import { taxiRouter } from './modules/taxi/routes/index.js';
@@ -21,9 +19,7 @@ app.use(
   app.use(express.urlencoded({ extended: true })); 
   app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
 
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = path.dirname(__filename);
-  app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+  app.use('/uploads', express.static(env.uploadDir));
 
   app.get('/health', (_req, res) => {
     res.json({ success: true, message: 'Taxi backend is healthy' });

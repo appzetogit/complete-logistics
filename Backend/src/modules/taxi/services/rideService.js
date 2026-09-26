@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { isDataUrl } from '../../../utils/localImageStore.js';
 import { ApiError } from '../../../utils/ApiError.js';
 import { getOrLoadCachedValue } from '../../../utils/cache.js';
 import { normalizePoint, toPoint } from '../../../utils/geo.js';
@@ -927,9 +928,18 @@ export const createRideRecord = async ({
   const primaryVehicle = primaryVehicleTypeId
     ? await Vehicle.findById(primaryVehicleTypeId).select('icon map_icon image dispatch_type admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner').lean()
     : null;
-  const resolvedVehicleIconUrl = String(
-    vehicleIconUrl || primaryVehicle?.image || primaryVehicle?.map_icon || primaryVehicle?.icon || '',
-  ).trim();
+  // Take the first value that is a reference rather than the image itself. A
+  // data: URL here lands in this ride and in the delivery synced from it, so a
+  // single 3 MB vehicle icon would be re-stored on every booking.
+  const asImageReference = (value) => {
+    const text = String(value || '').trim();
+    return isDataUrl(text) ? '' : text;
+  };
+  const resolvedVehicleIconUrl =
+    asImageReference(vehicleIconUrl) ||
+    asImageReference(primaryVehicle?.image) ||
+    asImageReference(primaryVehicle?.map_icon) ||
+    asImageReference(primaryVehicle?.icon);
   const normalizedTransportType = normalizeRideTransportType(transport_type);
   const resolvedZoneId =
     zone_id && mongoose.Types.ObjectId.isValid(zone_id)
@@ -1559,10 +1569,10 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
     paymentMethod: ride.paymentMethod,
     otp: ride.otp || '',
     // The ride carries the authoritative parcel record — the fare engine writes
-  // the paid add-ons and the driver's proof photos onto it. The Delivery
-  // mirror holds only the booking basics, so it fills gaps rather than
-  // shadowing the richer copy.
-  parcel: mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel),
+    // the paid add-ons and the driver's proof photos onto it. The Delivery
+    // mirror holds only the booking basics, so it fills gaps rather than
+    // shadowing the richer copy.
+    parcel: mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel),
     intercity: ride.intercity || null,
     pricingSnapshot: ride.pricingSnapshot || null,
     commissionAmount: ride.commissionAmount,
@@ -1676,7 +1686,14 @@ export const acceptRideAssignment = async ({ rideId, driverId, selfieUrl = '' })
         typeof error?.hasErrorLabel === 'function' &&
         (error.hasErrorLabel('TransientTransactionError') || error.hasErrorLabel('UnknownTransactionCommitResult'));
 
-      if (!isTransient || attempt === 2) {
+      if (isTransient && attempt === 2) {
+        // Retries exhausted because several drivers accepted the same ride at
+        // once. This driver lost the race in practice, so tell them that
+        // instead of leaking a storage-engine write conflict into their app.
+        throw new ApiError(409, 'Ride is no longer available for acceptance');
+      }
+
+      if (!isTransient) {
         throw error;
       }
     } finally {

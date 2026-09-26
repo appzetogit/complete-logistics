@@ -303,9 +303,6 @@ export const createRide = async (req, res) => {
     throw new ApiError(400, 'pickup and drop are required');
   }
 
-  console.log('--- TEMPORARY DEBUG LOG ---');
-  console.log('backend received vehicleType (ID):', vehicleTypeId);
-
   const resolvedVehicleTypeId = vehicleTypeId || (Array.isArray(vehicleTypeIds) ? vehicleTypeIds[0] : null);
   if (!resolvedVehicleTypeId) {
     throw new ApiError(400, 'vehicleTypeId is required');

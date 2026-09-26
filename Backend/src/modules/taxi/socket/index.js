@@ -1,6 +1,7 @@
 import { Server } from 'socket.io';
 import { env } from '../../../config/env.js';
 import { ApiError } from '../../../utils/ApiError.js';
+import { createSocketAdapter } from '../../../infrastructure/redis/redisClient.js';
 import { normalizePoint, toPoint } from '../../../utils/geo.js';
 import { Driver } from '../driver/models/Driver.js';
 import {
@@ -78,13 +79,21 @@ const onAsync = (socket, handler) => async (payload = {}) => {
   }
 };
 
-export const configureTaxiSocketServer = (httpServer) => {
+export const configureTaxiSocketServer = async (httpServer) => {
   const io = new Server(httpServer, {
     cors: {
       origin: env.corsOrigin === '*' ? true : env.corsOrigin.split(','),
       credentials: true,
     },
   });
+
+  const redisAdapter = await createSocketAdapter();
+  if (redisAdapter) {
+    io.adapter(redisAdapter);
+    console.log('[socket] redis adapter attached; broadcasts span all workers');
+  } else {
+    console.warn('[socket] no redis adapter; broadcasts stay inside this worker (run a single instance)');
+  }
 
   attachSocketAuth(io);
   setSocketServer(io);
@@ -99,7 +108,7 @@ export const configureTaxiSocketServer = (httpServer) => {
     socket.join(getSupportRoleRoom(identity.role));
 
     if (identity.role === 'driver') {
-      await Driver.findByIdAndUpdate(identity.sub, { socketId: socket.id });
+      await Driver.updateOne({ _id: identity.sub }, { socketId: socket.id });
       const previousDriverState = driverLocationState.get(identity.sub) || {};
       driverLocationState.set(identity.sub, {
         ...previousDriverState,
@@ -208,7 +217,10 @@ export const configureTaxiSocketServer = (httpServer) => {
           String(previousDriverState.zoneId || '') !== String(nextZoneId || '');
 
         if (shouldWriteDriverState) {
-          await Driver.findByIdAndUpdate(identity.sub, {
+          // updateOne, not findByIdAndUpdate: nothing reads the result, and
+          // findAndModify would also fetch and return the document on every
+          // GPS tick -- the hottest write in the system.
+          await Driver.updateOne({ _id: identity.sub }, {
             socketId: socket.id,
             location: toPoint(normalizedCoords, 'coordinates'),
             zoneId: zone?._id || null,
@@ -356,14 +368,13 @@ export const configureTaxiSocketServer = (httpServer) => {
     socket.on('disconnect', async () => {
       if (identity.role === 'driver') {
         clearDriverRoute(identity.sub);
-        const previousDriverState = driverLocationState.get(identity.sub);
-        if (previousDriverState) {
-          driverLocationState.set(identity.sub, {
-            ...previousDriverState,
-            socketId: null,
-          });
-        }
-        await Driver.findByIdAndUpdate(identity.sub, { socketId: null });
+        // Drop the throttle state rather than parking it under a null socketId:
+        // nothing ever removed those entries, so the map grew by one per driver
+        // that ever connected and never shrank. Keeping it bought nothing either
+        // -- a reconnecting driver gets a new socket id, which forces a write on
+        // the next fix regardless.
+        driverLocationState.delete(identity.sub);
+        await Driver.updateOne({ _id: identity.sub }, { socketId: null });
       }
     });
   });

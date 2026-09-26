@@ -315,7 +315,7 @@ export const topUpDriverWallet = async ({ driverId, amount, metadata = {} }) => 
   }
 };
 
-export const settleCompletedRideWallet = async ({ rideId }) => {
+const settleCompletedRideWalletOnce = async ({ rideId }) => {
   const session = await mongoose.startSession();
 
   try {
@@ -391,4 +391,32 @@ export const settleCompletedRideWallet = async ({ rideId }) => {
   } finally {
     session.endSession();
   }
+};
+
+// Retry transient transaction failures. Two completion requests racing the
+// same ride collide in the storage engine, and with no retry the loser simply
+// threw -- leaving the ride marked completed but the commission never charged,
+// because updateRideLifecycle saves the ride before settlement runs. The
+// walletSettledAt compare-and-set is inside the transaction, so it rolls back
+// with everything else and a retry cannot double charge.
+export const settleCompletedRideWallet = async ({ rideId }) => {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await settleCompletedRideWalletOnce({ rideId });
+    } catch (error) {
+      lastError = error;
+
+      const isTransient =
+        typeof error?.hasErrorLabel === 'function' &&
+        (error.hasErrorLabel('TransientTransactionError') || error.hasErrorLabel('UnknownTransactionCommitResult'));
+
+      if (!isTransient || attempt === 2) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError;
 };

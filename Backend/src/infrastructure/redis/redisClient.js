@@ -1,4 +1,5 @@
 import { createClient } from 'redis';
+import { createAdapter } from '@socket.io/redis-adapter';
 import { env } from '../../config/env.js';
 
 let redisClient = null;
@@ -117,6 +118,43 @@ export const getRedisStatus = () => {
     ready: Boolean(client?.isReady),
     open: Boolean(client?.isOpen),
   };
+};
+
+/**
+ * Socket.IO cross-process broadcasting. Without this, an emit from one worker
+ * never reaches sockets connected to another worker, so any deploy running more
+ * than one Node process silently drops half its realtime events.
+ *
+ * Uses its own pub/sub connections (not the shared command client) because the
+ * shared one is deliberately configured to give up on reconnect; a dead pub/sub
+ * link would instead stop broadcasts with no visible error.
+ */
+export const createSocketAdapter = async () => {
+  if (!isRedisEnabled()) {
+    return null;
+  }
+
+  try {
+    const pubClient = createClient({
+      url: env.redis.url,
+      socket: {
+        connectTimeout: env.redis.connectTimeoutMs,
+        keepAlive: 5000,
+        reconnectStrategy: (retries) => Math.min(200 * (retries + 1), 5000),
+      },
+    });
+    const subClient = pubClient.duplicate();
+
+    pubClient.on('error', (error) => console.error('[redis][socket-pub]', error?.message || error));
+    subClient.on('error', (error) => console.error('[redis][socket-sub]', error?.message || error));
+
+    await Promise.all([pubClient.connect(), subClient.connect()]);
+
+    return createAdapter(pubClient, subClient);
+  } catch (error) {
+    console.error('[redis] socket adapter unavailable', error?.message || error);
+    return null;
+  }
 };
 
 export const runRedisCommand = async (executor, { label = 'Redis command' } = {}) => {

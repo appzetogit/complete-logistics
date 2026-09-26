@@ -21,7 +21,7 @@ const bootstrap = async () => {
   const app = createApp();
   const httpServer = createServer(app);
 
-  configureTaxiSocketServer(httpServer);
+  await configureTaxiSocketServer(httpServer);
   await restoreScheduledDispatches();
   startDispatchRecoveryLoop();
 
