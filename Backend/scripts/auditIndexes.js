@@ -10,8 +10,17 @@
 import { readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import dns from 'node:dns';
 import mongoose from 'mongoose';
 import { env } from '../src/config/env.js';
+
+if (env.mongoUri.startsWith('mongodb+srv://')) {
+  try {
+    dns.setServers(['8.8.8.8', '1.1.1.1', ...dns.getServers()]);
+  } catch {
+    // Non-fatal — falls back to OS-configured resolvers
+  }
+}
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 
