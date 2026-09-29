@@ -1384,6 +1384,12 @@ export const serializeRideRealtime = (ride) => ({
   dropAddress: ride.dropAddress || '',
   scheduledAt: ride.scheduledAt || null,
   acceptedAt: ride.acceptedAt,
+  acceptSelfie: ride.acceptSelfie?.imageUrl
+    ? {
+        imageUrl: ride.acceptSelfie.imageUrl,
+        capturedAt: ride.acceptSelfie.capturedAt || null,
+      }
+    : null,
   arrivedAt: ride.arrivedAt,
   startedAt: ride.startedAt,
   completedAt: ride.completedAt,
@@ -1703,6 +1709,34 @@ export const acceptRideAssignment = async ({ rideId, driverId, selfieUrl = '' })
   }
 
   throw lastError || new ApiError(500, 'Failed to accept ride');
+};
+
+// The driver app now sends `acceptRide` immediately on tap, before the selfie
+// capture, so assignment always lands well inside the per-driver offer window
+// instead of racing it. The selfie itself arrives slightly later, once the ride
+// has already moved out of SEARCHING, so it can't go through
+// acceptRideAssignment's searching-only transaction — this attaches it
+// separately to a ride the calling driver already owns.
+export const attachAcceptSelfie = async ({ rideId, driverId, selfieUrl }) => {
+  if (!selfieUrl || !String(selfieUrl).trim()) {
+    throw new ApiError(400, 'selfieUrl is required');
+  }
+
+  const ride = await Ride.findOne({ _id: rideId, driverId }).maxTimeMS(8000);
+
+  if (!ride) {
+    throw new ApiError(404, 'Ride not found for this driver');
+  }
+
+  ride.acceptSelfie = {
+    imageUrl: String(selfieUrl).trim(),
+    driverId,
+    capturedAt: new Date(),
+  };
+
+  await ride.save({ maxTimeMS: 8000 });
+
+  return populateRideRealtime(ride._id);
 };
 
 const rideStatusConfig = {

@@ -9,6 +9,7 @@ import { applyDriverWalletAdjustment, serializeDriverWallet } from '../../driver
 import { RIDE_LIVE_STATUS, RIDE_STATUS } from '../../constants/index.js';
 import {
   acceptRideBidAssignment,
+  attachAcceptSelfie,
   createRideRecord,
   ensureRideParticipantAccess,
   getAllowedRidePaymentMethodsForPricing,
@@ -474,6 +475,23 @@ export const submitRideReview = async (req, res) => {
     rating: req.body.rating,
     comment: req.body.comment,
     tipAmount: req.body.tipAmount,
+  });
+
+  res.json({
+    success: true,
+    data: serializeRideRealtime(ride),
+  });
+};
+
+export const submitAcceptSelfie = async (req, res) => {
+  if (req.auth.role !== 'driver') {
+    throw new ApiError(403, 'Only drivers can submit an accept selfie');
+  }
+
+  const ride = await attachAcceptSelfie({
+    rideId: req.params.rideId,
+    driverId: req.auth.sub,
+    selfieUrl: req.body.selfieUrl,
   });
 
   res.json({

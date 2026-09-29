@@ -19,6 +19,7 @@ import {
   listMyRides,
   listAvailableDrivers,
   payRideCompletionWithWallet,
+  submitAcceptSelfie,
   submitRideReview,
   updateRideBidCeiling,
   updateRideStatus,
@@ -45,3 +46,4 @@ rideRouter.post('/:rideId/complete-payment/wallet', authenticate(['user']), asyn
 rideRouter.post('/:rideId/tip/razorpay/order', authenticate(['user']), paymentOrderRateLimit, asyncHandler(createRazorpayRideTipOrder));
 rideRouter.post('/:rideId/tip/razorpay/verify', authenticate(['user']), asyncHandler(verifyRazorpayRideTip));
 rideRouter.patch('/:rideId/feedback', authenticate(['user']), asyncHandler(submitRideReview));
+rideRouter.patch('/:rideId/accept-selfie', authenticate(['driver']), asyncHandler(submitAcceptSelfie));
