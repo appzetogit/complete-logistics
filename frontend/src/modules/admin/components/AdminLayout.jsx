@@ -1511,7 +1511,7 @@ const AdminLayout = () => {
           } ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
         <div className="flex h-full flex-col">
-          <div className="group/sidebar-head relative mb-2 flex h-14 items-center border-b border-amber-200/50 px-5">
+          <div className="group/sidebar-head relative mb-2 flex h-20 items-center border-b border-amber-200/50 px-5">
             <div className="flex items-center gap-3">
               <div className="relative">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber-200 bg-amber-100 p-1.5 transition-all duration-300 group-hover/sidebar-head:scale-105 shadow-sm">
@@ -1529,11 +1529,11 @@ const AdminLayout = () => {
                   animate={{ opacity: 1, x: 0 }}
                   className="flex flex-col"
                 >
-                  <h3 className="text-sm font-bold leading-tight text-slate-900 tracking-tight">
+                  <div className="text-sm font-bold leading-tight text-white tracking-tight">
                     {mode === OWNER_MODE ? 'Owner Panel' : appName || 'Rentol'}
-                  </h3>
+                  </div>
                   <div className="mt-0.5 flex items-center gap-1.5">
-                    <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
                       {mode === OWNER_MODE ? 'Fleet Console' : 'System Hub'}
                     </span>
                   </div>
@@ -1543,7 +1543,7 @@ const AdminLayout = () => {
             <button
               type="button"
               onClick={() => setCollapsed((current) => !current)}
-              className="absolute -right-3 top-4 z-[60] hidden h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm ring-2 ring-[#0F172A] transition-all duration-300 hover:bg-indigo-600 hover:text-white hover:border-indigo-500 lg:flex group/collapse"
+              className="absolute right-3 top-7 z-[60] hidden h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm ring-2 ring-[#0F172A] transition-all duration-300 hover:bg-indigo-600 hover:text-white hover:border-indigo-500 lg:flex group/collapse"
               style={{ '--tw-ring-color': adminThemeColor }}
             >
               {isCollapsed ? (
