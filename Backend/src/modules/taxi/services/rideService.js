@@ -1255,7 +1255,8 @@ const populateRideRealtime = async (rideId) =>
   Ride.findById(rideId)
     .populate('deliveryId')
     .populate('userId', 'name phone')
-    .populate('driverId', 'name phone profileImage vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel vehicleImage rating');
+    .populate('driverId', 'name phone profileImage vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel vehicleImage rating')
+    .maxTimeMS(8000);
 
 /// Combines the Delivery mirror with the ride's own parcel record, letting the
 /// ride win field by field. Returns null when neither side has anything, so
@@ -2275,7 +2276,7 @@ export const submitRideFeedback = async ({ rideId, userId, rating, comment = '',
     _id: rideId,
     userId,
     status: RIDE_STATUS.COMPLETED,
-  });
+  }).maxTimeMS(8000);
 
   if (!ride) {
     throw new ApiError(404, 'Completed ride not found');
@@ -2289,7 +2290,7 @@ export const submitRideFeedback = async ({ rideId, userId, rating, comment = '',
     throw new ApiError(409, 'Feedback already submitted for this ride');
   }
 
-  const driver = await Driver.findById(ride.driverId);
+  const driver = await Driver.findById(ride.driverId).maxTimeMS(8000);
 
   if (!driver) {
     throw new ApiError(404, 'Driver not found');
@@ -2306,7 +2307,10 @@ export const submitRideFeedback = async ({ rideId, userId, rating, comment = '',
   driver.totalRatingScore = Number(driver.totalRatingScore || 0) + numericRating;
   driver.rating = Number((driver.totalRatingScore / driver.ratingCount).toFixed(1));
 
-  await Promise.all([ride.save(), driver.save()]);
+  await Promise.all([
+    ride.save({ maxTimeMS: 8000 }),
+    driver.save({ maxTimeMS: 8000 }),
+  ]);
 
   return populateRideRealtime(ride._id);
 };

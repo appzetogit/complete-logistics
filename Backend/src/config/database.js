@@ -32,6 +32,8 @@ export const connectDatabase = async () => {
   const connection = await mongoose.connect(env.mongoUri, {
     autoIndex: env.nodeEnv !== 'production',
     dbName: env.mongoDbName,
+    serverSelectionTimeoutMS: 10000, // fail fast if no reachable server/replica
+    socketTimeoutMS: 20000, // kill a socket that's been idle mid-operation
   });
 
   const { host, name } = connection.connection;

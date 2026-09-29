@@ -13,6 +13,7 @@ export const getTipSettings = async () => {
       load: async () => {
         const settings = await AdminAppSetting.findOne({ scope: 'default' })
           .select('tip_setting')
+          .maxTimeMS(8000)
           .lean();
 
         return {
