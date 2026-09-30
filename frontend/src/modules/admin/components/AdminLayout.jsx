@@ -857,6 +857,7 @@ const AdminLayout = () => {
               //{ label: 'Goods Types', path: '/admin/pricing/goods-types', permission: 'goods_types.view' },
             ],
           },
+          /*
           {
             icon: Briefcase,
             label: 'Rental',
@@ -894,6 +895,7 @@ const AdminLayout = () => {
               { label: 'Pooling Bookings', path: '/admin/pooling/bookings', permission: 'pooling.view' },
             ],
           },
+          */
           {
             icon: MapPin,
             label: 'Geofencing',
