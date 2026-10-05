@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
+import { sendWelcomeEmail } from '../../services/welcomeEmailService.js';
 import { Env, StandardCheckoutClient, StandardCheckoutPayRequest, PrefillUserLoginDetails } from '@phonepe-pg/pg-sdk-node';
 import { ApiError } from '../../../../utils/ApiError.js';
 import { asyncHandler } from '../../../../utils/asyncHandler.js';
@@ -1691,6 +1692,8 @@ export const registerUser = async (req, res) => {
     await processSignupReferralRewards({ user, referrer });
   }
 
+  void sendWelcomeEmail({ role: 'user', email: user.email, name: user.name });
+
   res.status(201).json({
     success: true,
     data: createUserSession(user),
@@ -1814,6 +1817,8 @@ export const signupUser = async (req, res) => {
   }
 
   await consumeUserSignupSession(signupSession);
+
+  void sendWelcomeEmail({ role: 'user', email: user.email, name: user.name });
 
   res.status(201).json({
     success: true,

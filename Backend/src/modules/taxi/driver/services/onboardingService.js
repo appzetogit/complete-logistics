@@ -38,6 +38,7 @@ import {
 import { WalletTransaction } from '../models/WalletTransaction.js';
 import { BusDriver } from '../models/BusDriver.js';
 import { applyDriverWalletAdjustment } from './walletService.js';
+import { sendWelcomeEmail } from '../../services/welcomeEmailService.js';
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -1274,7 +1275,35 @@ export const saveDriverDocuments = async ({ registrationId, phone, documents = {
   };
 };
 
-export const completeDriverOnboarding = async ({ registrationId, phone, documents = {} }) => {
+// Sends the welcome + T&C mail once a registration is newly submitted. The
+// session is deleted on completion, so its email/name are read up front, and
+// only when the feature flag is on. Failures here never affect the result.
+export const completeDriverOnboarding = async (params) => {
+  let recipient = null;
+
+  if (process.env.EMAIL_WELCOME_ENABLED === 'true') {
+    try {
+      const session = await getSession(params.registrationId, params.phone);
+      recipient = {
+        email: session.personal?.email,
+        name: session.personal?.fullName,
+        alreadyCompleted: Boolean(session.finalDriverId),
+      };
+    } catch {
+      recipient = null;
+    }
+  }
+
+  const result = await completeDriverOnboardingInternal(params);
+
+  if (recipient && !recipient.alreadyCompleted) {
+    void sendWelcomeEmail({ role: 'driver', email: recipient.email, name: recipient.name });
+  }
+
+  return result;
+};
+
+const completeDriverOnboardingInternal = async ({ registrationId, phone, documents = {} }) => {
   const session = await getSession(registrationId, phone);
 
   if (session.finalDriverId) {
