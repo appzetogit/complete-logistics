@@ -45,6 +45,11 @@ import {
   topUpDriverWallet,
 } from "../services/walletService.js";
 import {
+  assertDriverNotCancelBlocked,
+  getDriverCancelStatus,
+  serializeCancelStatus,
+} from "../services/driverCancelService.js";
+import {
   startDriverLoginOtp,
   verifyDriverLoginOtp,
 } from "../services/loginOtpService.js";
@@ -2873,6 +2878,8 @@ export const goOnline = async (req, res) => {
     throw new ApiError(404, "Driver not found");
   }
 
+  assertDriverNotCancelBlocked(existingDriver);
+
   const todayKey = new Date().toISOString().slice(0, 10);
   const hasTodaySelfie =
     String(existingDriver.onlineSelfie?.forDate || "") === todayKey &&
@@ -3045,6 +3052,8 @@ export const getCurrentDriver = async (req, res) => {
       owner_id: driver.owner_id || null,
       salary: Number(driver.salary || 0),
       profileImage: driver.profileImage || "",
+      // Daily cancel limit: cancelsLeft / cancelBlocked / blockedUntil for the app.
+      ...serializeCancelStatus(await getDriverCancelStatus(driver)),
       gender: driver.gender,
       vehicleType: driver.vehicleType,
       vehicleTypeId: driver.vehicleTypeId,

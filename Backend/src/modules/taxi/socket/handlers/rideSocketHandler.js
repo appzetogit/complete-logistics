@@ -6,6 +6,7 @@ import {
   getActiveRideForIdentity,
   getRideDetails,
   getRideRoom,
+  audienceForRole,
   serializeRideRealtime,
   updateRideDriverLocation,
   updateRideLifecycle,
@@ -86,7 +87,7 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
       });
 
       if (activeRide && String(activeRide._id) === String(ride._id)) {
-        const payload = serializeRideRealtime(activeRide);
+        const payload = serializeRideRealtime(activeRide, { audience: audienceForRole(socket.auth.role) });
         socket.emit(SOCKET_EVENTS.RIDE_STATE, payload);
         setImmediate(() => {
           mirrorRideRealtimeState(payload).catch(() => {});
@@ -115,7 +116,7 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
         room,
         rejoined: true,
       });
-      const payload = serializeRideRealtime(ride);
+      const payload = serializeRideRealtime(ride, { audience: audienceForRole(socket.auth.role) });
       socket.emit(SOCKET_EVENTS.RIDE_STATE, payload);
       setImmediate(() => {
         mirrorRideRealtimeState(payload).catch(() => {});

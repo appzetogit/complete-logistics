@@ -66,6 +66,12 @@ export const createDefaultBusinessSettings = () => ({
   transport_ride: {
     enable_bus_service: '0',
     require_admin_approval_to_end_rental: '0',
+    // Accepted rides a driver may cancel per IST day before being blocked until the next day (0 = no limit).
+    driver_daily_cancel_limit: '3',
+    // Goods (parcel) bookings need this % paid online before dispatch (0 = no advance).
+    goods_advance_percent: '20',
+    // Where a refunded advance goes: refund_wallet | wallet (spendable balance) | source (original Razorpay payment).
+    goods_advance_refund_to: 'refund_wallet',
     trip_dispatch_type: '1',
     maximum_time_for_accept_reject_bidding_ride: '60',
     maximum_time_for_find_drivers_for_bitting_ride: '300',
@@ -94,5 +100,12 @@ export const createDefaultBusinessSettings = () => ({
     user_bidding_high_percentage: '20',
     user_bidding_amount_increase_or_decrease: '10',
     user_fare_increase_wait_minutes: '2',
+  },
+  // First N completed rides (rides + goods) are free for a new user. Off by
+  // default. max_fare: a free ride above this fare is charged normally (0 = no cap).
+  free_rides: {
+    enabled: '0',
+    limit: '3',
+    max_fare: '500',
   },
 });

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
 import { sendWelcomeEmail } from '../../services/welcomeEmailService.js';
+import { getFreeRidesSummaryForUser } from '../services/freeRideService.js';
 import { Env, StandardCheckoutClient, StandardCheckoutPayRequest, PrefillUserLoginDetails } from '@phonepe-pg/pg-sdk-node';
 import { ApiError } from '../../../../utils/ApiError.js';
 import { asyncHandler } from '../../../../utils/asyncHandler.js';
@@ -1410,6 +1411,7 @@ const toUserPayload = (user, options = {}) => ({
     availableRideCredits: 0,
     activePlans: [],
   },
+  ...(options.freeRides ? { freeRides: options.freeRides } : {}),
 });
 
 const ensureUserCanLogin = (user) => {
@@ -1927,12 +1929,13 @@ export const getCurrentUser = async (req, res) => {
   }
 
   const subscriptionSummary = await getUserSubscriptionSummary(user._id);
+  const freeRides = await getFreeRidesSummaryForUser(user);
 
   res.json({
     success: true,
     data: {
       user: {
-        ...toUserPayload(user, { subscriptionSummary }),
+        ...toUserPayload(user, { subscriptionSummary, freeRides }),
         createdAt: user.createdAt || null,
       },
     },

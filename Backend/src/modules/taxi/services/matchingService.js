@@ -55,6 +55,8 @@ const buildDriverMatchFilters = ({ zoneId, serviceLocationId, vehicleTypeId, veh
   return {
     isOnline: true,
     isOnRide: false,
+    // Drivers blocked for cancelling too many accepted rides get no offers.
+    $nor: [{ 'cancelTracking.blockedUntil': { $gt: new Date() } }],
     $or: [
       { owner_id: { $ne: null } },
       { 'wallet.isBlocked': { $ne: true } },

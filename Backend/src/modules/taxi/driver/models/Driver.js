@@ -513,6 +513,13 @@ const driverSchema = new mongoose.Schema(
         default: [],
       },
     },
+    // Daily cancel limit for accepted rides (see driverCancelService).
+    cancelTracking: {
+      dateKey: { type: String, default: '', trim: true },
+      count: { type: Number, default: 0, min: 0 },
+      blockedUntil: { type: Date, default: null },
+      lastCancelAt: { type: Date, default: null },
+    },
     todaySummary: {
       dateKey: {
         type: String,

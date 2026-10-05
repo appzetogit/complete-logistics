@@ -315,6 +315,27 @@ export const topUpDriverWallet = async ({ driverId, amount, metadata = {} }) => 
   }
 };
 
+// Wallet effect of a completed ride on the driver.
+//  - online: the platform collected everything, so the driver is credited fare - commission.
+//  - cash, no advance: the driver holds all the cash, so only the commission is deducted.
+//  - cash with a paid goods advance: the platform already holds the advance and
+//    the driver only collected (fare - advance) in hand, so the platform owes
+//    them the advance less its commission.
+export const computeRideSettlementAmount = ({ paymentMethod, commissionAmount, driverEarnings, advancePaid = 0 }) => {
+  const safeAdvance = Math.max(Math.round(Number(advancePaid || 0) * 100) / 100, 0);
+
+  if (paymentMethod !== 'cash') {
+    return { amount: driverEarnings, type: 'ride_earning' };
+  }
+
+  const cashAmount = Math.round((safeAdvance - commissionAmount) * 100) / 100;
+
+  return {
+    amount: cashAmount,
+    type: cashAmount < 0 || safeAdvance <= 0 ? 'commission_deduction' : 'ride_earning',
+  };
+};
+
 const settleCompletedRideWalletOnce = async ({ rideId }) => {
   const session = await mongoose.startSession();
 
@@ -341,8 +362,13 @@ const settleCompletedRideWalletOnce = async ({ rideId }) => {
     });
     const paymentMethod = normalizePaymentMethod(ride.paymentMethod);
     const driverEarnings = Math.max(Math.round((fare - commissionAmount) * 100) / 100, 0);
-    const amount = paymentMethod === 'cash' ? -commissionAmount : driverEarnings;
-    const type = paymentMethod === 'cash' ? 'commission_deduction' : 'ride_earning';
+    const advancePaid = ride.goodsAdvance?.status === 'paid' ? Number(ride.goodsAdvance.amount || 0) : 0;
+    const { amount, type } = computeRideSettlementAmount({
+      paymentMethod,
+      commissionAmount,
+      driverEarnings,
+      advancePaid,
+    });
 
     ride.paymentMethod = paymentMethod;
     ride.commissionAmount = commissionAmount;
@@ -366,10 +392,13 @@ const settleCompletedRideWalletOnce = async ({ rideId }) => {
       amount,
       type,
       description: paymentMethod === 'cash'
-        ? 'Commission deducted for cash ride'
+        ? (advancePaid > 0
+          ? 'Goods advance settled against commission for cash ride'
+          : 'Commission deducted for cash ride')
         : 'Driver earning credited for online ride',
       metadata: {
         fare,
+        advancePaid,
         commissionAmount,
         driverEarnings,
         paymentMethod,

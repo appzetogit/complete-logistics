@@ -551,6 +551,9 @@ export const getDriverProfile = asyncHandler(async (req, res) =>
 export const updateDriver = asyncHandler(async (req, res) =>
   ok(res, await adminService.updateDriver(req.params.id, req.body, req.auth?.admin)),
 );
+export const clearDriverCancelBlock = asyncHandler(async (req, res) =>
+  ok(res, await adminService.clearDriverCancelBlockForAdmin(req.params.id, req.auth?.admin)),
+);
 export const updateDriverPassword = asyncHandler(async (req, res) =>
   ok(
     res,

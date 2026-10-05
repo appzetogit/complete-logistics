@@ -19,11 +19,15 @@ import {
   increaseRideBidCeiling,
   listRideBidsForUser,
   listRideHistoryForIdentity,
+  RIDE_AUDIENCE,
+  audienceForRole,
   serializeRideRealtime,
   submitRideFeedback,
+  withoutAcceptSelfie,
   updateRideLifecycle,
 } from '../../services/rideService.js';
 import {
+  cancelActiveRideByDriver,
   cancelRideByUser,
   emitToDriver,
   getSocketServer,
@@ -36,6 +40,9 @@ import { getTipSettings } from '../../services/appSettingsService.js';
 import { matchDrivers } from '../../services/matchingService.js';
 import { Ride } from '../models/Ride.js';
 import { UserWallet } from '../models/UserWallet.js';
+import { getFreeRidesSummaryForUser } from '../services/freeRideService.js';
+import { getAdvancePaidAmount } from '../services/goodsAdvanceService.js';
+import { serializeCancelStatus } from '../../driver/services/driverCancelService.js';
 
 const EARTH_RADIUS_METERS = 6371000;
 const AVERAGE_CITY_SPEED_KMPH = 24;
@@ -100,7 +107,9 @@ const isDriverCollectionPaid = (ride = {}) =>
 const buildCompletionAmounts = (ride, tipAmount = 0) => {
   const fare = roundMoney(ride?.fare || 0);
   const normalizedTipAmount = roundMoney(tipAmount || 0);
-  const fareDue = isDriverCollectionPaid(ride) ? 0 : fare;
+  // A paid goods advance was already collected at booking, so only the rest is due.
+  const advancePaid = getAdvancePaidAmount(ride);
+  const fareDue = isDriverCollectionPaid(ride) ? 0 : Math.max(0, roundMoney(fare - advancePaid));
   return {
     fare,
     fareDue,
@@ -184,10 +193,10 @@ const finalizeRideCompletion = async ({
     throw new ApiError(404, 'Driver not found');
   }
 
-  const { fare, fareDue, totalCharge } = buildCompletionAmounts(ride, tipAmount);
+  const { fareDue, totalCharge } = buildCompletionAmounts(ride, tipAmount);
   const previousPaymentMethod = String(ride.paymentMethod || 'cash').trim().toLowerCase() === 'cash' ? 'cash' : 'online';
   const driverCreditAmount = roundMoney(
-    tipAmount + (fareDue > 0 && previousPaymentMethod === 'cash' ? fare : 0),
+    tipAmount + (fareDue > 0 && previousPaymentMethod === 'cash' ? fareDue : 0),
   );
 
   let walletResult = null;
@@ -204,7 +213,7 @@ const finalizeRideCompletion = async ({
         source: paymentSource || 'ride_completion',
         rideId: String(ride._id),
         userId: String(userId),
-        farePortion: fareDue > 0 ? fare : 0,
+        farePortion: fareDue > 0 ? fareDue : 0,
         tipAmount,
         totalCharge,
         provider: paymentRecord?.provider || '',
@@ -338,10 +347,13 @@ export const createRide = async (req, res) => {
 
   await startDispatchFlow(ride);
 
+  const freeRides = await getFreeRidesSummaryForUser(req.auth.sub).catch(() => null);
+
   res.status(201).json({
     success: true,
     data: {
       ride,
+      ...(freeRides ? { freeRides } : {}),
       realtime: {
         room: getRideRoom(ride._id),
         rideId: String(ride._id),
@@ -358,10 +370,16 @@ export const getRideById = async (req, res) => {
   });
 
   const ride = await getRideDetails(req.params.rideId);
+  const freeRides = req.auth.role === 'user'
+    ? await getFreeRidesSummaryForUser(req.auth.sub).catch(() => null)
+    : null;
+
+  // The accept selfie is admin-only; the driver keeps seeing their own.
+  const payload = req.auth.role === 'driver' ? ride : withoutAcceptSelfie(ride);
 
   res.json({
     success: true,
-    data: ride,
+    data: freeRides ? { ...(typeof payload.toObject === 'function' ? payload.toObject() : payload), freeRides } : payload,
   });
 };
 
@@ -371,9 +389,18 @@ export const getMyActiveRide = async (req, res) => {
     entityId: req.auth.sub,
   });
 
+  const freeRides = req.auth.role === 'user'
+    ? await getFreeRidesSummaryForUser(req.auth.sub).catch(() => null)
+    : null;
+
   res.json({
     success: true,
-    data: ride ? serializeRideRealtime(ride) : null,
+    data: ride
+      ? {
+          ...serializeRideRealtime(ride, { audience: audienceForRole(req.auth.role) }),
+          ...(freeRides ? { freeRides } : {}),
+        }
+      : null,
   });
 };
 
@@ -460,7 +487,7 @@ export const updateRideStatus = async (req, res) => {
 
   res.json({
     success: true,
-    data: serializeRideRealtime(ride),
+    data: serializeRideRealtime(ride, { audience: RIDE_AUDIENCE.DRIVER }),
   });
 };
 
@@ -483,6 +510,32 @@ export const submitRideReview = async (req, res) => {
   });
 };
 
+/// A driver cancels a ride they accepted but have not started. Counts toward
+/// the daily cancel limit; reaching it blocks them until the next IST day.
+export const driverCancelRide = async (req, res) => {
+  if (req.auth.role !== 'driver') {
+    throw new ApiError(403, 'Only drivers can cancel an accepted ride');
+  }
+
+  const result = await cancelActiveRideByDriver({
+    rideId: req.params.rideId,
+    driverId: req.auth.sub,
+    reason: req.body?.reason,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      rideId: String(result.ride._id),
+      status: result.ride.status,
+      liveStatus: result.ride.liveStatus,
+      redispatched: result.redispatched,
+      advanceRefunded: result.advanceRefunded,
+      ...serializeCancelStatus(result.cancelStatus),
+    },
+  });
+};
+
 export const submitAcceptSelfie = async (req, res) => {
   if (req.auth.role !== 'driver') {
     throw new ApiError(403, 'Only drivers can submit an accept selfie');
@@ -496,7 +549,7 @@ export const submitAcceptSelfie = async (req, res) => {
 
   res.json({
     success: true,
-    data: serializeRideRealtime(ride),
+    data: serializeRideRealtime(ride, { audience: RIDE_AUDIENCE.DRIVER }),
   });
 };
 
@@ -1025,6 +1078,9 @@ export const cancelRide = async (req, res) => {
       rideId: String(ride._id),
       status: ride.status,
       liveStatus: ride.liveStatus,
+      // Goods advance: a rider cancel never refunds it (forfeited).
+      advanceRefunded: Boolean(ride.$locals?.advance?.refunded),
+      advanceStatus: ride.$locals?.advance?.status || ride.goodsAdvance?.status || 'none',
     },
   });
 };

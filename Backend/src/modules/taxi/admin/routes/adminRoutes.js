@@ -191,6 +191,7 @@ import {
   updateEmployee,
   updateDriverNeededDocument,
   updateDriverPassword,
+  clearDriverCancelBlock,
   updateFirebaseSettings,
   updateOnboardingScreen,
   updateGoodsType,
@@ -298,6 +299,7 @@ adminRouter.get('/admin/drivers/:id/profile', getDriverProfile);
 adminRouter.get('/admin/drivers/:id', getDriver);
 adminRouter.patch('/admin/drivers/:id', updateDriver);
 adminRouter.patch('/admin/drivers/update-password/:id', updateDriverPassword);
+adminRouter.patch('/admin/drivers/:id/clear-cancel-block', clearDriverCancelBlock);
 adminRouter.delete('/admin/drivers/:id', deleteDriver);
 adminRouter.post('/admin/wallet/users/:id/adjust', adjustUserWallet);
 adminRouter.get('/admin/wallet/users/:id/history', getUserWalletHistory);

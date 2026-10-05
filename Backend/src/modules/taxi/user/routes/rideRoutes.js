@@ -10,6 +10,7 @@ import {
   acceptRideBid,
   createRazorpayRideCompletionOrder,
   cancelRide,
+  driverCancelRide,
   createRazorpayRideTipOrder,
   createRide,
   getRideBids,
@@ -47,3 +48,4 @@ rideRouter.post('/:rideId/tip/razorpay/order', authenticate(['user']), paymentOr
 rideRouter.post('/:rideId/tip/razorpay/verify', authenticate(['user']), asyncHandler(verifyRazorpayRideTip));
 rideRouter.patch('/:rideId/feedback', authenticate(['user']), asyncHandler(submitRideReview));
 rideRouter.patch('/:rideId/accept-selfie', authenticate(['driver']), asyncHandler(submitAcceptSelfie));
+rideRouter.post('/:rideId/driver-cancel', authenticate(['driver']), asyncHandler(driverCancelRide));

@@ -17,6 +17,14 @@ import { Ride } from '../user/models/Ride.js';
 import { User } from '../user/models/User.js';
 import { UserWallet } from '../user/models/UserWallet.js';
 import { consumeUserSubscriptionRide, resolveApplicableUserSubscription } from '../user/services/subscriptionService.js';
+import { consumeFreeRide, resolveFreeRideForNewRide } from '../user/services/freeRideService.js';
+import { assertDriverNotCancelBlocked } from '../driver/services/driverCancelService.js';
+import {
+  forfeitGoodsAdvance,
+  getRemainingFare,
+  resolveGoodsAdvanceForNewRide,
+  serializeGoodsAdvance,
+} from '../user/services/goodsAdvanceService.js';
 import { applyPromoToRideInTransaction } from './promoService.js';
 import { getTipSettings } from './appSettingsService.js';
 import { getBidRideSettings } from './transportSettingsService.js';
@@ -44,6 +52,10 @@ const clearUserActiveRideIfPresent = async (user) => {
   activeRide.liveStatus = RIDE_LIVE_STATUS.CANCELLED;
   await activeRide.save();
   await syncDeliveryWithRide(activeRide);
+  // Replacing an active goods booking is a rider cancel: the advance is kept.
+  await forfeitGoodsAdvance({ rideId: activeRide._id }).catch((error) => {
+    console.error('Failed to forfeit goods advance', String(activeRide._id), error?.message || error);
+  });
 
   await Promise.all([
     activeRide.driverId ? Driver.findByIdAndUpdate(activeRide.driverId, { isOnRide: false }) : Promise.resolve(),
@@ -1045,7 +1057,12 @@ export const createRideRecord = async ({
 
   const promoCode = typeof promo_code === 'string' ? promo_code.trim() : '';
   const normalizedScheduledAt = normalizeScheduledAt(scheduledAt);
-  const applicableSubscription = primaryVehicleTypeId
+  // Free rides take priority over subscriptions. Negotiated (bidding) rides are
+  // never free: their fare can rise after booking, past what was covered.
+  const freeRide = pricingNegotiationMode === 'none'
+    ? await resolveFreeRideForNewRide({ user, fare: safeFare })
+    : { covered: false };
+  const applicableSubscription = !freeRide.covered && primaryVehicleTypeId
     ? await resolveApplicableUserSubscription({
         userId,
         vehicleTypeId: primaryVehicleTypeId,
@@ -1060,7 +1077,22 @@ export const createRideRecord = async ({
   const subscriptionRidesRemaining = subscriptionBenefitType === 'unlimited'
     ? null
     : Math.max(0, subscriptionRideLimit - subscriptionRidesUsed);
-  const effectiveDriverPaymentCollection = isSubscriptionCovered
+  const effectiveDriverPaymentCollection = freeRide.covered
+    ? {
+        provider: 'free_ride',
+        providerId: '',
+        providerOrderId: '',
+        providerPaymentId: '',
+        providerMode: 'free_ride',
+        source: 'free_ride',
+        status: 'paid',
+        amount: safeFare,
+        currency: 'INR',
+        linkUrl: '',
+        paidAt: new Date(),
+        updatedAt: new Date(),
+      }
+    : isSubscriptionCovered
     ? {
         provider: 'subscription',
         providerId: String(applicableSubscription._id),
@@ -1076,7 +1108,21 @@ export const createRideRecord = async ({
         updatedAt: new Date(),
       }
     : undefined;
-  const effectivePaymentMethod = isSubscriptionCovered ? 'online' : resolvedRequestedPaymentMethod;
+  const effectivePaymentMethod = (freeRide.covered || isSubscriptionCovered) ? 'online' : resolvedRequestedPaymentMethod;
+  // Goods need an advance paid online before dispatch (not when the rider
+  // pays nothing anyway). Stays `pending` until the advance endpoints confirm it.
+  const effectiveGoodsAdvance = await resolveGoodsAdvanceForNewRide({
+    serviceType: normalizedServiceType,
+    fare: effectiveStartingFare,
+    waived: freeRide.covered || isSubscriptionCovered,
+  });
+  const effectiveFreeRide = freeRide.covered
+    ? {
+        covered: true,
+        fareCovered: freeRide.fareCovered,
+        freeRidesUsedBefore: freeRide.freeRidesUsedBefore,
+      }
+    : undefined;
   const effectiveSubscriptionUsage = isSubscriptionCovered
     ? {
         covered: true,
@@ -1093,6 +1139,10 @@ export const createRideRecord = async ({
 
   if (scheduledAt && !normalizedScheduledAt) {
     throw new ApiError(400, 'scheduledAt is invalid');
+  }
+
+  if (freeRide.covered && promoCode) {
+    throw new ApiError(400, 'Promo codes cannot be combined with free rides');
   }
 
   if (isSubscriptionCovered && promoCode) {
@@ -1127,6 +1177,8 @@ export const createRideRecord = async ({
       estimatedDurationMinutes: safeEstimatedDurationMinutes,
       paymentMethod: effectivePaymentMethod,
       driverPaymentCollection: effectiveDriverPaymentCollection,
+      goodsAdvance: effectiveGoodsAdvance,
+      freeRide: effectiveFreeRide,
       subscriptionUsage: effectiveSubscriptionUsage,
       otp: generateRideOtp(),
       service_location_id: resolvedServiceLocationId,
@@ -1182,6 +1234,8 @@ export const createRideRecord = async ({
             estimatedDurationMinutes: safeEstimatedDurationMinutes,
             paymentMethod: effectivePaymentMethod,
             driverPaymentCollection: effectiveDriverPaymentCollection,
+            goodsAdvance: effectiveGoodsAdvance,
+            freeRide: effectiveFreeRide,
             subscriptionUsage: effectiveSubscriptionUsage,
             otp: generateRideOtp(),
             service_location_id: resolvedServiceLocationId,
@@ -1291,7 +1345,21 @@ const mergeParcelRecords = (mirror, authoritative) => {
   return merged;
 };
 
-export const serializeRideRealtime = (ride) => ({
+// The accept selfie is for admin review only. It is dropped by default
+// (audience 'user', which is also what shared ride-room broadcasts use, since
+// the rider is in that room). Only the driver's own responses opt in.
+export const RIDE_AUDIENCE = Object.freeze({ USER: 'user', DRIVER: 'driver', ADMIN: 'admin' });
+
+export const audienceForRole = (role) => (role === 'driver' ? RIDE_AUDIENCE.DRIVER : RIDE_AUDIENCE.USER);
+
+// For callers that return a raw ride document instead of the serializer.
+export const withoutAcceptSelfie = (ride) => {
+  const plain = typeof ride?.toObject === 'function' ? ride.toObject() : { ...(ride || {}) };
+  delete plain.acceptSelfie;
+  return plain;
+};
+
+export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = {}) => ({
   rideId: String(ride._id),
   room: getRideRoom(ride._id),
   deliveryId: ride.deliveryId?._id ? String(ride.deliveryId._id) : ride.deliveryId ? String(ride.deliveryId) : null,
@@ -1352,6 +1420,9 @@ export const serializeRideRealtime = (ride) => ({
         updatedAt: ride.driverPaymentCollection.updatedAt || null,
       }
     : null,
+  freeRide: { covered: Boolean(ride.freeRide?.covered) },
+  goodsAdvance: serializeGoodsAdvance(ride),
+  remainingFare: getRemainingFare(ride),
   otp: ride.otp || '',
   // The ride carries the authoritative parcel record — the fare engine writes
   // the paid add-ons and the driver's proof photos onto it. The Delivery
@@ -1384,12 +1455,16 @@ export const serializeRideRealtime = (ride) => ({
   dropAddress: ride.dropAddress || '',
   scheduledAt: ride.scheduledAt || null,
   acceptedAt: ride.acceptedAt,
-  acceptSelfie: ride.acceptSelfie?.imageUrl
+  ...(audience !== RIDE_AUDIENCE.USER
     ? {
-        imageUrl: ride.acceptSelfie.imageUrl,
-        capturedAt: ride.acceptSelfie.capturedAt || null,
+        acceptSelfie: ride.acceptSelfie?.imageUrl
+          ? {
+              imageUrl: ride.acceptSelfie.imageUrl,
+              capturedAt: ride.acceptSelfie.capturedAt || null,
+            }
+          : null,
       }
-    : null,
+    : {}),
   arrivedAt: ride.arrivedAt,
   startedAt: ride.startedAt,
   completedAt: ride.completedAt,
@@ -1515,6 +1590,8 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
       'estimatedDistanceMeters',
       'estimatedDurationMinutes',
       'paymentMethod',
+      'freeRide',
+      'goodsAdvance',
       'otp',
       'parcel',
       'intercity',
@@ -1574,6 +1651,9 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
     estimatedDistanceMeters: ride.estimatedDistanceMeters || 0,
     estimatedDurationMinutes: ride.estimatedDurationMinutes || 0,
     paymentMethod: ride.paymentMethod,
+    freeRide: { covered: Boolean(ride.freeRide?.covered) },
+    goodsAdvance: serializeGoodsAdvance(ride),
+    remainingFare: getRemainingFare(ride),
     otp: ride.otp || '',
     // The ride carries the authoritative parcel record — the fare engine writes
     // the paid add-ons and the driver's proof photos onto it. The Delivery
@@ -1664,6 +1744,7 @@ export const acceptRideAssignment = async ({ rideId, driverId, selfieUrl = '' })
         throw new ApiError(409, 'Driver already has another scheduled trip in a similar time range');
       }
 
+      assertDriverNotCancelBlocked(driver);
       await ensureDriverWalletCanAcceptRide(driver, { session });
 
       ride.driverId = driver._id;
@@ -1884,6 +1965,11 @@ export const updateRideLifecycle = async ({
 
     walletUpdate = await settleCompletedRideWallet({ rideId: ride._id });
     await consumeUserSubscriptionRide({ ride });
+    // Counting a free ride is best-effort: the ride is already completed and
+    // settled, so a failure here must not turn the driver's request into a 500.
+    await consumeFreeRide({ ride }).catch((error) => {
+      console.error('Failed to count free ride', String(ride._id), error?.message || error);
+    });
     const settledRide = await Ride.findById(ride._id).select('completedAt driverEarnings estimatedDistanceMeters');
 
     await incrementDriverTodaySummaryForCompletedRide({
@@ -2027,11 +2113,13 @@ export const submitRideBid = async ({ rideId, driverId, bidFare }) => {
     isOnRide: false,
     'wallet.isBlocked': { $ne: true },
     ...driverVehicleFilter,
-  }).select('name phone profileImage vehicleType vehicleNumber vehicleColor vehicleMake vehicleModel rating');
+  }).select('name phone profileImage vehicleType vehicleNumber vehicleColor vehicleMake vehicleModel rating cancelTracking');
 
   if (!driver) {
     throw new ApiError(409, 'Driver is unavailable to bid on this ride');
   }
+
+  assertDriverNotCancelBlocked(driver);
 
   const blockedDriverIds = await getDriverIdsBlockedByUpcomingScheduledRides([driverId]);
   if (blockedDriverIds.has(String(driverId))) {

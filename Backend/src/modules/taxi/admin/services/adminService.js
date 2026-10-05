@@ -54,6 +54,7 @@ import { WithdrawalRequest } from '../models/WithdrawalRequest.js';
 import { SupportTicket } from '../../support/models/SupportTicket.js';
 import TaxiTransportType from '../models/TaxiTransportType.js';
 import { comparePassword, hashPassword } from '../../driver/services/authService.js';
+import { clearDriverCancelBlock, serializeCancelStatus } from '../../driver/services/driverCancelService.js';
 import {
   applyDriverWalletAdjustment,
   serializeDriverWallet,
@@ -2754,6 +2755,12 @@ const serializeDriver = (driver) => ({
   active: driver.approve !== false && String(driver.status || '').toLowerCase() !== 'inactive',
   deletedAt: driver.deletedAt || null,
   deletionRequest: driver.deletionRequest || { status: 'none' },
+  cancel_tracking: {
+    date_key: driver.cancelTracking?.dateKey || '',
+    count: Number(driver.cancelTracking?.count || 0),
+    blocked_until: driver.cancelTracking?.blockedUntil || null,
+    last_cancel_at: driver.cancelTracking?.lastCancelAt || null,
+  },
   documents: driver.documents || {},
   onboarding: driver.onboarding || {},
   createdAt: driver.createdAt,
@@ -5470,6 +5477,21 @@ export const getDriverById = async (id, currentAdmin = null) => {
     assertServiceLocationAccess(currentAdmin, driver.service_location_id);
   }
   return serializeDriver(driver);
+};
+
+// Lifts a driver's "too many cancels" block and resets today's count.
+export const clearDriverCancelBlockForAdmin = async (id, currentAdmin = null) => {
+  const driver = await Driver.findById(id).select('service_location_id').lean();
+  if (!driver) {
+    throw new ApiError(404, 'Driver not found');
+  }
+  if (currentAdmin) {
+    assertAdminPermission(currentAdmin, 'drivers.view', 'drivers');
+    assertServiceLocationAccess(currentAdmin, driver.service_location_id);
+  }
+
+  const status = await clearDriverCancelBlock({ driverId: id });
+  return serializeCancelStatus(status);
 };
 
 export const getDriverProfile = async (id) => {

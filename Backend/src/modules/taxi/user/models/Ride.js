@@ -443,6 +443,60 @@ const rideSchema = new mongoose.Schema(
         default: null,
       },
     },
+    // Audit trail of drivers who accepted this ride and then cancelled it.
+    driverCancellations: {
+      type: [
+        {
+          _id: false,
+          driverId: { type: mongoose.Schema.Types.ObjectId, ref: 'TaxiDriver' },
+          reason: { type: String, default: '', trim: true },
+          liveStatusAtCancel: { type: String, default: '' },
+          acceptSelfieUrl: { type: String, default: '' },
+          cancelledAt: { type: Date, default: Date.now },
+        },
+      ],
+      default: [],
+    },
+    // Goods (parcel) bookings only: advance paid online before dispatch.
+    // pending = not yet paid (ride must not be dispatched), paid = held,
+    // refunded = returned to the rider, forfeited = kept after a rider cancel.
+    goodsAdvance: {
+      percent: { type: Number, default: 0, min: 0 },
+      amount: { type: Number, default: 0, min: 0 },
+      status: {
+        type: String,
+        enum: ['none', 'pending', 'paid', 'refunded', 'forfeited'],
+        default: 'none',
+      },
+      provider: { type: String, default: '', trim: true },
+      providerOrderId: { type: String, default: '', trim: true },
+      providerPaymentId: { type: String, default: '', trim: true },
+      refundDestination: { type: String, default: '', trim: true },
+      paidAt: { type: Date, default: null },
+      refundedAt: { type: Date, default: null },
+      forfeitedAt: { type: Date, default: null },
+    },
+    freeRide: {
+      covered: {
+        type: Boolean,
+        default: false,
+      },
+      fareCovered: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      freeRidesUsedBefore: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      // Set once when the completed ride is counted against the user's limit.
+      consumedAt: {
+        type: Date,
+        default: null,
+      },
+    },
     subscriptionUsage: {
       covered: {
         type: Boolean,

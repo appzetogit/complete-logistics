@@ -3,6 +3,7 @@ import { normalizePoint } from '../../../../utils/geo.js';
 import { GoodsType } from '../../admin/models/GoodsType.js';
 import { Vehicle } from '../../admin/models/Vehicle.js';
 import { startDispatchFlow } from '../../services/dispatchService.js';
+import { computeGoodsAdvance, getGoodsAdvanceConfig } from './goodsAdvanceService.js';
 import { Delivery } from '../models/Delivery.js';
 import {
   createRideRecord,
@@ -11,6 +12,7 @@ import {
   getRideDetails,
   getRideRoom,
   listRideHistoryForIdentity,
+  audienceForRole,
   serializeRideRealtime,
 } from '../../services/rideService.js';
 
@@ -258,15 +260,22 @@ export const quoteDeliveryFare = async ({
     extraKeys,
   });
 
+  // Goods need an advance paid online before dispatch; the rest is paid at completion.
+  const advanceConfig = await getGoodsAdvanceConfig();
+  const advance = computeGoodsAdvance({ fare: breakdown.total, percent: advanceConfig.percent });
+
   return {
     vehicleTypeId: String(vehicle._id),
     vehicleName: vehicle.name || '',
     ...breakdown,
+    advancePercent: advance.percent,
+    advanceAmount: advance.amount,
+    remainingAmount: advance.remainingAmount,
   };
 };
 
-export const serializeDeliveryRealtime = (ride) => {
-  const serializedRide = serializeRideRealtime(ride);
+export const serializeDeliveryRealtime = (ride, { audience } = {}) => {
+  const serializedRide = serializeRideRealtime(ride, { audience });
 
   return {
     ...serializedRide,
@@ -348,7 +357,7 @@ export const getActiveDeliveryForIdentity = async ({ role, entityId }) => {
     return null;
   }
 
-  return serializeDeliveryRealtime(ride);
+  return serializeDeliveryRealtime(ride, { audience: audienceForRole(role) });
 };
 
 export const getDeliveryById = async ({ deliveryId, role, entityId }) => {
@@ -360,7 +369,7 @@ export const getDeliveryById = async ({ deliveryId, role, entityId }) => {
 
   await ensureRideParticipantAccess({ rideId: delivery.rideId, role, entityId });
   const ride = await getRideDetails(delivery.rideId);
-  return serializeDeliveryRealtime(ensureParcelRide(ride));
+  return serializeDeliveryRealtime(ensureParcelRide(ride), { audience: audienceForRole(role) });
 };
 
 export const listDeliveriesForIdentity = async ({ role, entityId, limit }) => {

@@ -18,6 +18,16 @@ import { getRideRoom, resolveSetPriceForRide } from './rideService.js';
 import { SOCKET_EVENTS } from '../socket/events.js';
 import { resolveTransportDispatchConfig } from './transportSettingsService.js';
 import { sendPushNotificationToEntities } from './pushNotificationService.js';
+import { ApiError } from '../../../utils/ApiError.js';
+import { registerDriverCancel, serializeCancelStatus } from '../driver/services/driverCancelService.js';
+import {
+  GOODS_ADVANCE_PAYMENT_WINDOW_MS,
+  forfeitGoodsAdvance,
+  getRemainingFare,
+  isDispatchBlockedByAdvance,
+  refundGoodsAdvance,
+  serializeGoodsAdvance,
+} from '../user/services/goodsAdvanceService.js';
 
 const activeDispatches = new Map();
 let ioInstance = null;
@@ -441,6 +451,50 @@ const settleDriverCancellationFee = async (ride, session) => {
   };
 };
 
+// Goods advance: refunded when the booking falls through for a reason that is
+// not the rider's (no driver, driver cancel, admin cancel); kept when the
+// rider cancels. Both are idempotent and never throw into the cancel flow.
+const refundGoodsAdvanceForRide = async (rideId, reason) => {
+  try {
+    const result = await refundGoodsAdvance({ rideId, reason });
+
+    if (result.refunded) {
+      const ride = await Ride.findById(rideId).select('userId').lean();
+      if (ride) {
+        emitToRoom(getUserRoom(ride.userId), 'goodsAdvance:refunded', {
+          rideId: String(rideId),
+          amount: result.amount,
+          destination: result.destination,
+          reason,
+        });
+      }
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Goods advance refund failed', String(rideId), error?.message || error);
+    return { refunded: false, destination: '', amount: 0, failed: true };
+  }
+};
+
+const forfeitGoodsAdvanceForRide = async (ride) => {
+  if (ride?.serviceType !== 'parcel' || ride?.goodsAdvance?.status !== 'paid') {
+    return { forfeited: false, amount: 0, creditedToDriver: false };
+  }
+
+  try {
+    const pricing = await resolveCancellationPricing(ride);
+    const creditDriver =
+      String(pricing?.cancellation_fee_goes_to || 'admin').trim().toLowerCase() === 'driver' &&
+      Boolean(ride.driverId);
+
+    return await forfeitGoodsAdvance({ rideId: ride._id, creditDriver });
+  } catch (error) {
+    console.error('Goods advance forfeit failed', String(ride._id), error?.message || error);
+    return { forfeited: false, amount: 0, creditedToDriver: false, failed: true };
+  }
+};
+
 export const getUserRoom = (userId) => `user:${userId}`;
 export const getDriverRoom = (driverId) => `driver:${driverId}`;
 export const getAdminRoom = () => 'admin:broadcast';
@@ -756,6 +810,8 @@ const emitRideRequestToDrivers = async ({
       fareIncreaseWaitMinutes: Number(ride.fareIncreaseWaitMinutes || 0),
       nextFareIncreaseAt: ride.nextFareIncreaseAt || null,
       paymentMethod: ride.paymentMethod,
+      goodsAdvance: serializeGoodsAdvance(ride),
+      remainingFare: getRemainingFare(ride),
       parcel: ride.parcel || null,
       intercity: ride.intercity || null,
       radius: effectiveRadius,
@@ -822,6 +878,7 @@ const closeRideAsUnmatched = async (rideId) => {
 
   await User.findByIdAndUpdate(ride.userId, { currentRideId: null });
   await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
+  await refundGoodsAdvanceForRide(ride._id, 'no_driver_found');
 
   emitToRoom(getUserRoom(ride.userId), 'rideCancelled', {
     rideId: String(ride._id),
@@ -878,6 +935,8 @@ export const cancelRideByAdmin = async (rideId) => {
     ride.driverId ? Driver.findByIdAndUpdate(ride.driverId, { isOnRide: false }) : Promise.resolve(),
   ]);
   await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
+
+  await refundGoodsAdvanceForRide(ride._id, 'cancelled_by_admin');
 
   emitToRoom(getUserRoom(ride.userId), 'rideCancelled', {
     rideId: String(ride._id),
@@ -966,6 +1025,12 @@ export const cancelRideByUser = async ({ rideId, userId }) => {
     session.endSession();
   }
   await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
+  // Rider cancelled: the goods advance is kept, not refunded.
+  const advanceOutcome = await forfeitGoodsAdvanceForRide(ride);
+  ride.$locals.advance = {
+    status: advanceOutcome.forfeited ? 'forfeited' : (ride.goodsAdvance?.status || 'none'),
+    refunded: false,
+  };
 
   emitToRoom(getUserRoom(ride.userId), 'rideCancelled', {
     rideId: String(ride._id),
@@ -1091,6 +1156,12 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
   }
   await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
 
+  const advanceRefund = await refundGoodsAdvanceForRide(ride._id, 'cancelled_by_driver');
+  ride.$locals.advance = {
+    status: advanceRefund.refunded ? 'refunded' : (ride.goodsAdvance?.status || 'none'),
+    refunded: advanceRefund.refunded,
+  };
+
   const cancelReason = 'Your scheduled ride was cancelled by the driver.';
 
   emitToRoom(getUserRoom(ride.userId), 'rideCancelled', {
@@ -1157,6 +1228,179 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
   return ride;
 };
 
+/**
+ * A driver cancels a ride they already accepted (before it starts).
+ *
+ * - Normal rides go back to "searching" and are offered to other drivers; the
+ *   cancelling driver is excluded and taken out of the ride room.
+ * - Bidding rides cannot be re-opened (the fare came from the accepted bid), so
+ *   they are cancelled outright.
+ * - Either way it counts toward the driver's daily cancel limit; reaching the
+ *   limit forces them offline and blocks them until the next IST day.
+ * - A paid goods advance stays held while the booking continues and is
+ *   refunded if it is cancelled or ends with no driver.
+ */
+export const cancelActiveRideByDriver = async ({ rideId, driverId, reason = '' }) => {
+  const now = new Date();
+  const cleanReason = String(reason || '').trim().slice(0, 300);
+  const existing = await Ride.findOne({ _id: rideId, driverId });
+
+  if (!existing) {
+    throw new ApiError(404, 'Ride not found for this driver');
+  }
+
+  if (existing.scheduledAt && new Date(existing.scheduledAt).getTime() > now.getTime()) {
+    throw new ApiError(400, 'Upcoming scheduled rides are cancelled from the scheduled rides screen');
+  }
+
+  if (
+    existing.status !== RIDE_STATUS.ACCEPTED ||
+    ![RIDE_LIVE_STATUS.ACCEPTED, RIDE_LIVE_STATUS.ARRIVING].includes(existing.liveStatus)
+  ) {
+    throw new ApiError(409, 'This ride can no longer be cancelled by the driver');
+  }
+
+  const reopen = existing.bookingMode !== 'bidding';
+  const cancellationEntry = {
+    driverId,
+    reason: cleanReason,
+    liveStatusAtCancel: existing.liveStatus,
+    acceptSelfieUrl: existing.acceptSelfie?.imageUrl || '',
+    cancelledAt: now,
+  };
+
+  const update = reopen
+    ? {
+        $set: {
+          driverId: null,
+          status: RIDE_STATUS.SEARCHING,
+          liveStatus: RIDE_LIVE_STATUS.SEARCHING,
+          acceptedAt: null,
+          arrivedAt: null,
+        },
+        $unset: { acceptSelfie: 1 },
+        $push: { driverCancellations: cancellationEntry },
+      }
+    : {
+        $set: {
+          status: RIDE_STATUS.CANCELLED,
+          liveStatus: RIDE_LIVE_STATUS.CANCELLED,
+          biddingStatus: 'cancelled',
+        },
+        $push: { driverCancellations: cancellationEntry },
+      };
+
+  // Compare-and-set: two cancels (or a cancel racing a start) cannot both win.
+  const ride = await Ride.findOneAndUpdate(
+    {
+      _id: rideId,
+      driverId,
+      status: RIDE_STATUS.ACCEPTED,
+      liveStatus: { $in: [RIDE_LIVE_STATUS.ACCEPTED, RIDE_LIVE_STATUS.ARRIVING] },
+    },
+    update,
+    { returnDocument: 'after' },
+  );
+
+  if (!ride) {
+    throw new ApiError(409, 'This ride can no longer be cancelled by the driver');
+  }
+
+  await Driver.updateOne({ _id: driverId }, { isOnRide: false });
+  const cancelStatus = await registerDriverCancel({ driverId, now });
+
+  if (ride.deliveryId) {
+    await Delivery.findByIdAndUpdate(ride.deliveryId, {
+      driverId: reopen ? null : ride.driverId,
+      status: ride.status,
+      liveStatus: ride.liveStatus,
+      acceptedAt: reopen ? null : ride.acceptedAt,
+    }).catch(() => null);
+  }
+
+  // The old driver must stop receiving this ride's live updates.
+  try {
+    ioInstance?.in(getDriverRoom(driverId)).socketsLeave(getRideRoom(ride._id));
+  } catch (error) {
+    console.error('Failed to remove cancelling driver from ride room', error?.message || error);
+  }
+
+  emitToDriver(driverId, 'rideRequestClosed', {
+    rideId: String(ride._id),
+    reason: 'driver-cancelled',
+    message: 'You cancelled this ride.',
+  });
+
+  if (cancelStatus.blocked) {
+    emitToDriver(driverId, 'driver:blocked', {
+      reason: 'daily_cancel_limit',
+      ...serializeCancelStatus(cancelStatus),
+    });
+  }
+
+  let advanceRefunded = false;
+
+  if (reopen) {
+    await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
+    await Ride.updateOne(
+      { _id: rideId },
+      { $addToSet: { 'dispatchTracking.rejectedDriverIds': String(driverId) } },
+    ).catch(() => null);
+
+    emitToRoom(getUserRoom(ride.userId), 'rideDriverCancelled', {
+      rideId: String(ride._id),
+      room: getRideRoom(ride._id),
+      reason: 'driver_cancelled',
+      message: 'Your driver cancelled. We are finding you another driver.',
+    });
+    emitToRoom(getRideRoom(ride._id), SOCKET_EVENTS.RIDE_STATUS_UPDATED, {
+      rideId: String(ride._id),
+      status: ride.status,
+      liveStatus: ride.liveStatus,
+    });
+
+    try {
+      const fresh = await Ride.findById(ride._id).populate('userId', 'name phone countryCode');
+      await startDispatchFlow(fresh, { forceRestart: true });
+    } catch (error) {
+      console.error('Re-dispatch after driver cancel failed', String(ride._id), error?.message || error);
+    }
+  } else {
+    stopDispatchFlow(ride._id);
+    await User.findByIdAndUpdate(ride.userId, { currentRideId: null });
+    const refund = await refundGoodsAdvanceForRide(ride._id, 'cancelled_by_driver');
+    advanceRefunded = refund.refunded;
+
+    emitToRoom(getUserRoom(ride.userId), 'rideCancelled', {
+      rideId: String(ride._id),
+      room: getRideRoom(ride._id),
+      reason: 'Your driver cancelled the ride.',
+    });
+    emitToRoom(getRideRoom(ride._id), SOCKET_EVENTS.RIDE_STATUS_UPDATED, {
+      rideId: String(ride._id),
+      status: ride.status,
+      liveStatus: ride.liveStatus,
+    });
+  }
+
+  sendPushNotificationToEntities({
+    userIds: [String(ride.userId)],
+    title: reopen ? 'Driver cancelled' : 'Ride cancelled',
+    body: reopen
+      ? 'Your driver cancelled. We are finding you another driver.'
+      : 'Your driver cancelled the ride.',
+    data: {
+      type: 'ride_cancelled_by_driver',
+      rideId: String(ride._id),
+      serviceType: ride.serviceType || 'ride',
+    },
+  }).catch((error) => {
+    console.error('Failed to send driver-cancel push notification', error);
+  });
+
+  return { ride, redispatched: reopen, advanceRefunded, cancelStatus };
+};
+
 const scheduleNextAttempt = (rideId, nextAttemptIndex, retryDelayMs) => {
   const timer = setTimeout(() => {
     dispatchAttempt(rideId, nextAttemptIndex).catch((error) => {
@@ -1184,6 +1428,12 @@ const dispatchAttempt = async (rideId, attemptIndex = 0) => {
   const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode');
 
   if (!ride || ride.status !== RIDE_STATUS.SEARCHING) {
+    stopDispatchFlow(rideId);
+    return;
+  }
+
+  // Goods booking whose advance is not paid yet: never offer it to drivers.
+  if (isDispatchBlockedByAdvance(ride)) {
     stopDispatchFlow(rideId);
     return;
   }
@@ -1286,6 +1536,10 @@ export const startDispatchFlow = async (ride, { forceRestart = false } = {}) => 
     return;
   }
 
+  if (isDispatchBlockedByAdvance(ride)) {
+    return;
+  }
+
   if (!forceRestart && hasLocalDispatchFlow(ride._id)) {
     return;
   }
@@ -1326,7 +1580,8 @@ export const restoreScheduledDispatches = async () => {
   const rides = await Ride.find({
     status: RIDE_STATUS.SEARCHING,
     liveStatus: RIDE_LIVE_STATUS.SEARCHING,
-  }).select('_id scheduledAt bookingMode dispatchTracking');
+    'goodsAdvance.status': { $ne: 'pending' },
+  }).select('_id scheduledAt bookingMode dispatchTracking goodsAdvance.status');
 
   for (const ride of rides) {
     if (hasLocalDispatchFlow(ride._id)) {
@@ -1334,6 +1589,41 @@ export const restoreScheduledDispatches = async () => {
     }
 
     await startDispatchFlow(ride);
+  }
+};
+
+// Goods bookings that were never paid for are cancelled so they do not linger
+// as "searching" forever (and so the rider's active-ride slot is freed).
+export const expireStaleAdvanceRides = async () => {
+  const cutoff = new Date(Date.now() - GOODS_ADVANCE_PAYMENT_WINDOW_MS);
+  const stale = await Ride.find({
+    status: RIDE_STATUS.SEARCHING,
+    'goodsAdvance.status': 'pending',
+    createdAt: { $lt: cutoff },
+  }).select('_id');
+
+  for (const item of stale) {
+    const ride = await Ride.findOneAndUpdate(
+      { _id: item._id, status: RIDE_STATUS.SEARCHING, 'goodsAdvance.status': 'pending' },
+      { status: RIDE_STATUS.CANCELLED, liveStatus: RIDE_LIVE_STATUS.CANCELLED },
+      { returnDocument: 'after' },
+    );
+
+    if (!ride) {
+      continue;
+    }
+
+    if (ride.deliveryId) {
+      await Delivery.findByIdAndUpdate(ride.deliveryId, { status: ride.status, liveStatus: ride.liveStatus });
+    }
+
+    await User.updateOne({ _id: ride.userId, currentRideId: ride._id }, { currentRideId: null });
+
+    emitToRoom(getUserRoom(ride.userId), 'rideCancelled', {
+      rideId: String(ride._id),
+      room: getRideRoom(ride._id),
+      reason: 'Advance payment was not completed in time',
+    });
   }
 };
 
@@ -1345,6 +1635,9 @@ export const startDispatchRecoveryLoop = () => {
   dispatchRecoveryTimer = setInterval(() => {
     restoreScheduledDispatches().catch((error) => {
       console.error('Dispatch recovery sweep failed', error);
+    });
+    expireStaleAdvanceRides().catch((error) => {
+      console.error('Stale goods advance sweep failed', error);
     });
   }, DISPATCH_RECOVERY_INTERVAL_MS);
 
