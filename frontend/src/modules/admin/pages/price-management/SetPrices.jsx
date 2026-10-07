@@ -292,8 +292,29 @@ const SetPrices = ({ mode }) => {
   // What this row is saved for: the admin's choice on a "Both" vehicle, else the vehicle's own type.
   const effectiveTransportType = allowedTransportTypes.includes(formData.transport_type)
     ? formData.transport_type
-    : derivedTransportType;
+    : (derivedTransportType === 'both' ? '' : derivedTransportType);
   const isDeliveryPricing = effectiveTransportType === 'delivery';
+  const [paymentTouched, setPaymentTouched] = useState(false);
+
+  useEffect(() => {
+    if (mode !== 'create') {
+      setPaymentTouched(false);
+    }
+  }, [mode]);
+
+  // New rows start with the payment types that make sense for what is being priced, until
+  // the admin picks their own: goods take Cash + Online, taxi starts with Cash.
+  useEffect(() => {
+    if (mode !== 'create' || paymentTouched || !effectiveTransportType) {
+      return;
+    }
+    const defaults = effectiveTransportType === 'delivery' ? ['cash', 'online'] : ['cash'];
+    setFormData((previous) => (
+      normalizePaymentTypes(previous.payment_type).join(',') === defaults.join(',')
+        ? previous
+        : { ...previous, payment_type: defaults }
+    ));
+  }, [effectiveTransportType, mode, paymentTouched]);
 
   const baseUrl = `${API_BASE_URL}/admin`;
   const token = localStorage.getItem('adminToken');
@@ -323,7 +344,9 @@ const SetPrices = ({ mode }) => {
       if (getAllowedTransportTypes(vehicleTransportType).includes(previous.transport_type)) {
         return previous;
       }
-      return { ...previous, transport_type: vehicleTransportType };
+      // A "Both" vehicle needs an explicit choice (Taxi / Delivery / Both): guessing would
+      // silently price goods from the wrong row.
+      return { ...previous, transport_type: vehicleTransportType === 'both' ? '' : vehicleTransportType };
     });
   }, [selectedVehicleType]);
 
@@ -425,6 +448,7 @@ const SetPrices = ({ mode }) => {
     if(e) e.preventDefault();
     if (!formData.zone_id) { alert("Zone is required."); return; }
     if (!formData.vehicle_type) { alert("Vehicle Type is required."); return; }
+    if (!effectiveTransportType) { alert('Choose what this price is for: Taxi rides, Delivery (goods) or Both.'); return; }
     if (normalizePaymentTypes(formData.payment_type).length === 0) { alert("At least one payment type is required."); return; }
     if (isDeliveryPricing && !(Number(formData.base_price) > 0) && !(Number(formData.price_per_distance) > 0)) {
       alert('Enter a Base Price or a Price / Distance. A delivery price with no charges leaves goods bookings unpriced.');
@@ -884,7 +908,8 @@ const SetPrices = ({ mode }) => {
                           <div className="mt-2">
                             <label className={labelClass}>Pricing for <span className="text-rose-500">*</span></label>
                             <div className="relative">
-                               <select className={inputClass + " appearance-none cursor-pointer"} value={effectiveTransportType} onChange={e => setFormData(p=>({...p, transport_type: e.target.value}))}>
+                               <select required className={inputClass + " appearance-none cursor-pointer"} value={effectiveTransportType} onChange={e => setFormData(p=>({...p, transport_type: e.target.value}))}>
+                                  <option value="">Select what this price is for</option>
                                   <option value="taxi">Taxi rides</option>
                                   <option value="delivery">Delivery (goods)</option>
                                   <option value="both">Both (shared row, used for taxi only)</option>
@@ -918,10 +943,13 @@ const SetPrices = ({ mode }) => {
                                   <button
                                     key={option.value}
                                     type="button"
-                                    onClick={() => setFormData((previous) => ({
-                                      ...previous,
-                                      payment_type: togglePaymentType(previous.payment_type, option.value),
-                                    }))}
+                                    onClick={() => {
+                                      setPaymentTouched(true);
+                                      setFormData((previous) => ({
+                                        ...previous,
+                                        payment_type: togglePaymentType(previous.payment_type, option.value),
+                                      }));
+                                    }}
                                     className={`rounded border px-2 py-1 text-left transition-all ${
                                       isSelected
                                         ? 'border-emerald-300 bg-emerald-50 shadow-sm'

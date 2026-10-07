@@ -48,6 +48,20 @@ const unwrapLoginPayload = (response) => {
 const generateOTP = () => String(Math.floor(1000 + Math.random() * 9000));
 const DRIVER_PLACEHOLDER = { name: 'Delivery Captain', rating: '4.9', vehicle: 'Bike', plate: 'Assigned', phone: '', eta: 2 };
 const STAGES = { SEARCHING: 'searching', ACCEPTED: 'accepted' };
+
+const loadRazorpayScript = () =>
+  new Promise((resolve) => {
+    if (window.Razorpay) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
 const ACTIVE_DELIVERY_POLL_MS = 8000;
 const ACTIVE_DELIVERY_POLL_DELAY_MS = 6000;
 const SEARCH_TIMEOUT_MS = 20000;
@@ -370,6 +384,10 @@ const ParcelSearchingDriver = () => {
   const userHomeRoute = routePrefix || '/taxi/user';
   const [stage, setStage] = useState(STAGES.SEARCHING);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  // Goods need an advance paid before captains are notified: { amount, remaining, percent }.
+  const [advanceDue, setAdvanceDue] = useState(null);
+  const [advancePaying, setAdvancePaying] = useState('');
+  const beginSearchingRef = useRef(null);
   const [otp] = useState(generateOTP);
   const [driver, setDriver] = useState(DRIVER_PLACEHOLDER);
   const [searchStatus, setSearchStatus] = useState('Preparing dispatch...');
@@ -723,6 +741,8 @@ const ParcelSearchingDriver = () => {
           socketService.emit('ride:join', { rideId });
         }
 
+        const beginSearching = () => {
+        if (disposed) return;
         const pollActiveRide = async () => {
           if (disposed) return;
           try {
@@ -775,6 +795,20 @@ const ParcelSearchingDriver = () => {
             moveToTracking({ acceptedDriver: activeRide.driver || driverRef.current, rideId: activeRide.rideId, rideSnapshot: activeRide });
           }
         }, SEARCH_TIMEOUT_MS);
+        };
+
+        const advance = payload?.goodsAdvance || payload?.ride?.goodsAdvance || null;
+        if (String(advance?.status || '').toLowerCase() === 'pending' && rideId) {
+          beginSearchingRef.current = beginSearching;
+          setAdvanceDue({
+            amount: Number(advance.amount || 0),
+            percent: Number(advance.percent || 0),
+            remaining: Math.max(0, Number(payload?.fare || routeState.fare || 0) - Number(advance.amount || 0)),
+          });
+          setSearchStatus('Pay the advance to notify nearby captains.');
+        } else {
+          beginSearching();
+        }
       } catch (error) {
         if (disposed) return;
         const errorMessage = error?.response?.data?.message || error?.response?.data?.error || error?.message || 'Dispatch failed.';
@@ -790,6 +824,69 @@ const ParcelSearchingDriver = () => {
       }, 0);
     };
   }, [navigate, otp, preferredVehicleType, resolvedDropCoords, resolvedPickupCoords, routePrefix, routeState, searchNonce, userHomeRoute]);
+
+  const onAdvancePaid = () => {
+    setAdvanceDue(null);
+    setBookingError('');
+    setSearchStatus('Advance paid. Notifying nearby captains...');
+    const begin = beginSearchingRef.current;
+    beginSearchingRef.current = null;
+    begin?.();
+  };
+
+  const payAdvance = async (method) => {
+    const rideId = activeRideIdRef.current;
+    if (!rideId || advancePaying) return;
+    setAdvancePaying(method);
+    setBookingError('');
+    try {
+      if (method === 'wallet') {
+        await api.post('/deliveries/advance/wallet', { rideId });
+      } else {
+        const scriptLoaded = await loadRazorpayScript();
+        if (!scriptLoaded) throw new Error('Razorpay SDK failed to load');
+        const orderResponse = await api.post('/deliveries/advance/razorpay/order', { rideId });
+        const order = unwrap(orderResponse) || {};
+        if (!order.keyId || !order.orderId) throw new Error('Unable to start advance payment');
+        let userInfo = {};
+        try { userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}'); } catch { userInfo = {}; }
+        await new Promise((resolve, reject) => {
+          const rzp = new window.Razorpay({
+            key: order.keyId,
+            amount: order.amount,
+            currency: order.currency || 'INR',
+            name: 'Delivery advance',
+            description: 'Advance for your delivery',
+            order_id: order.orderId,
+            prefill: {
+              name: userInfo?.name || '',
+              email: userInfo?.email || '',
+              contact: userInfo?.phone ? `+91${userInfo.phone}` : '',
+            },
+            modal: { ondismiss: () => reject(new Error('Advance payment was cancelled')) },
+            handler: async (paymentResponse) => {
+              try {
+                await api.post('/deliveries/advance/razorpay/verify', { ...paymentResponse, rideId });
+                resolve(true);
+              } catch (verifyError) {
+                reject(new Error(verifyError?.response?.data?.message || verifyError?.message || 'Advance verification failed'));
+              }
+            },
+            theme: { color: '#0f172a' },
+          });
+          rzp.on('payment.failed', (event) => {
+            reject(new Error(event?.error?.description || 'Advance payment failed'));
+          });
+          rzp.open();
+        });
+      }
+      onAdvancePaid();
+    } catch (error) {
+      setBookingError(error?.response?.data?.message || error?.message || 'Advance payment failed');
+    } finally {
+      setAdvancePaying('');
+    }
+  };
 
   const handleCancel = async () => {
     clearInterval(activeRidePollRef.current);
@@ -975,6 +1072,35 @@ const ParcelSearchingDriver = () => {
                   <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Parcel Safety</span>
                 </div>
               </div>
+
+              {advanceDue && (
+                <div className="rounded-[22px] border border-amber-100 bg-amber-50 px-4 py-4 space-y-3">
+                  <div className="text-center">
+                    <p className="text-[13px] font-extrabold text-slate-900">Pay ₹{advanceDue.amount.toFixed(2)} advance to find a captain</p>
+                    <p className="text-[11px] font-semibold text-slate-500">
+                      {advanceDue.percent}% of the fare now{advanceDue.remaining > 0 ? `, ₹${advanceDue.remaining.toFixed(2)} on delivery` : ''}.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={Boolean(advancePaying)}
+                      onClick={() => payAdvance('wallet')}
+                      className="py-3 rounded-[18px] bg-slate-900 text-white text-[12px] font-extrabold disabled:opacity-60"
+                    >
+                      {advancePaying === 'wallet' ? 'Paying...' : 'Pay from Wallet'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={Boolean(advancePaying)}
+                      onClick={() => payAdvance('online')}
+                      className="py-3 rounded-[18px] bg-white border border-slate-200 text-slate-900 text-[12px] font-extrabold disabled:opacity-60"
+                    >
+                      {advancePaying === 'online' ? 'Opening...' : 'Pay Online'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {bookingError && (
                 <div className="rounded-[22px] border border-red-100 bg-red-50 px-4 py-3 text-center">
