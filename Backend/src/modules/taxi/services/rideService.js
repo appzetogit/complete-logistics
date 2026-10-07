@@ -913,6 +913,7 @@ export const createRideRecord = async ({
   bookingMode,
   userMaxBidFare,
   bidStepAmount,
+  advancePercent,
 }) => {
   const user = await User.findById(userId);
 
@@ -1115,6 +1116,7 @@ export const createRideRecord = async ({
     serviceType: normalizedServiceType,
     fare: effectiveStartingFare,
     waived: freeRide.covered || isSubscriptionCovered,
+    requestedPercent: advancePercent,
   });
   const effectiveFreeRide = freeRide.covered
     ? {

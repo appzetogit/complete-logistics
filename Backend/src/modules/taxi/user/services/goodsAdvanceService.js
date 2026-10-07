@@ -45,6 +45,24 @@ export const computeGoodsAdvance = ({ fare, percent }) => {
   };
 };
 
+/**
+ * The advance shares a rider may choose from: the default percent, plus 100
+ * (pay in full) when allowed. Empty when the advance is off.
+ */
+export const getAdvanceOptions = (config) => {
+  const percent = Number(config?.percent || 0);
+  if (!(percent > 0)) {
+    return [];
+  }
+  return config.allowFull && percent < 100 ? [percent, 100] : [percent];
+};
+
+// The client only picks from the allowed list; anything else falls back to the default.
+export const pickAdvancePercent = (config, requestedPercent) => {
+  const requested = Number(requestedPercent);
+  return getAdvanceOptions(config).includes(requested) ? requested : Number(config?.percent || 0);
+};
+
 export const getGoodsAdvanceConfig = async () => {
   const settings = await getTransportRideSettings();
   const rawPercent = settings.goods_advance_percent;
@@ -52,9 +70,12 @@ export const getGoodsAdvanceConfig = async () => {
     ? Math.min(100, Math.max(0, Number(rawPercent)))
     : 20;
   const refundTo = String(settings.goods_advance_refund_to || 'refund_wallet').trim().toLowerCase();
+  const rawAllowFull = String(settings.goods_advance_allow_full ?? 'true').trim().toLowerCase();
+  const allowFull = !['false', '0', 'no', 'off'].includes(rawAllowFull);
 
   return {
     percent,
+    allowFull,
     refundTo: REFUND_DESTINATIONS.includes(refundTo) ? refundTo : 'refund_wallet',
   };
 };
@@ -64,13 +85,14 @@ export const getGoodsAdvanceConfig = async () => {
  * Goods only. `waived` is true when the rider pays nothing for the ride
  * anyway (free ride / subscription cover).
  */
-export const resolveGoodsAdvanceForNewRide = async ({ serviceType, fare, waived = false, deps = {} }) => {
+export const resolveGoodsAdvanceForNewRide = async ({ serviceType, fare, waived = false, requestedPercent, deps = {} }) => {
   if (String(serviceType || '').toLowerCase() !== 'parcel' || waived) {
     return undefined;
   }
 
   const config = await (deps.getConfig || getGoodsAdvanceConfig)();
-  const { percent, amount } = computeGoodsAdvance({ fare, percent: config.percent });
+  const chosenPercent = pickAdvancePercent(config, requestedPercent);
+  const { percent, amount } = computeGoodsAdvance({ fare, percent: chosenPercent });
 
   if (percent <= 0 || amount <= 0) {
     return undefined;

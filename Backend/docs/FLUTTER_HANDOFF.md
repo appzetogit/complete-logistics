@@ -40,6 +40,10 @@ POST /deliveries/quote  →  POST /deliveries  →  goodsAdvance.status == "pend
      `{ "rideId", "razorpay_order_id", "razorpay_payment_id", "razorpay_signature" }`.
 4. Success ke baad hi searching screen dikhao. Dispatch server khud shuru karta hai.
 
+Pay in full (optional): quote ke `advanceOptions` me `100` ho tabhi "Pay in full" chip dikhao; chune to booking me
+`advancePercent: 100` bhejo. Tab `remainingFare = 0` hota hai – completion par payment skip, sirf feedback (`complete-payment/*` `400 "No payable amount"`),
+driver ko "Collect ₹0" hide. Server galat/unallowed value ko default % se badal deta hai.
+
 Rules:
 - **Pay kiye bina "Finding captain…" mat dikhao.** Booking `pending` me atki rehti hai, koi driver notify nahi hota.
   (Web app me yahi bug tha, ab fix hai.)
