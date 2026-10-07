@@ -54,6 +54,7 @@ import { WithdrawalRequest } from '../models/WithdrawalRequest.js';
 import { SupportTicket } from '../../support/models/SupportTicket.js';
 import TaxiTransportType from '../models/TaxiTransportType.js';
 import { comparePassword, hashPassword } from '../../driver/services/authService.js';
+import { overlayCatalogWithDeliverySetPrices } from '../../services/deliveryPricingService.js';
 import { clearDriverCancelBlock, serializeCancelStatus } from '../../driver/services/driverCancelService.js';
 import {
   applyDriverWalletAdjustment,
@@ -6718,7 +6719,7 @@ export const listPublicVehicleCatalog = async () => {
     .sort({ createdAt: -1 })
     .lean();
 
-  const results = items.map((item) => ({
+  const catalogRows = items.map((item) => ({
     id: String(item._id),
     _id: item._id,
     name: item.name || '',
@@ -6739,6 +6740,9 @@ export const listPublicVehicleCatalog = async () => {
     status: item.status ?? 1,
     active: item.active !== false && Number(item.status ?? 1) !== 0,
   }));
+
+  // Goods fares are priced in Pricing > Set Price: show its "All Zones" rate here.
+  const results = await overlayCatalogWithDeliverySetPrices(catalogRows);
 
   const payload = {
     results,
@@ -7411,6 +7415,8 @@ export const createSetPrice = async (payload, currentAdmin = null) => {
     status: payload.status || 'active',
   });
 
+  publicVehicleCatalogCache = { value: null, expiresAt: 0 };
+
   return setPrice.toObject();
 };
 
@@ -7551,6 +7557,7 @@ export const updateSetPrice = async (id, payload, currentAdmin = null) => {
   }
 
   await setPrice.save();
+  publicVehicleCatalogCache = { value: null, expiresAt: 0 };
   return setPrice.toObject();
 };
 
@@ -7567,6 +7574,7 @@ export const deleteSetPrice = async (id, currentAdmin = null) => {
   }
   const deleted = await SetPrice.findByIdAndDelete(id);
   if (!deleted) throw new ApiError(404, 'Set Price not found');
+  publicVehicleCatalogCache = { value: null, expiresAt: 0 };
   return true;
 };
 

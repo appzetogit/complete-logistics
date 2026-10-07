@@ -223,7 +223,8 @@ export const bootstrap = async ({ smtpPort = 1 } = {}) => {
       const vehicle = await m.Vehicle.create({
         name: 'Test Sedan',
         transport_type: 'both',
-        delivery_distance_pricing: { enabled: true, base_price: 100, base_distance: 1, distance_price: 10 },
+        // the vehicle schema stores the base distance as free_distance
+        delivery_distance_pricing: { enabled: true, base_price: 100, free_distance: 1, distance_price: 10 },
         ...overrides,
       });
       await m.SetPrice.create({

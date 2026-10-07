@@ -4,6 +4,7 @@ import { GoodsType } from '../../admin/models/GoodsType.js';
 import { Vehicle } from '../../admin/models/Vehicle.js';
 import { startDispatchFlow } from '../../services/dispatchService.js';
 import { computeGoodsAdvance, getGoodsAdvanceConfig } from './goodsAdvanceService.js';
+import { resolveDeliveryPricing } from '../../services/deliveryPricingService.js';
 import { Delivery } from '../models/Delivery.js';
 import {
   createRideRecord,
@@ -155,24 +156,30 @@ const resolveDetentionTerms = (pricing = {}) => ({
   chargePerHour: Math.max(0, Number(pricing?.time_price || 0)),
 });
 
+// `pricing` (base price / base distance / distance price) and `serviceTaxPercentage`
+// come from resolveDeliveryPricing, i.e. Set Price first. The vehicle type still
+// supplies the rider-selectable load heights, extras and the detention terms.
 const computeDeliveryFareBreakdown = ({
   vehicle = {},
+  pricing: pricingOverride = null,
+  serviceTaxPercentage: serviceTaxOverride = null,
   pickupCoords = [],
   dropCoords = [],
   loadHeightKey = '',
   extraKeys = [],
 }) => {
-  const pricing = vehicle?.delivery_distance_pricing || {};
+  const vehiclePricing = vehicle?.delivery_distance_pricing || {};
+  const pricing = pricingOverride || vehiclePricing;
   const enabled = Boolean(
     pricing?.enabled ||
     Number(pricing?.base_price || 0) > 0 ||
     Number(pricing?.distance_price || 0) > 0
   );
 
-  const serviceTaxPercentage = Math.max(0, Number(vehicle?.service_tax || 0));
+  const serviceTaxPercentage = Math.max(0, Number(serviceTaxOverride ?? vehicle?.service_tax ?? 0));
   const loadHeight = resolveLoadHeight(vehicle, loadHeightKey);
   const extras = resolveExtras(vehicle, extraKeys);
-  const detention = resolveDetentionTerms(pricing);
+  const detention = resolveDetentionTerms(vehiclePricing);
   const distanceKm = Math.max(0, calculateDistanceKm(pickupCoords, dropCoords));
   const baseDistance = Math.max(0, Number(pricing?.base_distance ?? pricing?.free_distance ?? 0));
 
@@ -252,9 +259,13 @@ export const quoteDeliveryFare = async ({
     throw new ApiError(404, 'Vehicle type not found');
   }
 
+  const pickupCoords = normalizePoint(pickup, 'pickup');
+  const resolvedPricing = await resolveDeliveryPricing({ vehicle, pickupCoords });
   const breakdown = computeDeliveryFareBreakdown({
     vehicle,
-    pickupCoords: normalizePoint(pickup, 'pickup'),
+    pricing: resolvedPricing.pricing,
+    serviceTaxPercentage: resolvedPricing.serviceTaxPercentage,
+    pickupCoords,
     dropCoords: normalizePoint(drop, 'drop'),
     loadHeightKey,
     extraKeys,
@@ -268,6 +279,10 @@ export const quoteDeliveryFare = async ({
     vehicleTypeId: String(vehicle._id),
     vehicleName: vehicle.name || '',
     ...breakdown,
+    // Where the rates came from: 'set_price' (Pricing > Set Price) or the
+    // vehicle type's legacy values when no delivery Set Price exists yet.
+    pricingSource: resolvedPricing.source,
+    setPriceId: resolvedPricing.setPriceId,
     advancePercent: advance.percent,
     advanceAmount: advance.amount,
     remainingAmount: advance.remainingAmount,
@@ -309,8 +324,12 @@ export const createDeliveryRecord = async ({
   const vehicle = vehicleTypeId
     ? await Vehicle.findById(vehicleTypeId).select(DELIVERY_FARE_VEHICLE_FIELDS).lean()
     : null;
+  // Same resolver as the quote, so the rider is charged what they were quoted.
+  const resolvedPricing = await resolveDeliveryPricing({ vehicle, pickupCoords });
   const fareBreakdown = computeDeliveryFareBreakdown({
     vehicle,
+    pricing: resolvedPricing.pricing,
+    serviceTaxPercentage: resolvedPricing.serviceTaxPercentage,
     pickupCoords,
     dropCoords,
     loadHeightKey,
@@ -331,6 +350,9 @@ export const createDeliveryRecord = async ({
     vehicleIconUrl,
     paymentMethod,
     transport_type: 'delivery',
+    // The pickup zone, so payment methods / commission / cancellation fees come
+    // from the same zone-level Set Price rule as the fare.
+    zone_id: resolvedPricing.zone?.id || undefined,
     serviceType: 'parcel',
     parcel: {
       ...(parcel || {}),
