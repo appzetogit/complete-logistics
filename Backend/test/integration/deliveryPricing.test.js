@@ -339,3 +339,21 @@ test('lifecycle: commission at completion follows the Delivery Set Price, not th
   assert.ok(commissionRow, `no commission row: ${JSON.stringify(rows.map((r) => r.type))}`);
   near(Math.abs(commissionRow.amount), round2(fare * 0.15), 0.02);
 });
+
+test('deleting the Delivery Set Price falls back to the vehicle values, and the catalog follows', async () => {
+  const vehicle = await newVehicle();
+  const rider = await t.factories.user();
+  const legacy = await quote(rider, vehicle);
+  assert.equal(legacy.pricingSource, 'vehicle');
+
+  const created = await createSetPrice(vehicle);
+  const priced = await quote(rider, vehicle);
+  assert.equal(priced.pricingSource, 'set_price');
+
+  const removed = await t.api('DELETE', `/admin/types/set-prices/${created.body.data._id}`, { token: admin.token });
+  assert.equal(removed.status, 200, removed.text);
+
+  const after = await quote(rider, vehicle);
+  assert.equal(after.pricingSource, 'vehicle');
+  near(after.total, legacy.total, 0.01);
+});
