@@ -72,6 +72,13 @@ const normalizeTransportType = (value = '') => {
 const getVehicleTransportType = (vehicle = {}) =>
   normalizeTransportType(vehicle?.transport_type || vehicle?.is_taxi || '');
 
+// A Taxi or Delivery vehicle has exactly one kind of price row. A "Both" vehicle can
+// have separate Taxi and Delivery rows (goods fares only ever use Delivery rows), or
+// a single shared row.
+const getAllowedTransportTypes = (vehicleTransportType = '') => (
+  vehicleTransportType === 'both' ? ['taxi', 'delivery', 'both'] : (vehicleTransportType ? [vehicleTransportType] : [])
+);
+
 const formatTransportTypeLabel = (value = '') => {
   const normalized = normalizeTransportType(value);
   if (normalized === 'delivery') return 'Delivery';
@@ -278,6 +285,15 @@ const SetPrices = ({ mode }) => {
     () => getVehicleTransportType(selectedVehicleType),
     [selectedVehicleType],
   );
+  const allowedTransportTypes = React.useMemo(
+    () => getAllowedTransportTypes(derivedTransportType),
+    [derivedTransportType],
+  );
+  // What this row is saved for: the admin's choice on a "Both" vehicle, else the vehicle's own type.
+  const effectiveTransportType = allowedTransportTypes.includes(formData.transport_type)
+    ? formData.transport_type
+    : derivedTransportType;
+  const isDeliveryPricing = effectiveTransportType === 'delivery';
 
   const baseUrl = `${API_BASE_URL}/admin`;
   const token = localStorage.getItem('adminToken');
@@ -297,16 +313,18 @@ const SetPrices = ({ mode }) => {
       return;
     }
 
-    const nextTransportType = getVehicleTransportType(selectedVehicleType);
-    if (!nextTransportType) {
+    const vehicleTransportType = getVehicleTransportType(selectedVehicleType);
+    if (!vehicleTransportType) {
       return;
     }
 
-    setFormData((previous) => (
-      previous.transport_type === nextTransportType
-        ? previous
-        : { ...previous, transport_type: nextTransportType }
-    ));
+    setFormData((previous) => {
+      // Keep what was chosen (or loaded when editing) while it is valid for this vehicle.
+      if (getAllowedTransportTypes(vehicleTransportType).includes(previous.transport_type)) {
+        return previous;
+      }
+      return { ...previous, transport_type: vehicleTransportType };
+    });
   }, [selectedVehicleType]);
 
   const fetchInitialData = async () => {
@@ -408,6 +426,10 @@ const SetPrices = ({ mode }) => {
     if (!formData.zone_id) { alert("Zone is required."); return; }
     if (!formData.vehicle_type) { alert("Vehicle Type is required."); return; }
     if (normalizePaymentTypes(formData.payment_type).length === 0) { alert("At least one payment type is required."); return; }
+    if (isDeliveryPricing && !(Number(formData.base_price) > 0) && !(Number(formData.price_per_distance) > 0)) {
+      alert('Enter a Base Price or a Price / Distance. A delivery price with no charges leaves goods bookings unpriced.');
+      return;
+    }
     
     const numericFields = [
       { name: 'Admin Commission From Driver', val: formData.admin_commission_from_driver },
@@ -451,8 +473,23 @@ const SetPrices = ({ mode }) => {
         shared_price_per_distance: 0,
         shared_cancel_fee: 0,
         pricing_scope: 'ride',
-        transport_type: derivedTransportType || normalizeTransportType(formData.transport_type),
+        transport_type: effectiveTransportType || normalizeTransportType(formData.transport_type),
         payment_type: normalizedPaymentTypes,
+        // Goods pricing is distance based only: the taxi-only charges are not part of it.
+        ...(isDeliveryPricing ? {
+          time_price: 0,
+          waiting_charge: 0,
+          free_waiting_before: 0,
+          free_waiting_after: 0,
+          enable_airport_ride: false,
+          enable_outstation_ride: false,
+          airport_surge: 0,
+          support_airport_fee: 0,
+          outstation_base_price: 0,
+          outstation_base_distance: 0,
+          outstation_price_per_distance: 0,
+          outstation_time_price: 0,
+        } : {}),
         zone_id: isAllZonesSelection(formData.zone_id) ? null : formData.zone_id,
         service_location_id: isAllZonesSelection(formData.zone_id) ? null : (formData.service_location_id || null),
       };
@@ -843,13 +880,30 @@ const SetPrices = ({ mode }) => {
                            </select>
                            <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                         </div>
-                        <p className="mt-2 text-[11px] font-medium text-slate-400">
-                          Transport type is taken from the selected vehicle type:
-                          {' '}
-                          <span className="font-black uppercase tracking-[0.12em] text-slate-600">
-                            {formatTransportTypeLabel(derivedTransportType || formData.transport_type)}
-                          </span>
-                        </p>
+                        {derivedTransportType === 'both' ? (
+                          <div className="mt-2">
+                            <label className={labelClass}>Pricing for <span className="text-rose-500">*</span></label>
+                            <div className="relative">
+                               <select className={inputClass + " appearance-none cursor-pointer"} value={effectiveTransportType} onChange={e => setFormData(p=>({...p, transport_type: e.target.value}))}>
+                                  <option value="taxi">Taxi rides</option>
+                                  <option value="delivery">Delivery (goods)</option>
+                                  <option value="both">Both (shared row, used for taxi only)</option>
+                               </select>
+                               <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                            </div>
+                            <p className="mt-2 text-[11px] font-medium text-slate-400">
+                              This vehicle does both taxi and goods. Goods fares only use a <span className="font-black text-slate-600">Delivery</span> price, so create one for Delivery as well as for Taxi.
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-[11px] font-medium text-slate-400">
+                            Transport type is taken from the selected vehicle type:
+                            {' '}
+                            <span className="font-black uppercase tracking-[0.12em] text-slate-600">
+                              {formatTransportTypeLabel(derivedTransportType || formData.transport_type)}
+                            </span>
+                          </p>
+                        )}
                      </div>
                   </div>
 
@@ -937,6 +991,13 @@ const SetPrices = ({ mode }) => {
                         <label className={labelClass}>Price / Distance <span className="text-rose-500">*</span></label>
                         <input type="number" min="0" required className={inputClass + " py-1"} value={formData.price_per_distance} onChange={e => setFormData(p=>({...p, price_per_distance: clampNonNegativeInput('price_per_distance', e.target.value)}))} />
                      </div>
+                     {isDeliveryPricing && (
+                        <p className="col-span-full text-[11px] font-medium text-slate-500">
+                          Goods fare = Base Price + (distance &minus; Base Distance) &times; Price / Distance, plus Service Tax.
+                          The vehicle's load height and extras are added on top. Zone-wise: pick a Zone, or All Zones as the default.
+                        </p>
+                     )}
+                     {!isDeliveryPricing && (<>
                      <div>
                         <label className={labelClass}>Time Price / Min <span className="text-rose-500">*</span></label>
                         <input type="number" min="0" required className={inputClass + " py-1"} value={formData.time_price} onChange={e => setFormData(p=>({...p, time_price: clampNonNegativeInput('time_price', e.target.value)}))} />
@@ -953,6 +1014,8 @@ const SetPrices = ({ mode }) => {
                         <label className={labelClass}>Free Wait (After) <span className="text-rose-500">*</span></label>
                         <input type="number" min="0" required className={inputClass + " py-1"} value={formData.free_waiting_after} onChange={e => setFormData(p=>({...p, free_waiting_after: clampNonNegativeInput('free_waiting_after', e.target.value)}))} />
                      </div>
+                     </>)}
+                     {!isDeliveryPricing && (<>
                      <div className="col-span-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-2 gap-y-1 pt-1 border-t border-gray-100 mt-1">
                         <div className="flex items-center gap-1">
                            <input type="checkbox" className="w-3 h-3 rounded border-gray-300" checked={formData.enable_airport_ride} onChange={e => setFormData(p=>({...p, enable_airport_ride: e.target.checked}))} />
@@ -978,6 +1041,7 @@ const SetPrices = ({ mode }) => {
                            <div className="flex-1"><label className={labelClass}>Out. Price/Dist</label><input type="number" className={inputClass + " py-1"} value={formData.outstation_price_per_distance} onChange={e => setFormData(p=>({...p, outstation_price_per_distance: e.target.value}))} /></div>
                         </div>
                      )}
+                     </>)}
                   </div>
 
                   {/* Section: Cancellation Fee */}

@@ -1303,9 +1303,75 @@ const SenderReceiverDetails = () => {
     };
   }, [dropCoords, estimatedDistanceKm, isGoogleMapsLoaded, pickupCoords]);
 
+  // The server decides the goods fare (Pricing > Set Price, zone-wise), so ask it
+  // for the quote and show exactly that. If the quote cannot be fetched (for
+  // example the rider is not signed in yet) the local estimate below is used.
+  const [serverQuote, setServerQuote] = useState(null);
+
+  useEffect(() => {
+    const vehicleId = getVehicleId(primarySelectedVehicle);
+    const hasRoute =
+      Array.isArray(pickupCoords) && pickupCoords.length === 2 &&
+      Array.isArray(dropCoords) && dropCoords.length === 2 &&
+      dropCoords.every((value) => Number.isFinite(Number(value))) &&
+      pickupCoords.every((value) => Number.isFinite(Number(value)));
+
+    if (!vehicleId || !hasRoute) {
+      setServerQuote(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const response = await api.post('/deliveries/quote', {
+          vehicleTypeId: vehicleId,
+          pickup: pickupCoords,
+          drop: dropCoords,
+        });
+        const quote = response?.data?.data ?? response?.data ?? null;
+        if (!cancelled) {
+          setServerQuote(quote ? { ...quote, vehicleId } : null);
+        }
+      } catch {
+        if (!cancelled) {
+          setServerQuote(null);
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [dropCoords, pickupCoords, primarySelectedVehicle]);
+
   const estimatedFare = useMemo(() => {
     if (!drop.trim()) {
       return null;
+    }
+
+    const quoted =
+      serverQuote &&
+      serverQuote.vehicleId === getVehicleId(primarySelectedVehicle) &&
+      serverQuote.priced &&
+      Number.isFinite(Number(serverQuote.total))
+        ? serverQuote
+        : null;
+
+    if (quoted) {
+      const total = Number(quoted.total);
+      return {
+        min: total,
+        max: total,
+        approx: Math.round(total),
+        dynamic: true,
+        minBaseDistance: Number(quoted.baseDistanceKm || 0),
+        maxBaseDistance: Number(quoted.baseDistanceKm || 0),
+        subtotal: Number(quoted.subtotal || 0),
+        serviceTaxPercentage: Number(quoted.serviceTaxPercentage || 0),
+        serviceTaxAmount: Number(quoted.serviceTaxAmount || 0),
+      };
     }
 
     const primaryFare = calculateVehicleFare(primarySelectedVehicle, effectiveDistanceKm);
@@ -1324,7 +1390,7 @@ const SenderReceiverDetails = () => {
       serviceTaxPercentage: Number(primaryFare.serviceTaxPercentage || 0),
       serviceTaxAmount: Number(primaryFare.serviceTaxAmount || 0),
     };
-  }, [drop, effectiveDistanceKm, primarySelectedVehicle]);
+  }, [drop, effectiveDistanceKm, primarySelectedVehicle, serverQuote]);
 
   const validate = () => {
     const nextErrors = {};
