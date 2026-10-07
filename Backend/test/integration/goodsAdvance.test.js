@@ -339,3 +339,35 @@ test('advance percent is configurable and 0 disables it', async () => {
   assert.equal(none.goodsAdvance.status, 'none');
   await t.setSettings('transport_ride', { goods_advance_percent: '20' });
 });
+
+test('RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET in the env are used when the admin settings only hold demo keys', async () => {
+  const { vehicle, rider } = await setup();
+  const delivery = await book({ vehicle, rider });
+  const orderRequest = () => t.api('POST', '/deliveries/advance/razorpay/order', { token: rider.token, body: { rideId: delivery.rideId } });
+
+  const withoutEnv = await orderRequest();
+  assert.match(withoutEnv.body.message, /demo placeholders/);
+
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    if (!String(url).startsWith('https://api.razorpay.com/')) return realFetch(url, options);
+    calls.push({ url: String(url), auth: options?.headers?.Authorization });
+    const body = JSON.parse(options.body);
+    return new Response(JSON.stringify({ id: 'order_env_test', amount: body.amount, currency: 'INR' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  process.env.RAZORPAY_KEY_ID = 'rzp_test_envkey';
+  process.env.RAZORPAY_KEY_SECRET = 'envsecret';
+  try {
+    const withEnv = await orderRequest();
+    assert.equal(withEnv.status, 201, withEnv.text);
+    assert.equal(withEnv.body.data.keyId, 'rzp_test_envkey');
+    assert.equal(withEnv.body.data.orderId, 'order_env_test');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].auth, `Basic ${Buffer.from('rzp_test_envkey:envsecret').toString('base64')}`);
+  } finally {
+    delete process.env.RAZORPAY_KEY_ID;
+    delete process.env.RAZORPAY_KEY_SECRET;
+    globalThis.fetch = realFetch;
+  }
+});

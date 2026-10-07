@@ -197,6 +197,26 @@ export const resolveConfiguredGatewayCredentials = async (gatewayKey) => {
 
   const environment = normalizeString(gateway[spec.environmentKey]).toLowerCase();
   const isLive = environment === spec.liveValue;
+
+  if (gatewayKey === 'razor_pay') {
+    // RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET in the server env are a fallback for when
+    // Admin > Payment Gateways has no real keys (empty or demo placeholders).
+    const envKeyId = normalizeString(process.env.RAZORPAY_KEY_ID);
+    const envKeySecret = normalizeString(process.env.RAZORPAY_KEY_SECRET);
+    const storedKeyId = normalizeString(isLive ? gateway.live_api_key : gateway.test_api_key);
+    const storedKeySecret = normalizeString(isLive ? gateway.live_secret_key : gateway.test_secret_key);
+    const storedIsUsable = storedKeyId && storedKeySecret
+      && !storedKeyId.toLowerCase().includes('demo') && !storedKeySecret.toLowerCase().includes('demo');
+
+    if (envKeyId && envKeySecret && !storedIsUsable) {
+      return {
+        keyId: envKeyId,
+        keySecret: envKeySecret,
+        environment: envKeyId.startsWith('rzp_live_') ? spec.liveValue : 'test',
+      };
+    }
+  }
+
   const validatedGateway = validateGatewayConfiguration(gatewayKey, gateway);
 
   if (gatewayKey === 'razor_pay') {
