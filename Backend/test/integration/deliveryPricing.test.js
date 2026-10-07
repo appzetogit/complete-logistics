@@ -314,3 +314,28 @@ test('MIGRATION: copying vehicle prices into Set Price leaves the fare and booki
   });
   assert.equal(again[0].action, 'skip');
 });
+
+test('lifecycle: commission at completion follows the Delivery Set Price, not the shared row', async () => {
+  const vehicle = await newVehicle(); // shared 'both' row commission = 20
+  const rider = await t.factories.user();
+  const driver = await t.factories.driver({ vehicleTypeId: vehicle._id });
+  const created = await createSetPrice(vehicle, { admin_commission_from_driver: 15 });
+  assert.ok([200, 201].includes(created.status), created.text);
+
+  const delivery = await book(rider, vehicle);
+  const fare = delivery.fare;
+
+  await t.acceptRide(delivery.rideId, driver.driver._id);
+  for (const status of ['arriving', 'goods_loaded', 'started', 'arrived', 'goods_delivered', 'completed']) {
+    const res = await t.api('PATCH', `/rides/${delivery.rideId}/status`, {
+      token: driver.token,
+      body: { status, proofImageUrl: 'https://example.com/p.jpg' },
+    });
+    assert.equal(res.status, 200, `${status}: ${res.text}`);
+  }
+
+  const rows = await t.m.WalletTransaction.find({ rideId: delivery.rideId }).lean();
+  const commissionRow = rows.find((row) => row.type === 'commission_deduction');
+  assert.ok(commissionRow, `no commission row: ${JSON.stringify(rows.map((r) => r.type))}`);
+  near(Math.abs(commissionRow.amount), round2(fare * 0.15), 0.02);
+});
