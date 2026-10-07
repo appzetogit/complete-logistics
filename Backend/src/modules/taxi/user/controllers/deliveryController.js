@@ -9,7 +9,7 @@ import {
 import { serializeDeliveryRealtime } from '../services/deliveryService.js';
 
 export const createDelivery = async (req, res) => {
-  const { pickup, drop, pickupAddress, dropAddress, fare, vehicleTypeId, vehicleTypeIds, vehicleIconType, vehicleIconUrl, paymentMethod, parcel, loadHeightKey, extraKeys } = req.body;
+  const { pickup, drop, pickupAddress, dropAddress, fare, vehicleTypeId, vehicleTypeIds, vehicleIconType, vehicleIconUrl, paymentMethod, parcel, loadHeightKey, extraKeys, advancePercent } = req.body;
 
   const delivery = await createDeliveryRecord({
     userId: req.auth.sub,
@@ -26,6 +26,7 @@ export const createDelivery = async (req, res) => {
     parcel,
     loadHeightKey,
     extraKeys,
+    advancePercent,
   });
 
   res.status(201).json({

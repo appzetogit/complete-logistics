@@ -5,8 +5,8 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "dev": "nodemon server.js",
-    "start": "node server.js",
+    "dev": "node api.js && nodemon server.js",
+    "start": "node api.js && node server.js",
     "test": "node --test \"src/**/*.test.js\"",
     "test:integration": "node --test --test-force-exit \"test/integration/*.test.js\""
   },

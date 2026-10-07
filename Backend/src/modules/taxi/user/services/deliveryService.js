@@ -3,7 +3,7 @@ import { normalizePoint } from '../../../../utils/geo.js';
 import { GoodsType } from '../../admin/models/GoodsType.js';
 import { Vehicle } from '../../admin/models/Vehicle.js';
 import { startDispatchFlow } from '../../services/dispatchService.js';
-import { computeGoodsAdvance, getGoodsAdvanceConfig } from './goodsAdvanceService.js';
+import { computeGoodsAdvance, getAdvanceOptions, getGoodsAdvanceConfig } from './goodsAdvanceService.js';
 import { resolveDeliveryPricing } from '../../services/deliveryPricingService.js';
 import { Delivery } from '../models/Delivery.js';
 import {
@@ -286,6 +286,7 @@ export const quoteDeliveryFare = async ({
     advancePercent: advance.percent,
     advanceAmount: advance.amount,
     remainingAmount: advance.remainingAmount,
+    advanceOptions: getAdvanceOptions(advanceConfig),
   };
 };
 
@@ -317,6 +318,7 @@ export const createDeliveryRecord = async ({
   parcel,
   loadHeightKey,
   extraKeys,
+  advancePercent,
 }) => {
   await ensureDeliveryVehicleAllowed({ vehicleTypeId, parcel });
   const pickupCoords = normalizePoint(pickup, 'pickup');
@@ -354,6 +356,7 @@ export const createDeliveryRecord = async ({
     // from the same zone-level Set Price rule as the fare.
     zone_id: resolvedPricing.zone?.id || undefined,
     serviceType: 'parcel',
+    advancePercent,
     parcel: {
       ...(parcel || {}),
       loadHeight: fareBreakdown.loadHeight,

@@ -566,12 +566,13 @@ export const createRazorpayRideCompletionOrder = async (req, res) => {
     throw new ApiError(409, 'Feedback already submitted for this ride');
   }
 
-  const { keyId, keySecret } = await resolveRazorpayCredentials();
   const paymentAmounts = buildCompletionAmounts(ride, tipAmount);
 
   if (paymentAmounts.totalCharge <= 0) {
     throw new ApiError(400, 'No payable amount remains for this ride');
   }
+
+  const { keyId, keySecret } = await resolveRazorpayCredentials();
 
   const compactRideId = rideId.replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'ride';
   const compactUserId = String(req.auth?.sub || '').replace(/[^a-zA-Z0-9]/g, '').slice(-8) || 'usr';

@@ -72,6 +72,8 @@ export const createDefaultBusinessSettings = () => ({
     goods_advance_percent: '20',
     // Where a refunded advance goes: refund_wallet | wallet (spendable balance) | source (original Razorpay payment).
     goods_advance_refund_to: 'refund_wallet',
+    // Riders may choose to pay the full fare up front instead of the default advance share.
+    goods_advance_allow_full: 'true',
     trip_dispatch_type: '1',
     maximum_time_for_accept_reject_bidding_ride: '60',
     maximum_time_for_find_drivers_for_bitting_ride: '300',

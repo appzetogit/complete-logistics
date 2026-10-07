@@ -32,6 +32,15 @@ Sirf **goods (parcel) bookings** par lagta hai, rides par nahi.
 4. Verify/wallet success par response me ride payload aata hai, `goodsAdvance.status = "paid"`,
    aur **ab dispatch shuru ho jaata hai** – baaki flow (searching → accepted …) pehle jaisa socket events se.
 
+### Pay in full (optional choice)
+Quote me `advanceOptions` aata hai, jaise `[20, 100]`. **"Pay in full" chip tabhi dikhao jab list me `100` ho.**
+- User full chune to booking me `advancePercent: 100` bhejo (default 20 chuna ho to field mat bhejo).
+- Server sirf allowed values maanta hai (`advanceOptions` me se); koi aur value ya full band ho to default % lagta hai.
+- 100% par `goodsAdvance.percent = 100`, `amount = fare`, `remainingFare = 0`. Payment endpoints wahi (`/advance/wallet`, `/advance/razorpay/...`).
+- Completion par kuch due nahi: `complete-payment/*` `400 "No payable amount remains"` dete hain (Razorpay ka ₹0 order nahi banta) – app ye calls skip kare aur seedha `PATCH /rides/:id/feedback` kare. Driver ko "Collect ₹0" / collect step hide.
+- Cancel/refund rules same: user cancel = forfeited, driver/no driver/admin = poora amount refund.
+- Admin switch: `goods_advance_allow_full` (`true`/`false`, default `true`).
+
 ### Important rules
 - Order **hamesha latest** wala verify hota hai. Naya order banao to purana order verify nahi hoga.
 - `rideId` user ki apni booking ki honi chahiye (warna `404`).
