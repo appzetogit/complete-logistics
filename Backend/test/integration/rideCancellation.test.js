@@ -198,3 +198,20 @@ test('admin trip list rows carry the cancellation block', async () => {
   assert.equal(row.cancellation.by, 'user');
   assert.equal(row.cancellation.reason, 'Changed plans');
 });
+
+test('ride history (GET /rides and GET /deliveries) carries cancellation; null for rides that were not cancelled', async () => {
+  const vehicle = await t.factories.vehicle();
+  const rider = await t.factories.user();
+  const cancelled = await bookTaxi(rider, vehicle);
+  await t.api('PATCH', `/rides/${cancelled}/cancel`, { token: rider.token, body: { reason: 'Plans changed' } });
+  const open = await bookTaxi(rider, vehicle);
+
+  const history = await t.api('GET', '/rides', { token: rider.token });
+  assert.equal(history.status, 200, history.text);
+  const items = history.body.data.results || history.body.data;
+  const a = items.find((item) => item.rideId === String(cancelled));
+  const b = items.find((item) => item.rideId === String(open));
+  assert.equal(a.cancellation.by, 'user');
+  assert.equal(a.cancellation.reason, 'Plans changed');
+  assert.equal(b.cancellation, null);
+});

@@ -14,7 +14,7 @@ import {
 } from '../constants/index.js';
 import { Delivery } from '../user/models/Delivery.js';
 import { Vehicle } from '../admin/models/Vehicle.js';
-import { buildRideCancellation, getRideRoom, resolveSetPriceForRide, serializeRideCancellation } from './rideService.js';
+import { buildRideCancellation, getRideRoom, resolveSetPriceForRide, withoutParcelSelfies } from './rideService.js';
 import { SOCKET_EVENTS } from '../socket/events.js';
 import { resolveTransportDispatchConfig } from './transportSettingsService.js';
 import { sendPushNotificationToEntities } from './pushNotificationService.js';
@@ -1994,7 +1994,7 @@ export const notifyRideAccepted = async (ride) => {
     vehicleIconType: populatedRide.vehicleIconType || '',
     vehicleIconUrl: populatedRide.vehicleIconUrl || '',
     driver: populatedRide.driverId,
-    parcel: populatedRide.parcel || null,
+    parcel: withoutParcelSelfies(populatedRide.parcel?.toObject ? populatedRide.parcel.toObject() : populatedRide.parcel) || null,
   });
 
   emitToRoom(getUserRoom(populatedRide.userId), SOCKET_EVENTS.RIDE_STATE, {
@@ -2011,7 +2011,7 @@ export const notifyRideAccepted = async (ride) => {
     otp: populatedRide.otp || '',
     vehicleIconType: populatedRide.vehicleIconType || '',
     vehicleIconUrl: populatedRide.vehicleIconUrl || '',
-    parcel: populatedRide.parcel || null,
+    parcel: withoutParcelSelfies(populatedRide.parcel?.toObject ? populatedRide.parcel.toObject() : populatedRide.parcel) || null,
     intercity: populatedRide.intercity || null,
     commissionAmount: populatedRide.commissionAmount,
     driverEarnings: populatedRide.driverEarnings,

@@ -1400,7 +1400,7 @@ const mergeParcelRecords = (mirror, authoritative) => {
 // (audience 'user', which is also what shared ride-room broadcasts use, since
 // the rider is in that room). Only the driver's own responses opt in.
 // The driver's pickup/drop face selfies are for admin review, like the accept selfie.
-const withoutParcelSelfies = (parcel) => {
+export const withoutParcelSelfies = (parcel) => {
   if (!parcel) return parcel;
   const { pickupSelfie, dropSelfie, ...rest } = typeof parcel.toObject === 'function' ? parcel.toObject() : parcel;
   return rest;
@@ -1663,6 +1663,7 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
       'estimatedDurationMinutes',
       'paymentMethod',
       'freeRide',
+      'cancellation',
       'goodsAdvance',
       'otp',
       'parcel',
@@ -1724,6 +1725,7 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
     estimatedDurationMinutes: ride.estimatedDurationMinutes || 0,
     paymentMethod: ride.paymentMethod,
     freeRide: { covered: Boolean(ride.freeRide?.covered) },
+    cancellation: serializeRideCancellation(ride),
     goodsAdvance: serializeGoodsAdvance(ride),
     remainingFare: getRemainingFare(ride),
     otp: ride.otp || '',
@@ -1731,7 +1733,10 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
     // the paid add-ons and the driver's proof photos onto it. The Delivery
     // mirror holds only the booking basics, so it fills gaps rather than
     // shadowing the richer copy.
-    parcel: mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel),
+    // The driver's pickup/drop selfies are admin-only: never in the rider's history.
+    parcel: role === 'user'
+      ? withoutParcelSelfies(mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel))
+      : mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel),
     intercity: ride.intercity || null,
     pricingSnapshot: ride.pricingSnapshot || null,
     commissionAmount: ride.commissionAmount,

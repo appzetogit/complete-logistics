@@ -312,3 +312,22 @@ test('C11: when free rides are on, /users/me carries maxFare and the goods quote
     await t.setSettings('free_rides', { enabled: '0' });
   }
 });
+
+test('C10: the rider history lists (GET /rides, GET /deliveries) never include the driver selfies', async () => {
+  const ctx = await setup();
+  const delivery = await bookGoods(ctx);
+  await payAdvance(ctx.rider, delivery.rideId);
+  await t.acceptRide(delivery.rideId, ctx.driver.driver._id);
+  await runToStep(ctx, delivery, [
+    { status: 'arriving' },
+    { status: 'goods_loaded', proofImageUrl: 'https://example.com/g.jpg', selfieImageUrl: 'https://example.com/hist-selfie.jpg' },
+  ]);
+
+  for (const path of ['/rides', '/deliveries']) {
+    const res = await t.api('GET', path, { token: ctx.rider.token });
+    assert.equal(res.status, 200, `${path}: ${res.text}`);
+    assert.equal(JSON.stringify(res.body).includes('hist-selfie'), false, `${path} leaks the selfie`);
+  }
+  const driverHistory = await t.api('GET', '/rides', { token: ctx.driver.token });
+  assert.ok(JSON.stringify(driverHistory.body).includes('hist-selfie'), 'the driver still sees their own');
+});
