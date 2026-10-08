@@ -476,9 +476,13 @@ const rideSchema = new mongoose.Schema(
       at: { type: Date, default: null },
       code: { type: String, default: '', trim: true },
       reason: { type: String, default: '', trim: true },
+      // The rider's cancellation fee decided for this cancel, and whether it was really debited.
       fee: { type: Number, default: 0, min: 0 },
+      feeCharged: { type: Boolean, default: false },
       feeStatus: { type: String, enum: ['none', 'charged', 'not_charged'], default: 'none' },
       feeGoesTo: { type: String, default: '', trim: true },
+      // A driver's own cancellation fee (scheduled ride), never charged to the rider.
+      driverFee: { type: Number, default: 0, min: 0 },
     },
     goodsAdvance: {
       percent: { type: Number, default: 0, min: 0 },

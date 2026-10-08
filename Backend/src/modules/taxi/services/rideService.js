@@ -35,16 +35,25 @@ const CANCEL_REASON_MAX = 300;
  * The `cancellation` block stored on a ride. `by`: user | driver | admin | system;
  * `code`: a stable machine-readable reason; `reason`: free text (the canceller's own words, or a default).
  */
-export const buildRideCancellation = ({ by, code, reason = '', fee = 0, feeStatus, feeGoesTo = '' }) => {
-  const safeFee = Math.max(0, Math.round(Number(fee || 0) * 100) / 100);
+const toMoney = (value) => Math.max(0, Math.round(Number(value || 0) * 100) / 100);
+
+/**
+ * `fee` is the RIDER's cancellation fee decided for this cancel; `feeCharged` says whether it was
+ * really debited (false when the wallet could not cover it). A driver's own fee goes in `driverFee`.
+ */
+export const buildRideCancellation = ({ by, code, reason = '', fee = 0, feeCharged, feeGoesTo = '', driverFee = 0 }) => {
+  const safeFee = toMoney(fee);
+  const charged = safeFee > 0 && (feeCharged === undefined ? true : Boolean(feeCharged));
   return {
     by,
     at: new Date(),
     code: String(code || '').trim(),
     reason: String(reason || '').trim().slice(0, CANCEL_REASON_MAX),
     fee: safeFee,
-    feeStatus: feeStatus || (safeFee > 0 ? 'charged' : 'none'),
-    feeGoesTo: safeFee > 0 ? String(feeGoesTo || '') : '',
+    feeCharged: charged,
+    feeStatus: safeFee <= 0 ? 'none' : (charged ? 'charged' : 'not_charged'),
+    feeGoesTo: charged ? String(feeGoesTo || '') : '',
+    driverFee: toMoney(driverFee),
   };
 };
 
@@ -59,8 +68,10 @@ export const serializeRideCancellation = (ride) => {
     code: value.code || '',
     reason: value.reason || '',
     fee: Number(value.fee || 0),
+    feeCharged: Boolean(value.feeCharged),
     feeStatus: value.feeStatus || 'none',
     feeGoesTo: value.feeGoesTo || '',
+    driverFee: Number(value.driverFee || 0),
   };
 };
 
@@ -86,9 +97,9 @@ const clearUserActiveRideIfPresent = async (user) => {
   activeRide.status = RIDE_STATUS.CANCELLED;
   activeRide.liveStatus = RIDE_LIVE_STATUS.CANCELLED;
   activeRide.cancellation = buildRideCancellation({
-    by: 'user',
+    by: 'system',
     code: 'replaced_by_new_booking',
-    reason: 'Replaced by a new booking',
+    reason: 'replaced_by_new_booking',
   });
   await activeRide.save();
   await syncDeliveryWithRide(activeRide);
@@ -1536,6 +1547,8 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
   arrivedAt: ride.arrivedAt,
   startedAt: ride.startedAt,
   completedAt: ride.completedAt,
+  createdAt: ride.createdAt || null,
+  updatedAt: ride.updatedAt || null,
   feedback: ride.feedback || null,
   lastDriverLocation: ride.lastDriverLocation?.coordinates?.length
     ? {
@@ -1663,6 +1676,7 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
       'estimatedDurationMinutes',
       'paymentMethod',
       'freeRide',
+      'subscriptionUsage',
       'cancellation',
       'goodsAdvance',
       'otp',
@@ -1725,6 +1739,9 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
     estimatedDurationMinutes: ride.estimatedDurationMinutes || 0,
     paymentMethod: ride.paymentMethod,
     freeRide: { covered: Boolean(ride.freeRide?.covered) },
+    subscriptionUsage: ride.subscriptionUsage?.covered
+      ? { covered: true, planId: ride.subscriptionUsage.planId ? String(ride.subscriptionUsage.planId) : '', planName: ride.subscriptionUsage.planName || '' }
+      : null,
     cancellation: serializeRideCancellation(ride),
     goodsAdvance: serializeGoodsAdvance(ride),
     remainingFare: getRemainingFare(ride),

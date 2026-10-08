@@ -266,8 +266,10 @@ Har cancelled ride ab batati hai **kisne**, **kab**, **kyun** cancel kiya aur **
   "code": "cancelled_by_user",
   "reason": "Driver too far away",
   "fee": 25,
+  "feeCharged": true,
   "feeStatus": "charged" | "not_charged" | "none",
-  "feeGoesTo": "admin" | "driver" | "user" | ""
+  "feeGoesTo": "admin" | "driver" | "",
+  "driverFee": 0
 }
 ```
 - Ride cancel nahi hui ho to **`cancellation: null`**. Purani (is change se pehle ki) cancelled rides me bhi `null` aa sakta hai –
@@ -278,7 +280,7 @@ Har cancelled ride ab batati hai **kisne**, **kab**, **kyun** cancel kiya aur **
 | `by` / `code` | Matlab | UI text (suggestion) |
 |---|---|---|
 | `user` / `cancelled_by_user` | Rider ne cancel kiya | "You cancelled" / driver app: "Rider cancelled" |
-| `user` / `replaced_by_new_booking` | Rider ne nayi booking ki | "Replaced by a new booking" |
+| `system` / `replaced_by_new_booking` | Rider ne nayi booking ki (`reason` bhi `replaced_by_new_booking`) | "Replaced by a new booking" |
 | `driver` / `cancelled_by_driver` | Driver ne scheduled ya bidding ride cancel ki | "Driver cancelled" |
 | `admin` / `cancelled_by_admin` | Support/admin ne cancel kiya | "Cancelled by support" |
 | `system` / `no_driver_found` | Koi driver nahi mila | "No driver found" |
@@ -287,7 +289,12 @@ Har cancelled ride ab batati hai **kisne**, **kab**, **kyun** cancel kiya aur **
 - Normal ride par driver cancel kare to ride **cancel nahi hoti** (dobara driver dhundhti hai) – us par `cancellation` nahi aata.
 - **Cancel reason bhejna (User app):** `PATCH /rides/:id/cancel` body `{ "reason": "…" }` (optional, max 300 chars).
   Cancel dialog me reason list/text do. Na bhejo to `"Cancelled by rider"`.
-- **Fee:** `fee > 0` -> "Cancellation fee ₹{fee}". `feeStatus: "not_charged"` -> fee lagni thi par wallet me paisa kam tha (kuch nahi kata).
+- **Fee:** `fee` = rider ki cancellation fee jo is cancel par lagi. `feeCharged: true` -> "Cancellation fee ₹{fee}" /
+  "Total charged ₹{fee}". `feeCharged: false` -> kuch nahi kata ("Nothing was charged"; `fee > 0` ho to wallet me paisa kam tha).
+  Driver/admin/system cancel par `fee` hamesha `0`; driver ki apni fee `driverFee` me (rider ko nahi lagti).
+- **Advance:** `goodsAdvance.provider` (`wallet`/`razorpay`) aur `paidAt` ab har payload me – "Advance paid ₹54 · Online · 03:46 PM";
+  `status: forfeited` -> "Advance ₹54 · Not refunded", `refunded` -> "Refunded to your wallet".
+- History (`GET /rides`) me ab `subscriptionUsage { covered, planName }`, `createdAt`, `updatedAt` bhi.
   Driver app me `feeGoesTo == "driver"` ho to "₹{fee} cancellation fee aapke wallet me aayi".
 - Cancel se **pehle** fee dikhane ke liye `GET /rides/:id/cancel-preview` (section 12).
 

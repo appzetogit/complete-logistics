@@ -6095,7 +6095,7 @@ const toAdminRideRow = (ride) => {
       vehicleNumber: ride.driverId.vehicleNumber || '',
     } : null,
     cancellation: ride.cancellation?.by
-      ? { by: ride.cancellation.by, at: ride.cancellation.at || null, code: ride.cancellation.code || '', reason: ride.cancellation.reason || '', fee: Number(ride.cancellation.fee || 0), feeStatus: ride.cancellation.feeStatus || 'none' }
+      ? { by: ride.cancellation.by, at: ride.cancellation.at || null, code: ride.cancellation.code || '', reason: ride.cancellation.reason || '', fee: Number(ride.cancellation.fee || 0), feeCharged: Boolean(ride.cancellation.feeCharged), feeStatus: ride.cancellation.feeStatus || 'none' }
       : null,
     acceptSelfieUrl: ride.acceptSelfie?.imageUrl || '',
     acceptSelfieAt: ride.acceptSelfie?.capturedAt || null,
@@ -6147,7 +6147,7 @@ const toAdminDeliveryRow = (ride) => {
       receiverName: parcel.receiverName || '',
     },
     cancellation: ride.cancellation?.by
-      ? { by: ride.cancellation.by, at: ride.cancellation.at || null, code: ride.cancellation.code || '', reason: ride.cancellation.reason || '', fee: Number(ride.cancellation.fee || 0), feeStatus: ride.cancellation.feeStatus || 'none' }
+      ? { by: ride.cancellation.by, at: ride.cancellation.at || null, code: ride.cancellation.code || '', reason: ride.cancellation.reason || '', fee: Number(ride.cancellation.fee || 0), feeCharged: Boolean(ride.cancellation.feeCharged), feeStatus: ride.cancellation.feeStatus || 'none' }
       : null,
     acceptSelfieUrl: ride.acceptSelfie?.imageUrl || '',
     acceptSelfieAt: ride.acceptSelfie?.capturedAt || null,

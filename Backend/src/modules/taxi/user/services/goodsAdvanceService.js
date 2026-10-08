@@ -112,6 +112,12 @@ export const serializeGoodsAdvance = (ride) => ({
   percent: Number(ride?.goodsAdvance?.percent || 0),
   amount: Number(ride?.goodsAdvance?.amount || 0),
   status: ride?.goodsAdvance?.status || 'none',
+  // "Advance paid ₹54 · Online · 03:46 PM": how and when it was paid, and what happened to it.
+  provider: ride?.goodsAdvance?.provider || '',
+  paidAt: ride?.goodsAdvance?.paidAt || null,
+  refundDestination: ride?.goodsAdvance?.refundDestination || '',
+  refundedAt: ride?.goodsAdvance?.refundedAt || null,
+  forfeitedAt: ride?.goodsAdvance?.forfeitedAt || null,
 });
 
 // ---------------------------------------------------------------- Razorpay

@@ -1171,9 +1171,9 @@ export const cancelRideByUser = async ({ rideId, userId, reason = '' }) => {
       by: 'user',
       code: 'cancelled_by_user',
       reason: reason || 'Cancelled by rider',
-      fee: userFeeCharged ? cancellationSettlement.feeAmount : 0,
-      // A fee was due but the rider's wallet could not cover it.
-      feeStatus: Number(cancellationSettlement?.feeAmount || 0) > 0 && !userFeeCharged ? 'not_charged' : undefined,
+      // The fee decided for this cancel; feeCharged is false when the wallet could not cover it.
+      fee: cancellationSettlement?.feeAmount || 0,
+      feeCharged: userFeeCharged,
       // 'driver' only when the driver's wallet really received it; otherwise the platform kept it.
       feeGoesTo: ['applied', 'existing'].includes(cancellationSettlement?.driverCreditStatus) ? 'driver' : 'admin',
     });
@@ -1311,8 +1311,9 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
       by: 'driver',
       code: 'cancelled_by_driver',
       reason: 'Driver cancelled the scheduled ride',
-      fee: cancellationSettlement?.feeAmount || 0,
-      feeGoesTo: Number(cancellationSettlement?.feeAmount || 0) > 0 ? 'user' : '',
+      // The rider pays nothing when the driver cancels; the driver's own fee is recorded separately.
+      fee: 0,
+      driverFee: cancellationSettlement?.feeAmount || 0,
     });
     await ride.save({ session });
 

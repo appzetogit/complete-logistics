@@ -44,6 +44,7 @@ test('rider cancel: by user, their reason, the fee actually charged; returned by
   assert.equal(block.reason, 'Driver too far away');
   assert.equal(block.fee, 25);
   assert.equal(block.feeStatus, 'charged');
+  assert.equal(block.feeCharged, true);
   assert.equal(block.feeGoesTo, 'admin');
   assert.ok(block.at && Date.now() - new Date(block.at).getTime() < 60_000);
 
@@ -63,8 +64,10 @@ test('rider cancel with no wallet balance: fee was due but not charged', async (
 
   const cancel = await t.api('PATCH', `/rides/${rideId}/cancel`, { token: rider.token });
   assert.equal(cancel.status, 200, cancel.text);
-  assert.equal(cancel.body.data.cancellation.fee, 0);
+  assert.equal(cancel.body.data.cancellation.fee, 25, 'the fee decided for this cancel');
+  assert.equal(cancel.body.data.cancellation.feeCharged, false, 'but nothing was debited');
   assert.equal(cancel.body.data.cancellation.feeStatus, 'not_charged');
+  assert.equal(cancel.body.data.cancellation.feeGoesTo, '');
   assert.equal(cancel.body.data.cancellation.reason, 'Cancelled by rider', 'default reason');
 });
 
@@ -103,8 +106,9 @@ test('driver cancels an upcoming scheduled ride: by driver, with the driver fee'
   const ride = await loadRide(rideId);
   assert.equal(ride.cancellation.by, 'driver');
   assert.equal(ride.cancellation.code, 'cancelled_by_driver');
-  assert.equal(ride.cancellation.fee, 40);
-  assert.equal(ride.cancellation.feeGoesTo, 'user');
+  assert.equal(ride.cancellation.fee, 0, 'the rider pays nothing when the driver cancels');
+  assert.equal(ride.cancellation.feeCharged, false);
+  assert.equal(ride.cancellation.driverFee, 40, 'the driver fee is recorded separately');
 
   const riderView = await t.api('GET', `/rides/${rideId}`, { token: rider.token });
   assert.equal(riderView.body.data.cancellation.by, 'driver');
@@ -172,14 +176,15 @@ test('system cancels: no driver found, and goods advance not paid in time', asyn
   assert.equal(expired.cancellation.code, 'advance_not_paid');
 });
 
-test('a new booking replacing an open one: the old one is cancelled by user with code replaced_by_new_booking', async () => {
+test('a new booking replacing an open one: the old one is cancelled by system with reason replaced_by_new_booking', async () => {
   const vehicle = await t.factories.vehicle();
   const rider = await t.factories.user();
   const first = await bookTaxi(rider, vehicle);
   await bookTaxi(rider, vehicle);
   const old = await loadRide(first);
   assert.equal(old.status, 'cancelled');
-  assert.equal(old.cancellation.by, 'user');
+  assert.equal(old.cancellation.by, 'system');
+  assert.equal(old.cancellation.reason, 'replaced_by_new_booking');
   assert.equal(old.cancellation.code, 'replaced_by_new_booking');
 });
 
@@ -239,4 +244,44 @@ test('feeGoesTo is "driver" only when the driver really received the rider\'s ca
   const cancel2 = await t.api('PATCH', `/rides/${searching}/cancel`, { token: rider2.token });
   assert.equal(cancel2.body.data.cancellation.fee, 30);
   assert.equal(cancel2.body.data.cancellation.feeGoesTo, 'admin');
+});
+
+test('payload extras the app reads: goodsAdvance provider/paidAt, history subscriptionUsage, ride:state timestamps', async () => {
+  // goods advance paid from the wallet, then the rider cancels: forfeited, provider + paidAt kept
+  const vehicle = await t.factories.vehicle();
+  const rider = await t.factories.user();
+  await t.factories.wallet(rider.user._id, 2000);
+  const booked = await t.api('POST', '/deliveries', {
+    token: rider.token,
+    body: { pickup: t.locations.pickup, drop: t.locations.drop, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash', parcel: { category: 'Documents', senderName: 'S', receiverName: 'R' } },
+  });
+  const rideId = booked.body.data.rideId;
+  const paid = await t.api('POST', '/deliveries/advance/wallet', { token: rider.token, body: { rideId } });
+  assert.equal(paid.body.data.goodsAdvance.provider, 'wallet');
+  assert.ok(paid.body.data.goodsAdvance.paidAt);
+
+  const cancel = await t.api('PATCH', `/rides/${rideId}/cancel`, { token: rider.token, body: { reason: 'Changed my mind' } });
+  assert.equal(cancel.body.data.cancellation.by, 'user');
+  const detail = await t.api('GET', `/rides/${rideId}`, { token: rider.token });
+  assert.equal(detail.body.data.goodsAdvance.status, 'forfeited');
+  const history = await t.api('GET', '/rides', { token: rider.token });
+  const item = history.body.data.results.find((entry) => entry.rideId === String(rideId));
+  assert.equal(item.goodsAdvance.status, 'forfeited');
+  assert.equal(item.goodsAdvance.provider, 'wallet');
+  assert.ok(item.goodsAdvance.paidAt && item.goodsAdvance.forfeitedAt);
+  assert.equal(item.cancellation.reason, 'Changed my mind');
+  assert.ok(item.createdAt && item.updatedAt);
+
+  // ride:state (serializeRideRealtime) carries cancellation + timestamps
+  const { serializeRideRealtime } = t.rideService;
+  const state = serializeRideRealtime(await t.m.Ride.findById(rideId));
+  assert.equal(state.cancellation.by, 'user');
+  assert.ok(state.createdAt && state.updatedAt);
+  assert.equal(state.goodsAdvance.provider, 'wallet');
+
+  // subscriptionUsage in the history list
+  await t.m.Ride.updateOne({ _id: rideId }, { $set: { 'subscriptionUsage.covered': true, 'subscriptionUsage.planName': 'Bike pass' } });
+  const again = await t.api('GET', '/rides', { token: rider.token });
+  const covered = again.body.data.results.find((entry) => entry.rideId === String(rideId));
+  assert.deepEqual({ covered: covered.subscriptionUsage.covered, planName: covered.subscriptionUsage.planName }, { covered: true, planName: 'Bike pass' });
 });
