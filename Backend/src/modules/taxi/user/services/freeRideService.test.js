@@ -126,10 +126,10 @@ test('a failed counter update rolls the flag back so a retry can succeed', async
 test('summary shape for the apps', () => {
   assert.deepEqual(
     buildFreeRidesSummary({ settings: { enabled: false, limit: 3 }, used: 0 }),
-    { enabled: false, limit: 3, used: 0, left: 3 },
+    { enabled: false, limit: 3, used: 0, left: 3, maxFare: 0 },
   );
   assert.deepEqual(
-    buildFreeRidesSummary({ settings: { enabled: true, limit: 3 }, used: 5 }),
-    { enabled: true, limit: 3, used: 5, left: 0 },
+    buildFreeRidesSummary({ settings: { enabled: true, limit: 3, maxFare: 500 }, used: 5 }),
+    { enabled: true, limit: 3, used: 5, left: 0, maxFare: 500 },
   );
 });

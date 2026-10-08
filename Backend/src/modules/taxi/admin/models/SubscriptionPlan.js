@@ -13,6 +13,8 @@ const subscriptionPlanSchema = new mongoose.Schema({
   duration: Number, // in days
   transport_type: String,
   vehicle_type_id: { type: mongoose.Schema.Types.ObjectId, ref: 'TaxiVehicle' },
+  // Every vehicle type the plan covers (e.g. "bike" = several bike types). `vehicle_type_id` stays the first one.
+  vehicle_type_ids: { type: [mongoose.Schema.Types.ObjectId], ref: 'TaxiVehicle', default: [] },
   benefit_type: {
     type: String,
     enum: ['standard', 'limited', 'unlimited'],

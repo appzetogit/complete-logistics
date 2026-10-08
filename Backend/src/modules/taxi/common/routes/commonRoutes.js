@@ -1,10 +1,16 @@
 import { Router } from 'express';
 import * as commonController from '../controllers/commonController.js';
+import { authenticate } from '../../middlewares/authMiddleware.js';
 
 export const commonRouter = Router();
 
 // Universal image upload endpoint
-commonRouter.post('/common/upload/image', commonController.uploadImage);
+// Any signed-in account (apps, admin panel). Pending drivers may upload their documents.
+commonRouter.post(
+  '/common/upload/image',
+  authenticate(['user', 'driver', 'admin', 'owner', 'pooling_driver', 'bus_driver', 'service_center', 'service_center_staff'], { allowPending: true }),
+  commonController.uploadImage,
+);
 commonRouter.get('/common/referrals/translation', commonController.getReferralTranslation);
 commonRouter.get('/common/referrals/settings', commonController.getReferralSettingsContent);
 commonRouter.get('/common/payment-gateway', commonController.getPaymentGatewayConfig);

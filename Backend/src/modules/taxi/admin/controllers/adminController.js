@@ -581,6 +581,12 @@ export const getCustomerSubscriptionPlans = asyncHandler(async (_req, res) =>
 export const createCustomerSubscriptionPlan = asyncHandler(async (req, res) =>
   ok(res, await adminService.createCustomerSubscriptionPlan(req.body)),
 );
+export const updateCustomerSubscriptionPlan = asyncHandler(async (req, res) =>
+  ok(res, await adminService.updateCustomerSubscriptionPlan(req.params.id, req.body)),
+);
+export const deleteCustomerSubscriptionPlan = asyncHandler(async (req, res) =>
+  ok(res, await adminService.deleteCustomerSubscriptionPlan(req.params.id)),
+);
 export const getUserSubscriptions = asyncHandler(async (req, res) =>
   ok(res, await adminService.listUserSubscriptionsByUserId(req.params.id)),
 );

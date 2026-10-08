@@ -61,6 +61,8 @@ export const buildFreeRidesSummary = ({ settings, used = 0 }) => {
     limit,
     used: safeUsed,
     left: Math.max(0, limit - safeUsed),
+    // A ride whose fare is above this is NOT free (0 = no cap).
+    maxFare: Math.max(0, Number(settings?.maxFare || 0)),
   };
 };
 

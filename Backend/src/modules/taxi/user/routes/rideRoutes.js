@@ -10,6 +10,7 @@ import {
   acceptRideBid,
   createRazorpayRideCompletionOrder,
   cancelRide,
+  getRideCancelPreview,
   driverCancelRide,
   createRazorpayRideTipOrder,
   createRide,
@@ -35,6 +36,7 @@ rideRouter.get('/', authenticate(['user', 'driver']), asyncHandler(listMyRides))
 rideRouter.get('/app-settings/tip', asyncHandler(getRideAppTipSettings));
 rideRouter.get('/available-drivers', availableDriversRateLimit, asyncHandler(listAvailableDrivers));
 rideRouter.get('/active/me', authenticate(['user', 'driver']), asyncHandler(getMyActiveRide));
+rideRouter.get('/:rideId/cancel-preview', authenticate(['user']), asyncHandler(getRideCancelPreview));
 rideRouter.patch('/:rideId/cancel', authenticate(['user']), asyncHandler(cancelRide));
 rideRouter.get('/:rideId/bids', authenticate(['user']), asyncHandler(getRideBids));
 rideRouter.patch('/:rideId/bids/ceiling', authenticate(['user']), asyncHandler(updateRideBidCeiling));

@@ -8,7 +8,7 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "test": "node --test \"src/**/*.test.js\"",
-    "test:integration": "node --test --test-force-exit \"test/integration/*.test.js\""
+    "test:integration": "node --test --test-force-exit --test-concurrency=4 \"test/integration/*.test.js\""
   },
   "dependencies": {
     "@phonepe-pg/pg-sdk-node": "^2.0.6",

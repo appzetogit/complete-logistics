@@ -350,9 +350,11 @@ export const matchDrivers = async (pickupCoords, options = {}) => {
 
   const zone = await findZoneByPickup(coordinates, { serviceLocationId });
   const zoneBoundaryCapMeters = zone ? getZoneBoundaryCapMeters(zone, coordinates) : null;
-  const effectiveMaxDistance = Number.isFinite(zoneBoundaryCapMeters) && zoneBoundaryCapMeters >= 0
-    ? Math.min(Math.max(1, Math.round(maxDistance)), Math.max(1, zoneBoundaryCapMeters))
-    : Math.max(1, Math.round(maxDistance));
+  // The search radius is NOT capped to the pickup's distance from the zone edge: a pickup near a
+  // border would otherwise search only a few hundred metres on every attempt, defeating the growing
+  // radius and the cross-zone fallback. Zone membership is still enforced per driver
+  // (isDriverWithinMatchedZone); the boundary distance is only reported.
+  const effectiveMaxDistance = Math.max(1, Math.round(maxDistance));
 
   let drivers = await findDriversForZone({
     zoneId: zone?._id || null,

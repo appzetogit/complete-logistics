@@ -111,8 +111,9 @@ export const env = {
       : 20,
   },
   uploads: {
-    // Absolute path nginx serves at /uploads/ (see sites-enabled/udanxpress.conf).
-    dir: process.env.UPLOAD_DIR || '/var/www/uploads',
+    // ONE folder for every upload path (this store and utils/cloudinaryUpload.js) and for the
+    // /uploads static route / nginx alias. Previously the two stores defaulted to different folders.
+    dir: path.resolve(__dirname, '../..', process.env.UPLOAD_DIR || process.env.UPLOAD_PATH || 'uploads'),
     // Absolute so mobile clients can use the URL without knowing the API host.
     publicBaseUrl: `${(process.env.PUBLIC_BACKEND_URL || process.env.BACKEND_URL || '').replace(/\/+$/, '')}/uploads`,
   },

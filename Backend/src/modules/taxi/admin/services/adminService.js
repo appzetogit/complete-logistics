@@ -5735,13 +5735,29 @@ export const createSubscriptionPlan = async (payload) => {
 export const listCustomerSubscriptionPlans = async () =>
   SubscriptionPlan.find({ audience: 'user' }).sort({ createdAt: -1 }).populate('vehicle_type_id').lean();
 
+// A customer plan covers one or more vehicle types: `vehicle_type_ids` (list) or the older single
+// `vehicle_type_id`. The first id stays in `vehicle_type_id` for older readers.
+const resolvePlanVehicleTypeIds = (payload = {}) => {
+  const ids = [
+    ...(Array.isArray(payload.vehicle_type_ids) ? payload.vehicle_type_ids : []),
+    payload.vehicle_type_id,
+  ]
+    .map((value) => String(value?._id || value || '').trim())
+    .filter(Boolean);
+  const unique = [...new Set(ids)];
+
+  if (!unique.length || unique.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+    throw new ApiError(400, 'Valid vehicle type is required');
+  }
+
+  return unique;
+};
+
 export const createCustomerSubscriptionPlan = async (payload = {}) => {
   if (!String(payload?.name || '').trim()) {
     throw new ApiError(400, 'Subscription name is required');
   }
-  if (!payload?.vehicle_type_id || !mongoose.Types.ObjectId.isValid(payload.vehicle_type_id)) {
-    throw new ApiError(400, 'Valid vehicle type is required');
-  }
+  const vehicleTypeIds = resolvePlanVehicleTypeIds(payload);
 
   const benefitType = String(payload.benefit_type || '').trim().toLowerCase() === 'unlimited'
     ? 'unlimited'
@@ -5750,6 +5766,8 @@ export const createCustomerSubscriptionPlan = async (payload = {}) => {
   const plan = await SubscriptionPlan.create({
     ...payload,
     audience: 'user',
+    vehicle_type_id: vehicleTypeIds[0],
+    vehicle_type_ids: vehicleTypeIds,
     amount: Number(payload.amount || 0),
     duration: Math.max(1, Number(payload.duration || 0)),
     benefit_type: benefitType,
@@ -5757,6 +5775,69 @@ export const createCustomerSubscriptionPlan = async (payload = {}) => {
     active: payload.active !== undefined ? Boolean(payload.active) : true,
   });
   return plan.toObject();
+};
+
+// Plans already bought keep the terms they were bought with (they hold their own copy), so editing
+// a plan only affects future purchases.
+export const updateCustomerSubscriptionPlan = async (planId, payload = {}) => {
+  const plan = await SubscriptionPlan.findOne({ _id: planId, audience: 'user' });
+  if (!plan) {
+    throw new ApiError(404, 'Subscription plan not found');
+  }
+
+  if (payload.name !== undefined) {
+    if (!String(payload.name || '').trim()) {
+      throw new ApiError(400, 'Subscription name is required');
+    }
+    plan.name = String(payload.name).trim();
+  }
+  if (payload.description !== undefined) plan.description = String(payload.description || '');
+  if (payload.how_it_works !== undefined) plan.how_it_works = String(payload.how_it_works || '');
+  if (payload.transport_type !== undefined) plan.transport_type = String(payload.transport_type || '');
+  if (payload.amount !== undefined) {
+    const amount = Number(payload.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new ApiError(400, 'Subscription amount must be greater than zero');
+    }
+    plan.amount = amount;
+  }
+  if (payload.duration !== undefined) plan.duration = Math.max(1, Number(payload.duration || 0));
+
+  if (payload.benefit_type !== undefined || payload.ride_limit !== undefined) {
+    const benefitType = String(payload.benefit_type ?? plan.benefit_type).trim().toLowerCase() === 'unlimited'
+      ? 'unlimited'
+      : 'limited';
+    plan.benefit_type = benefitType;
+    plan.ride_limit = benefitType === 'unlimited'
+      ? 0
+      : Math.max(1, Number(payload.ride_limit ?? plan.ride_limit ?? 0));
+  }
+
+  if (payload.vehicle_type_ids !== undefined || payload.vehicle_type_id !== undefined) {
+    const vehicleTypeIds = resolvePlanVehicleTypeIds(payload);
+    plan.vehicle_type_id = vehicleTypeIds[0];
+    plan.vehicle_type_ids = vehicleTypeIds;
+  }
+
+  if (payload.active !== undefined) plan.active = Boolean(payload.active);
+
+  await plan.save();
+  return plan.toObject();
+};
+
+export const deleteCustomerSubscriptionPlan = async (planId) => {
+  const plan = await SubscriptionPlan.findOne({ _id: planId, audience: 'user' });
+  if (!plan) {
+    throw new ApiError(404, 'Subscription plan not found');
+  }
+
+  // Bought plans point at this one; deleting it would orphan them. Deactivate instead.
+  if (await UserSubscription.exists({ planId: plan._id })) {
+    throw new ApiError(409, 'This plan has been purchased by customers. Deactivate it instead of deleting it.');
+  }
+
+  await plan.deleteOne();
+  return { id: String(plan._id), deleted: true };
 };
 
 export const listUserSubscriptionsByUserId = async (userId) => {
@@ -6015,6 +6096,10 @@ const toAdminRideRow = (ride) => {
     } : null,
     acceptSelfieUrl: ride.acceptSelfie?.imageUrl || '',
     acceptSelfieAt: ride.acceptSelfie?.capturedAt || null,
+    pickupSelfieUrl: ride.parcel?.pickupSelfie?.imageUrl || '',
+    pickupSelfieAt: ride.parcel?.pickupSelfie?.capturedAt || null,
+    dropSelfieUrl: ride.parcel?.dropSelfie?.imageUrl || '',
+    dropSelfieAt: ride.parcel?.dropSelfie?.capturedAt || null,
   };
 };
 
@@ -6060,6 +6145,10 @@ const toAdminDeliveryRow = (ride) => {
     },
     acceptSelfieUrl: ride.acceptSelfie?.imageUrl || '',
     acceptSelfieAt: ride.acceptSelfie?.capturedAt || null,
+    pickupSelfieUrl: ride.parcel?.pickupSelfie?.imageUrl || '',
+    pickupSelfieAt: ride.parcel?.pickupSelfie?.capturedAt || null,
+    dropSelfieUrl: ride.parcel?.dropSelfie?.imageUrl || '',
+    dropSelfieAt: ride.parcel?.dropSelfie?.capturedAt || null,
   };
 };
 

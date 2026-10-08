@@ -6,6 +6,9 @@ import { startDispatchFlow } from '../../services/dispatchService.js';
 import { computeGoodsAdvance, getAdvanceOptions, getGoodsAdvanceConfig } from './goodsAdvanceService.js';
 import { resolveDeliveryPricing } from '../../services/deliveryPricingService.js';
 import { Delivery } from '../models/Delivery.js';
+import { User } from '../models/User.js';
+import { resolveFreeRideForNewRide } from './freeRideService.js';
+import { resolveApplicableUserSubscription } from './subscriptionService.js';
 import {
   createRideRecord,
   ensureRideParticipantAccess,
@@ -247,6 +250,7 @@ export const quoteDeliveryFare = async ({
   loadHeightKey,
   extraKeys,
   parcel,
+  userId,
 }) => {
   if (!vehicleTypeId) {
     throw new ApiError(400, 'vehicleTypeId is required');
@@ -275,6 +279,19 @@ export const quoteDeliveryFare = async ({
   const advanceConfig = await getGoodsAdvanceConfig();
   const advance = computeGoodsAdvance({ fare: breakdown.total, percent: advanceConfig.percent });
 
+  // A free ride or an active subscription covers the whole booking: the rider pays nothing and no
+  // advance is taken (the booking waives it the same way), so the quote must say so.
+  let coveredBy = null;
+  if (userId && breakdown.total > 0) {
+    const user = await User.findById(userId).select('freeRidesUsed').lean();
+    const freeRide = user ? await resolveFreeRideForNewRide({ user, fare: breakdown.total }) : { covered: false };
+    if (freeRide.covered) {
+      coveredBy = 'free_ride';
+    } else if (await resolveApplicableUserSubscription({ userId, vehicleTypeId: String(vehicle._id) })) {
+      coveredBy = 'subscription';
+    }
+  }
+
   return {
     vehicleTypeId: String(vehicle._id),
     vehicleName: vehicle.name || '',
@@ -283,10 +300,13 @@ export const quoteDeliveryFare = async ({
     // vehicle type's legacy values when no delivery Set Price exists yet.
     pricingSource: resolvedPricing.source,
     setPriceId: resolvedPricing.setPriceId,
-    advancePercent: advance.percent,
-    advanceAmount: advance.amount,
-    remainingAmount: advance.remainingAmount,
-    advanceOptions: getAdvanceOptions(advanceConfig),
+    coveredBy,
+    freeRide: { covered: coveredBy === 'free_ride' },
+    subscriptionCovered: coveredBy === 'subscription',
+    advancePercent: coveredBy ? 0 : advance.percent,
+    advanceAmount: coveredBy ? 0 : advance.amount,
+    remainingAmount: coveredBy ? 0 : advance.remainingAmount,
+    advanceOptions: coveredBy ? [] : getAdvanceOptions(advanceConfig),
   };
 };
 

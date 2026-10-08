@@ -41,9 +41,11 @@ import {
   normalizeEmployeeCode,
 } from '../../admin/services/employeeAttributionService.js';
 import {
+  createSubscriptionRazorpayOrder,
   getUserSubscriptionSummary,
   listCustomerSubscriptionPlans,
   purchaseUserSubscription,
+  verifySubscriptionRazorpayPayment,
 } from '../services/subscriptionService.js';
 import {
   buildPaymentRequestContext,
@@ -2020,6 +2022,25 @@ export const getMySubscriptions = async (req, res) => {
   res.json({
     success: true,
     data: summary,
+  });
+};
+
+export const createSubscriptionRazorpayOrderRequest = async (req, res) => {
+  const data = await createSubscriptionRazorpayOrder({ userId: req.auth?.sub, planId: req.body?.planId });
+  res.status(201).json({ success: true, data });
+};
+
+export const verifySubscriptionRazorpayPaymentRequest = async (req, res) => {
+  const result = await verifySubscriptionRazorpayPayment({
+    userId: req.auth?.sub,
+    orderId: String(req.body?.razorpay_order_id || ''),
+    paymentId: String(req.body?.razorpay_payment_id || ''),
+    signature: String(req.body?.razorpay_signature || ''),
+  });
+  res.status(result.alreadyPurchased ? 200 : 201).json({
+    success: true,
+    data: result,
+    message: 'Subscription purchased successfully',
   });
 };
 

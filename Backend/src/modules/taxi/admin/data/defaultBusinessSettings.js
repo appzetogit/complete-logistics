@@ -74,6 +74,8 @@ export const createDefaultBusinessSettings = () => ({
     goods_advance_refund_to: 'refund_wallet',
     // Riders may choose to pay the full fare up front instead of the default advance share.
     goods_advance_allow_full: 'true',
+    // 1 = the driver must also take a face selfie at goods pickup and delivery (turn on once the driver app ships it).
+    goods_selfie_required: '0',
     trip_dispatch_type: '1',
     maximum_time_for_accept_reject_bidding_ride: '60',
     maximum_time_for_find_drivers_for_bitting_ride: '300',

@@ -3,6 +3,10 @@ import { ApiError } from '../../../../utils/ApiError.js';
 import { SubscriptionPlan } from '../../admin/models/SubscriptionPlan.js';
 import { UserWallet } from '../models/UserWallet.js';
 import { UserSubscription } from '../models/UserSubscription.js';
+import { Ride } from '../models/Ride.js';
+import { RIDE_STATUS } from '../../constants/index.js';
+import { razorpayRequest, resolveRazorpayCredentials, signaturesMatch } from '../../services/razorpayClient.js';
+import crypto from 'node:crypto';
 
 const roundMoney = (value) => Math.round(Number(value || 0) * 100) / 100;
 
@@ -60,6 +64,17 @@ const buildSubscriptionMetrics = (subscription = {}) => {
   };
 };
 
+// Every vehicle type a plan / subscription covers, as strings (the first one is `vehicle_type_id`).
+const collectVehicleTypeIds = (record = {}) => {
+  const ids = [
+    ...(Array.isArray(record.vehicle_type_ids) ? record.vehicle_type_ids : []),
+    record.vehicle_type_id,
+  ]
+    .map((value) => (value?._id ? String(value._id) : value ? String(value) : ''))
+    .filter(Boolean);
+  return [...new Set(ids)];
+};
+
 export const serializeSubscriptionPlan = (plan = {}) => ({
   id: String(plan._id || plan.id || ''),
   name: String(plan.name || '').trim(),
@@ -74,6 +89,7 @@ export const serializeSubscriptionPlan = (plan = {}) => ({
         name: String(plan.vehicle_type_id.name || '').trim(),
       }
     : null,
+  vehicle_type_ids: collectVehicleTypeIds(plan),
   benefit_type: normalizeBenefitType(plan.benefit_type),
   ride_limit: Math.max(0, Number(plan.ride_limit || 0)),
   how_it_works: String(plan.how_it_works || '').trim(),
@@ -110,6 +126,7 @@ export const serializeUserSubscription = (subscription = {}) => {
             name: String(subscription.planId.vehicle_type_id.name || '').trim(),
           }
         : null,
+    vehicle_type_ids: collectVehicleTypeIds(subscription.vehicle_type_ids?.length ? subscription : { ...subscription, vehicle_type_ids: collectVehicleTypeIds(subscription.planId || {}) }),
     benefit_type: metrics.benefitType,
     ride_limit: metrics.rideLimit,
     rides_used: metrics.ridesUsed,
@@ -170,16 +187,47 @@ export const getUserSubscriptionSummary = async (userId) => {
   };
 };
 
-export const purchaseUserSubscription = async ({ userId, planId, paymentSource = 'wallet' }) => {
+const buildSubscriptionDoc = ({ userId, plan, amount, paymentSource, now = new Date(), extra = {} }) => {
+  const durationDays = Math.max(0, Number(plan.duration || 0));
+  const benefitType = normalizeBenefitType(plan.benefit_type);
+  const rideLimit = benefitType === 'unlimited'
+    ? 0
+    : Math.max(1, Number(plan.ride_limit || 0));
+  const expiresAt = durationDays > 0
+    ? new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000)
+    : null;
+  const vehicleTypeIds = collectVehicleTypeIds(plan);
+
+  return {
+    userId,
+    planId: plan._id,
+    name: plan.name || '',
+    description: plan.description || '',
+    amount,
+    durationDays,
+    transport_type: plan.transport_type || 'taxi',
+    vehicle_type_id: plan.vehicle_type_id?._id || plan.vehicle_type_id || vehicleTypeIds[0] || null,
+    vehicle_type_ids: vehicleTypeIds,
+    benefit_type: benefitType,
+    ride_limit: rideLimit,
+    rides_used: 0,
+    status: 'active',
+    active: true,
+    purchaseSource: paymentSource,
+    purchasedAt: now,
+    startedAt: now,
+    expiresAt,
+    ...extra,
+  };
+};
+
+const loadPurchasablePlan = async (planId) => {
   if (!mongoose.Types.ObjectId.isValid(planId)) {
     throw new ApiError(400, 'Valid subscription plan id is required');
   }
 
-  const plan = await SubscriptionPlan.findOne({
-    _id: planId,
-    audience: 'user',
-    active: true,
-  }).populate('vehicle_type_id', 'name');
+  const plan = await SubscriptionPlan.findOne({ _id: planId, audience: 'user', active: true })
+    .populate('vehicle_type_id', 'name');
 
   if (!plan) {
     throw new ApiError(404, 'Subscription plan not found');
@@ -189,6 +237,12 @@ export const purchaseUserSubscription = async ({ userId, planId, paymentSource =
   if (amount <= 0) {
     throw new ApiError(400, 'Subscription plan amount must be greater than zero');
   }
+
+  return { plan, amount };
+};
+
+export const purchaseUserSubscription = async ({ userId, planId, paymentSource = 'wallet' }) => {
+  const { plan, amount } = await loadPurchasablePlan(planId);
 
   await UserWallet.updateOne(
     { userId },
@@ -205,14 +259,6 @@ export const purchaseUserSubscription = async ({ userId, planId, paymentSource =
   }
 
   const now = new Date();
-  const durationDays = Math.max(0, Number(plan.duration || 0));
-  const benefitType = normalizeBenefitType(plan.benefit_type);
-  const rideLimit = benefitType === 'unlimited'
-    ? 0
-    : Math.max(1, Number(plan.ride_limit || 0));
-  const expiresAt = durationDays > 0
-    ? new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000)
-    : null;
 
   wallet.balance = roundMoney(Number(wallet.balance || 0) - amount);
   wallet.transactions.push({
@@ -224,25 +270,13 @@ export const purchaseUserSubscription = async ({ userId, planId, paymentSource =
   });
   wallet.transactions = wallet.transactions.slice(-50);
 
-  const subscription = new UserSubscription({
+  const subscription = new UserSubscription(buildSubscriptionDoc({
     userId,
-    planId: plan._id,
-    name: plan.name || '',
-    description: plan.description || '',
+    plan,
     amount,
-    durationDays,
-    transport_type: plan.transport_type || 'taxi',
-    vehicle_type_id: plan.vehicle_type_id?._id || plan.vehicle_type_id || null,
-    benefit_type: benefitType,
-    ride_limit: rideLimit,
-    rides_used: 0,
-    status: 'active',
-    active: true,
-    purchaseSource: paymentSource === 'admin' ? 'admin' : 'wallet',
-    purchasedAt: now,
-    startedAt: now,
-    expiresAt,
-  });
+    paymentSource: paymentSource === 'admin' ? 'admin' : 'wallet',
+    now,
+  }));
 
   await Promise.all([wallet.save(), subscription.save()]);
 
@@ -259,6 +293,105 @@ export const purchaseUserSubscription = async ({ userId, planId, paymentSource =
   };
 };
 
+/**
+ * Razorpay purchase, step 1: an order for the plan price. Nothing is granted until the
+ * payment is verified (or the same payment is confirmed again later).
+ */
+export const createSubscriptionRazorpayOrder = async ({ userId, planId, deps = {} }) => {
+  const { plan, amount } = await loadPurchasablePlan(planId);
+  const { keyId, keySecret } = await (deps.resolveCredentials || resolveRazorpayCredentials)();
+
+  const order = await (deps.razorpayRequest || razorpayRequest)({
+    method: 'POST',
+    path: '/orders',
+    body: {
+      amount: Math.round(amount * 100),
+      currency: 'INR',
+      receipt: `usub_${String(userId).replace(/[^a-zA-Z0-9]/g, '').slice(-8)}_${Date.now().toString(36)}`,
+      notes: { purpose: 'user_subscription', planId: String(plan._id), userId: String(userId) },
+    },
+    keyId,
+    keySecret,
+  });
+
+  return {
+    keyId,
+    orderId: order.id,
+    amount: order.amount,
+    currency: order.currency || 'INR',
+    plan: serializeSubscriptionPlan(plan.toObject()),
+  };
+};
+
+/**
+ * Razorpay purchase, step 2: checks the signature, that the order was created for this rider and plan
+ * at the plan's price, then creates the subscription. One payment never creates two subscriptions
+ * (repeat calls return the same one).
+ */
+export const verifySubscriptionRazorpayPayment = async ({ userId, orderId, paymentId, signature, deps = {} }) => {
+  if (!orderId || !paymentId || !signature) {
+    throw new ApiError(400, 'Payment verification fields are required');
+  }
+
+  const existing = await UserSubscription.findOne({ providerPaymentId: paymentId }).populate('vehicle_type_id', 'name');
+  if (existing) {
+    if (String(existing.userId) !== String(userId)) {
+      throw new ApiError(409, 'This payment was already used');
+    }
+    return { subscription: serializeUserSubscription(existing.toObject()), alreadyPurchased: true };
+  }
+
+  const { keyId, keySecret } = await (deps.resolveCredentials || resolveRazorpayCredentials)();
+  const expected = crypto.createHmac('sha256', keySecret).update(`${orderId}|${paymentId}`).digest('hex');
+  if (!signaturesMatch(expected, signature)) {
+    throw new ApiError(400, 'Invalid payment signature');
+  }
+
+  const order = await (deps.razorpayRequest || razorpayRequest)({
+    method: 'GET',
+    path: `/orders/${encodeURIComponent(orderId)}`,
+    keyId,
+    keySecret,
+  });
+
+  if (order?.notes?.purpose !== 'user_subscription' || String(order?.notes?.userId || '') !== String(userId)) {
+    throw new ApiError(400, 'This payment does not belong to a subscription purchase by this account');
+  }
+
+  const { plan, amount } = await loadPurchasablePlan(order.notes.planId);
+  if (Number(order.amount) !== Math.round(amount * 100)) {
+    throw new ApiError(400, 'Verified payment does not match the plan price');
+  }
+
+  let subscription;
+  try {
+    subscription = await UserSubscription.create(buildSubscriptionDoc({
+      userId,
+      plan,
+      amount,
+      paymentSource: 'razorpay',
+      extra: { providerOrderId: orderId, providerPaymentId: paymentId },
+    }));
+  } catch (error) {
+    if (error?.code === 11000) {
+      const winner = await UserSubscription.findOne({ providerPaymentId: paymentId });
+      if (winner && String(winner.userId) === String(userId)) {
+        return { subscription: serializeUserSubscription(winner.toObject()), alreadyPurchased: true };
+      }
+    }
+    throw error;
+  }
+
+  return {
+    subscription: serializeUserSubscription({
+      ...subscription.toObject(),
+      vehicle_type_id: plan.vehicle_type_id,
+      planId: plan,
+    }),
+    alreadyPurchased: false,
+  };
+};
+
 export const resolveApplicableUserSubscription = async ({ userId, vehicleTypeId }) => {
   if (!userId || !vehicleTypeId || !mongoose.Types.ObjectId.isValid(vehicleTypeId)) {
     return null;
@@ -266,13 +399,13 @@ export const resolveApplicableUserSubscription = async ({ userId, vehicleTypeId 
 
   const items = await UserSubscription.find({
     userId,
-    vehicle_type_id: vehicleTypeId,
+    // A plan can cover several vehicle types; older subscriptions only have `vehicle_type_id`.
+    $and: [
+      { $or: [{ vehicle_type_id: vehicleTypeId }, { vehicle_type_ids: vehicleTypeId }] },
+      { $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }] },
+    ],
     status: 'active',
     active: true,
-    $or: [
-      { expiresAt: null },
-      { expiresAt: { $gt: new Date() } },
-    ],
   })
     .sort({ expiresAt: 1, createdAt: 1 })
     .populate('vehicle_type_id', 'name');
@@ -284,8 +417,18 @@ export const resolveApplicableUserSubscription = async ({ userId, vehicleTypeId 
     }
 
     const metrics = buildSubscriptionMetrics(refreshed);
-    if (!metrics.isUnlimited && metrics.ridesRemaining <= 0) {
-      continue;
+    if (!metrics.isUnlimited) {
+      // Rides already booked on this plan but not completed yet will consume a credit when they
+      // finish, so they count against the limit now (no queueing more rides than the plan allows).
+      const outstanding = await Ride.countDocuments({
+        'subscriptionUsage.covered': true,
+        'subscriptionUsage.subscriptionId': refreshed._id,
+        'subscriptionUsage.ridesUsedAfter': null,
+        status: { $in: [RIDE_STATUS.SEARCHING, RIDE_STATUS.ACCEPTED, RIDE_STATUS.ONGOING] },
+      });
+      if (metrics.ridesRemaining - outstanding <= 0) {
+        continue;
+      }
     }
 
     return refreshed;

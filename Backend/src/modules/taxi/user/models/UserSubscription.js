@@ -45,6 +45,13 @@ const userSubscriptionSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    // All vehicle types this subscription covers (snapshot of the plan at purchase time).
+    vehicle_type_ids: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'TaxiVehicle',
+      default: [],
+      index: true,
+    },
     benefit_type: {
       type: String,
       enum: ['limited', 'unlimited'],
@@ -73,9 +80,12 @@ const userSubscriptionSchema = new mongoose.Schema(
     },
     purchaseSource: {
       type: String,
-      enum: ['wallet', 'admin'],
+      enum: ['wallet', 'admin', 'razorpay'],
       default: 'wallet',
     },
+    // Razorpay purchase: one payment can only ever create one subscription.
+    providerOrderId: { type: String, default: '', trim: true },
+    providerPaymentId: { type: String, default: '', trim: true },
     purchasedAt: {
       type: Date,
       default: Date.now,
@@ -103,6 +113,7 @@ const userSubscriptionSchema = new mongoose.Schema(
 
 userSubscriptionSchema.index({ userId: 1, status: 1, expiresAt: 1 });
 userSubscriptionSchema.index({ userId: 1, vehicle_type_id: 1, status: 1 });
+userSubscriptionSchema.index({ providerPaymentId: 1 }, { unique: true, partialFilterExpression: { providerPaymentId: { $gt: '' } } });
 
 export const UserSubscription =
   mongoose.models.TaxiUserSubscription || mongoose.model('TaxiUserSubscription', userSubscriptionSchema);

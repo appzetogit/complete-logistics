@@ -247,6 +247,16 @@ const rideSchema = new mongoose.Schema(
         note: { type: String, default: '', trim: true },
         receivedBy: { type: String, default: '', trim: true },
       },
+      /// Driver face selfies taken at the pickup and at the drop. For admin review only: never
+      /// included in a rider's payload (like `acceptSelfie`).
+      pickupSelfie: {
+        imageUrl: { type: String, default: '', trim: true },
+        capturedAt: { type: Date, default: null },
+      },
+      dropSelfie: {
+        imageUrl: { type: String, default: '', trim: true },
+        capturedAt: { type: Date, default: null },
+      },
     },
     scheduledAt: {
       type: Date,

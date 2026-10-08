@@ -401,6 +401,36 @@ const settleUserCancellationFee = async (ride, session) => {
   };
 };
 
+/**
+ * What cancelling this ride now would cost the rider, WITHOUT changing anything. Mirrors
+ * settleUserCancellationFee (the set-price cancellation fee) and the goods-advance forfeit rule,
+ * so the app's confirmation dialog can show the real numbers.
+ */
+export const previewUserCancellation = async (ride) => {
+  const pricing = await resolveCancellationPricing(ride);
+  const fee = computeCancellationFeeAmount({
+    ride,
+    feeType: pricing?.user_cancellation_fee_type,
+    feeValue: pricing?.user_cancellation_fee,
+  });
+  const advancePaid = ride?.serviceType === 'parcel' && ride?.goodsAdvance?.status === 'paid';
+  const wallet = fee > 0
+    ? await UserWallet.findOne({ userId: ride.userId }).select('balance').lean()
+    : null;
+
+  return {
+    fee,
+    feeGoesTo: fee > 0
+      ? (String(pricing?.cancellation_fee_goes_to || 'admin').trim().toLowerCase() === 'driver' && ride?.driverId ? 'driver' : 'admin')
+      : null,
+    // The fee is taken from the rider's wallet; with too little balance the cancel cannot take it.
+    walletCoversFee: fee <= 0 ? true : roundMoney(wallet?.balance || 0) >= fee,
+    advanceForfeited: advancePaid,
+    advanceAmount: advancePaid ? roundMoney(ride.goodsAdvance.amount) : 0,
+    advanceRefundable: false,
+  };
+};
+
 const settleDriverCancellationFee = async (ride, session) => {
   const pricing = await resolveCancellationPricing(ride, session);
   const feeAmount = computeCancellationFeeAmount({
@@ -1992,6 +2022,8 @@ export const notifyRideAccepted = async (ride) => {
     liveStatus: populatedRide.liveStatus,
     acceptedAt: populatedRide.acceptedAt,
     otp: populatedRide.otp || '',
+    // Normal, scheduled and bid accepts all end here: tells the driver app to open the selfie screen.
+    acceptSelfieRequired: !populatedRide.acceptSelfie?.imageUrl,
   });
 
   emitToRoom(getRideRoom(populatedRide._id), 'rideRequestClosed', {

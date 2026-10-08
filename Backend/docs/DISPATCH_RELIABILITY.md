@@ -23,7 +23,7 @@ Part 1 of the "dispatch, selfie, free rides, subscription" checklist: C1, C2, C4
 Three independent ways now start dispatch, all idempotent against each other:
 
 1. **Checkout verify** (`POST /deliveries/advance/razorpay/verify`) – unchanged, but now on its own limiter
-   (`goods_advance_confirm`, 60 / 15 min) instead of the shared `payment_order` one (12 / 15 min).
+   (`payment_confirm`, 60 / 15 min) instead of the shared `payment_order` one (12 / 15 min).
 2. **Webhook** `POST /api/v1/deliveries/advance/razorpay/webhook` (no login; authenticated by signature).
 3. **Reconcile** `POST /deliveries/advance/razorpay/reconcile` `{ "rideId" }` (user token): asks Razorpay about **every**
    order created for the booking and applies a captured payment. `200` + ride payload on success

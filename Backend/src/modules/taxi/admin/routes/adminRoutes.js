@@ -37,6 +37,8 @@ import {
   createSetPrice,
   createSubscriptionPlan,
   createCustomerSubscriptionPlan,
+  updateCustomerSubscriptionPlan,
+  deleteCustomerSubscriptionPlan,
   createUser,
   createZone,
   bulkImportUsers,
@@ -325,6 +327,9 @@ adminRouter.get('/admin/driver-subscriptions/settings', getSubscriptionSettings)
 adminRouter.post('/admin/driver-subscriptions/settings', updateSubscriptionSettings);
 adminRouter.get('/admin/user-subscriptions/plans/list', getCustomerSubscriptionPlans);
 adminRouter.post('/admin/user-subscriptions/plans/create', createCustomerSubscriptionPlan);
+// Edit (including { active: true|false } to activate / deactivate) and delete a customer plan.
+adminRouter.patch('/admin/user-subscriptions/plans/:id', updateCustomerSubscriptionPlan);
+adminRouter.delete('/admin/user-subscriptions/plans/:id', deleteCustomerSubscriptionPlan);
 
 adminRouter.get('/countries', getCountries);
 adminRouter.get('/admin/countries', getCountries);

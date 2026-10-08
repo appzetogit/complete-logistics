@@ -62,7 +62,7 @@ test('free rides: first 3 completed rides are free, the 4th is charged normally'
   const rider = await t.factories.user();
   const driver = await t.factories.driver({ vehicleTypeId: vehicle._id });
 
-  assert.deepEqual((await me(rider.token)).freeRides, { enabled: true, limit: 3, used: 0, left: 3 });
+  assert.deepEqual((await me(rider.token)).freeRides, { enabled: true, limit: 3, used: 0, left: 3, maxFare: 500 });
 
   for (let i = 1; i <= 3; i += 1) {
     const created = await t.api('POST', '/rides', { token: rider.token, body: rideBody({ vehicleTypeId: String(vehicle._id) }) });
@@ -83,7 +83,7 @@ test('free rides: first 3 completed rides are free, the 4th is charged normally'
     assert.equal(settled.amount, 80, 'fare 100 - 20% commission');
   }
 
-  assert.deepEqual((await me(rider.token)).freeRides, { enabled: true, limit: 3, used: 3, left: 0 });
+  assert.deepEqual((await me(rider.token)).freeRides, { enabled: true, limit: 3, used: 3, left: 0, maxFare: 500 });
 
   const fourth = await t.api('POST', '/rides', { token: rider.token, body: rideBody({ vehicleTypeId: String(vehicle._id) }) });
   assert.equal(fourth.body.data.ride.freeRide.covered, false);

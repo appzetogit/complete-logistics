@@ -27,7 +27,7 @@ import {
 } from '../user/services/goodsAdvanceService.js';
 import { applyPromoToRideInTransaction } from './promoService.js';
 import { getTipSettings } from './appSettingsService.js';
-import { getBidRideSettings } from './transportSettingsService.js';
+import { getBidRideSettings, getTransportRideSettings } from './transportSettingsService.js';
 
 const clearUserActiveRideIfPresent = async (user) => {
   if (!user?.currentRideId) {
@@ -1072,7 +1072,7 @@ export const createRideRecord = async ({
   const freeRide = pricingNegotiationMode === 'none'
     ? await resolveFreeRideForNewRide({ user, fare: safeFare })
     : { covered: false };
-  const applicableSubscription = !freeRide.covered && primaryVehicleTypeId
+  const applicableSubscription = !freeRide.covered && pricingNegotiationMode === 'none' && primaryVehicleTypeId
     ? await resolveApplicableUserSubscription({
         userId,
         vehicleTypeId: primaryVehicleTypeId,
@@ -1359,6 +1359,13 @@ const mergeParcelRecords = (mirror, authoritative) => {
 // The accept selfie is for admin review only. It is dropped by default
 // (audience 'user', which is also what shared ride-room broadcasts use, since
 // the rider is in that room). Only the driver's own responses opt in.
+// The driver's pickup/drop face selfies are for admin review, like the accept selfie.
+const withoutParcelSelfies = (parcel) => {
+  if (!parcel) return parcel;
+  const { pickupSelfie, dropSelfie, ...rest } = typeof parcel.toObject === 'function' ? parcel.toObject() : parcel;
+  return rest;
+};
+
 export const RIDE_AUDIENCE = Object.freeze({ USER: 'user', DRIVER: 'driver', ADMIN: 'admin' });
 
 export const audienceForRole = (role) => (role === 'driver' ? RIDE_AUDIENCE.DRIVER : RIDE_AUDIENCE.USER);
@@ -1367,6 +1374,9 @@ export const audienceForRole = (role) => (role === 'driver' ? RIDE_AUDIENCE.DRIV
 export const withoutAcceptSelfie = (ride) => {
   const plain = typeof ride?.toObject === 'function' ? ride.toObject() : { ...(ride || {}) };
   delete plain.acceptSelfie;
+  if (plain.parcel) {
+    plain.parcel = withoutParcelSelfies(plain.parcel);
+  }
   return plain;
 };
 
@@ -1439,7 +1449,9 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
   // the paid add-ons and the driver's proof photos onto it. The Delivery
   // mirror holds only the booking basics, so it fills gaps rather than
   // shadowing the richer copy.
-  parcel: mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel),
+  parcel: audience === RIDE_AUDIENCE.USER
+    ? withoutParcelSelfies(mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel))
+    : mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel),
   intercity: ride.intercity || null,
   commissionAmount: ride.commissionAmount,
   driverEarnings: ride.driverEarnings,
@@ -1474,6 +1486,10 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
               capturedAt: ride.acceptSelfie.capturedAt || null,
             }
           : null,
+        // The driver still owes the accept selfie (scheduled and bid rides included).
+        acceptSelfieRequired: Boolean(ride.driverId)
+          && [RIDE_STATUS.ACCEPTED, RIDE_STATUS.ONGOING].includes(ride.status)
+          && !ride.acceptSelfie?.imageUrl,
       }
     : {}),
   arrivedAt: ride.arrivedAt,
@@ -1538,7 +1554,11 @@ export const getActiveRideForIdentity = async ({ role, entityId }) => {
       .populate('userId', 'name phone')
       .populate('driverId', 'name phone profileImage vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel vehicleImage rating');
 
-    return rides.find((ride) => !isRideScheduledForFuture(ride)) || null;
+    // A scheduled ride that is still in the future is normally not "active", but one that was just
+    // accepted and has no selfie yet must be returned so the app can open the selfie screen.
+    return rides.find((ride) => !isRideScheduledForFuture(ride))
+      || rides.find((ride) => ride.status === RIDE_STATUS.ACCEPTED && !ride.acceptSelfie?.imageUrl)
+      || null;
   }
 
   return null;
@@ -1891,6 +1911,7 @@ export const updateRideLifecycle = async ({
   proofImageUrl,
   proofNote,
   receivedBy,
+  selfieImageUrl,
 }) => {
   const config = rideStatusConfig[nextStatus];
 
@@ -1930,6 +1951,19 @@ export const updateRideLifecycle = async ({
         ? { receivedBy: String(receivedBy || '').trim() }
         : {}),
     };
+
+    // Driver face selfie at the same step (pickup / drop). Optional until the admin switches
+    // `goods_selfie_required` on, so older driver apps keep working.
+    const selfieKey = config.requiresProof === 'pickupProof' ? 'pickupSelfie' : 'dropSelfie';
+    const selfieUrl = String(selfieImageUrl || '').trim();
+    if (selfieUrl) {
+      ride.parcel[selfieKey] = { imageUrl: selfieUrl, capturedAt: new Date() };
+    } else {
+      const transportSettings = await getTransportRideSettings();
+      if (['1', 'true', 'yes', 'on'].includes(String(transportSettings.goods_selfie_required ?? '0').trim().toLowerCase())) {
+        throw new ApiError(400, 'A selfie of the driver is required for this step');
+      }
+    }
     ride.markModified('parcel');
   }
 

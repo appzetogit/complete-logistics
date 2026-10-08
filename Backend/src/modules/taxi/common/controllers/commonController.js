@@ -15,16 +15,28 @@ export const uploadImage = asyncHandler(async (req, res) => {
         return res.status(400).json({ success: false, message: 'Image data is required' });
     }
 
+    // Files are served from /uploads, so only real raster images may be stored (no html/svg/js).
+    if (!/^data:image\/(png|jpe?g|webp|gif|heic|heif);base64,/i.test(String(image).slice(0, 64))) {
+        return res.status(400).json({ success: false, message: 'Only PNG, JPEG, WebP, GIF or HEIC images can be uploaded' });
+    }
+
     const uploadResult = await uploadDataUrlToCloudinary({
         dataUrl: image,
         folder: `${env.cloudinary.folder}/${folder}`,
         publicIdPrefix: `content-${folder}`
     });
 
+    // Always return an absolute URL: use the configured public backend URL, else this request's own origin.
+    let url = String(uploadResult.secureUrl || '');
+    if (url.startsWith('/')) {
+        const proto = String(req.get('x-forwarded-proto') || req.protocol || 'https').split(',')[0].trim();
+        url = `${proto}://${req.get('host')}${url}`;
+    }
+
     return res.json({
         success: true,
         data: {
-            url: uploadResult.secureUrl,
+            url,
             publicId: uploadResult.publicId,
             format: uploadResult.format
         }

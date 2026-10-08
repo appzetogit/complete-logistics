@@ -33,6 +33,7 @@ import {
   getSocketServer,
   notifyRideAccepted,
   notifyRideBiddingUpdated,
+  previewUserCancellation,
   restartRideDispatchWithLatestFare,
   startDispatchFlow,
 } from '../../services/dispatchService.js';
@@ -383,6 +384,24 @@ export const getRideById = async (req, res) => {
   });
 };
 
+// What cancelling now would cost, so the app can warn before the rider confirms.
+export const getRideCancelPreview = async (req, res) => {
+  const ride = await Ride.findOne({ _id: req.params.rideId, userId: req.auth.sub });
+
+  if (!ride) {
+    throw new ApiError(404, 'Ride not found');
+  }
+
+  if ([RIDE_STATUS.COMPLETED, RIDE_STATUS.CANCELLED].includes(ride.status)) {
+    throw new ApiError(409, 'This ride can no longer be cancelled');
+  }
+
+  res.json({
+    success: true,
+    data: { rideId: String(ride._id), ...(await previewUserCancellation(ride)) },
+  });
+};
+
 export const getMyActiveRide = async (req, res) => {
   const ride = await getActiveRideForIdentity({
     role: req.auth.role,
@@ -453,6 +472,7 @@ export const updateRideStatus = async (req, res) => {
     proofImageUrl: req.body.proofImageUrl,
     proofNote: req.body.proofNote,
     receivedBy: req.body.receivedBy,
+    selfieImageUrl: req.body.selfieImageUrl,
   });
 
   try {

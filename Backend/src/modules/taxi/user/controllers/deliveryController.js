@@ -48,6 +48,7 @@ export const quoteDelivery = async (req, res) => {
     loadHeightKey,
     extraKeys,
     parcel,
+    userId: req.auth.sub,
   });
 
   res.json({

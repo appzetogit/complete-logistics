@@ -5,6 +5,7 @@ import {
   loginRateLimit,
   otpSendRateLimit,
   otpVerifyRateLimit,
+  paymentConfirmRateLimit,
   paymentOrderRateLimit,
 } from '../../middlewares/rateLimitMiddleware.js';
 import {
@@ -57,6 +58,8 @@ import {
   getAvailableSubscriptionPlans,
   getMySubscriptions,
   buySubscription,
+  createSubscriptionRazorpayOrderRequest,
+  verifySubscriptionRazorpayPaymentRequest,
   getSetPrices,
   getZones,
 } from '../controllers/userController.js';
@@ -103,6 +106,8 @@ userRouter.patch('/me', authenticate(['user']), asyncHandler(updateCurrentUser))
 userRouter.get('/subscriptions/plans', authenticate(['user']), asyncHandler(getAvailableSubscriptionPlans));
 userRouter.get('/subscriptions/me', authenticate(['user']), asyncHandler(getMySubscriptions));
 userRouter.post('/subscriptions/purchase', authenticate(['user']), asyncHandler(buySubscription));
+userRouter.post('/subscriptions/razorpay/order', authenticate(['user']), paymentOrderRateLimit, asyncHandler(createSubscriptionRazorpayOrderRequest));
+userRouter.post('/subscriptions/razorpay/verify', authenticate(['user']), paymentConfirmRateLimit, asyncHandler(verifySubscriptionRazorpayPaymentRequest));
 userRouter.post('/me/delete-request', authenticate(['user']), asyncHandler(requestAccountDeletion));
 userRouter.get('/notifications', authenticate(['user']), asyncHandler(getUserNotifications));
 userRouter.delete('/notifications/:id', authenticate(['user']), asyncHandler(deleteUserNotification));
