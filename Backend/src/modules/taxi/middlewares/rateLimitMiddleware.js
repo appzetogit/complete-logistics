@@ -38,10 +38,18 @@ const sha1 = (value) => crypto.createHash('sha1').update(String(value || '')).di
 
 const toCleanString = (value) => String(value || '').trim();
 
+// nginx APPENDS the real client address to X-Forwarded-For; anything before it was sent by the client and can
+// be faked. Use the entry added by our own proxy (the last one for one proxy hop), so a forged header cannot
+// dodge the limits. TRUSTED_PROXY_HOPS = number of proxies in front of the app (default 1: nginx).
+const TRUSTED_PROXY_HOPS = Math.max(1, Number(process.env.TRUSTED_PROXY_HOPS) || 1);
+
 const getClientIp = (req) => {
   const forwardedFor = req.headers['x-forwarded-for'];
   if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
-    return forwardedFor.split(',')[0].trim();
+    const chain = forwardedFor.split(',').map((part) => part.trim()).filter(Boolean);
+    if (chain.length) {
+      return chain[Math.max(0, chain.length - TRUSTED_PROXY_HOPS)];
+    }
   }
 
   return (
@@ -192,6 +200,9 @@ export const createRateLimitMiddleware = ({
   windowMs,
   mode = 'ip',
   modes,
+  // Optional per-mode limits, e.g. { phone_or_ip: 5, ip: 30 }: one person's number gets a tight limit,
+  // while a shared IP (office WiFi, mobile carrier NAT) is not blocked for everyone after a few tries.
+  maxByMode = {},
   message = defaultMessage,
 } = {}) => {
   if (!scope || !Number.isFinite(Number(max)) || !Number.isFinite(Number(windowMs))) {
@@ -207,12 +218,18 @@ export const createRateLimitMiddleware = ({
 
     for (const currentMode of normalizedModes) {
       const key = buildRateLimitKey(req, scope, currentMode);
-      outcomes.push(await consumeRateLimitKey({
-        key,
-        max: normalizedMax,
-        windowMs: normalizedWindowMs,
-        mode: currentMode,
-      }));
+      const modeMax = Number.isFinite(Number(maxByMode?.[currentMode])) && Number(maxByMode[currentMode]) > 0
+        ? Number(maxByMode[currentMode])
+        : normalizedMax;
+      outcomes.push({
+        ...(await consumeRateLimitKey({
+          key,
+          max: modeMax,
+          windowMs: normalizedWindowMs,
+          mode: currentMode,
+        })),
+        max: modeMax,
+      });
     }
 
     const blockingOutcome = outcomes.find((entry) => !entry.allowed);
@@ -224,8 +241,8 @@ export const createRateLimitMiddleware = ({
       return entry.count > selected.count ? entry : selected;
     }, null);
 
-    res.setHeader('X-RateLimit-Limit', String(normalizedMax));
-    res.setHeader('X-RateLimit-Remaining', String(Math.max(0, normalizedMax - headerOutcome.count)));
+    res.setHeader('X-RateLimit-Limit', String(headerOutcome.max));
+    res.setHeader('X-RateLimit-Remaining', String(Math.max(0, headerOutcome.max - headerOutcome.count)));
     res.setHeader('X-RateLimit-Reset', String(headerOutcome.retryAfterSeconds));
     res.setHeader('X-RateLimit-Source', headerOutcome.source);
     res.setHeader('X-RateLimit-Mode', headerOutcome.mode);
@@ -239,13 +256,27 @@ export const createRateLimitMiddleware = ({
     res.status(429).json({
       success: false,
       message,
+      // So the app can say "try again in N minutes" instead of a bare error.
+      retryAfterSeconds: blockingOutcome.retryAfterSeconds,
+      limitedBy: blockingOutcome.mode === 'ip' ? 'network' : 'phone',
     });
   };
 };
 
+const envLimit = (name, fallback) => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+};
+
+// Per phone number the limits stay tight (SMS cost, brute force). Per IP they are much higher: many real users
+// share one public IP (office WiFi, mobile carrier NAT), and a tight IP limit locked out every number after 5 tries.
 export const otpSendRateLimit = createRateLimitMiddleware({
   scope: 'otp_send',
-  max: 5,
+  max: envLimit('OTP_SEND_MAX_PER_PHONE', 5),
+  maxByMode: {
+    phone_or_ip: envLimit('OTP_SEND_MAX_PER_PHONE', 5),
+    ip: envLimit('OTP_SEND_MAX_PER_IP', 30),
+  },
   windowMs: 10 * 60 * 1000,
   modes: ['phone_or_ip', 'ip'],
   message: 'Too many OTP requests. Please try again later.',
@@ -253,7 +284,11 @@ export const otpSendRateLimit = createRateLimitMiddleware({
 
 export const otpVerifyRateLimit = createRateLimitMiddleware({
   scope: 'otp_verify',
-  max: 10,
+  max: envLimit('OTP_VERIFY_MAX_PER_PHONE', 10),
+  maxByMode: {
+    phone_or_ip: envLimit('OTP_VERIFY_MAX_PER_PHONE', 10),
+    ip: envLimit('OTP_VERIFY_MAX_PER_IP', 60),
+  },
   windowMs: 10 * 60 * 1000,
   modes: ['phone_or_ip', 'ip'],
   message: 'Too many OTP verification attempts. Please try again later.',
