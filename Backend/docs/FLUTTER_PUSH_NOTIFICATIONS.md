@@ -90,7 +90,7 @@ me `message.data['type']` dekho:
 
 | `data.type` | Kisko | Extra `data` | Kya karna hai |
 |---|---|---|---|
-| `ride_request` | Driver | `rideId`, `serviceType`, `userId` | `GET /drivers/ride-offers` call karo aur request card dikhao (socket miss hua ho to yahi recover karta hai) |
+| `ride_request` | Driver | `rideId`, `serviceType`, `userId`, `title`, `body` | **Data-only** (neeche dekho). Background handler full-screen ride alert dikhaye; tap par `GET /drivers/ride-offers` -> request card |
 | `ride_accepted` | User | `rideId`, `serviceType`, `driverId` | Ride tracking screen (`GET /rides/active/me`) |
 | `ride_cancelled_by_driver` | User | `rideId`, `serviceType` | Active ride refresh – naya driver dhundh rahe hain ya home |
 | `driver_wallet_credit` | Driver | `amount`, `transferId` | Wallet screen refresh |
@@ -101,6 +101,20 @@ Saari `data` values **string** hoti hain. `click_action` = `FLUTTER_NOTIFICATION
 
 > Ride request ka **asli** source abhi bhi socket `rideRequest` event hai. Push sirf backup hai jab app background me ho –
 > tap par `GET /drivers/ride-offers` se fresh data lo, push ke data par bharosa mat karo.
+
+## 5b. Driver ride request = data-only push (Android)
+
+Driver ka `ride_request` push ab **data-only** jaata hai (koi `notification` block nahi):
+- Android khud koi tray notification nahi banata – sirf app ka `firebaseMessagingBackgroundHandler` jaagta hai, jo **ek** full-screen
+  "incoming call" style ride alert `ride_requests` channel par dikhata hai (max importance, sound, lock-screen wake).
+  Pehle Android ki plain notification + app ka alert dono aate the, aur tap par plain wala jeet jaata tha.
+- Text `data.title` / `data.body` me aata hai (notification block nahi hai).
+- `android.priority: high` (killed/Doze app ko jagata hai), **TTL 60 s** (purana offer late deliver nahi hota),
+  **collapse key `ride_<rideId>`** (same ride ki doosri dispatch wave pehle wale ko replace karti hai, do alert nahi).
+- iPhone: data-only par handler reliable nahi, isliye iOS ko `apns` se normal visible alert jaata hai (APNs key chahiye).
+- Baaki saare push (`ride_accepted`, `ride_cancelled_by_driver`, `driver_wallet_credit`, admin broadcast) pehle jaise notification ke saath.
+- Device note: Xiaomi/MIUI par driver ko Autostart, Battery saver "No restrictions" aur "Display pop-up windows while running in
+  background" allow karna hoga, warna MIUI background delivery rok deta hai.
 
 ## 6. Background handler (Android)
 

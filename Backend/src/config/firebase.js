@@ -138,7 +138,17 @@ export const getFirebaseDatabase = () => {
   }
 };
 
+// Tests only: replace the messaging client with a fake that records what would be sent.
+let messagingOverride = null;
+export const setFirebaseMessagingForTests = (fake) => {
+  messagingOverride = fake || null;
+};
+
 export const getFirebaseMessaging = () => {
+  if (messagingOverride) {
+    return messagingOverride;
+  }
+
   if (firebaseMessaging) {
     return firebaseMessaging;
   }

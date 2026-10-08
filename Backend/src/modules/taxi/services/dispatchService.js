@@ -41,6 +41,8 @@ const DISPATCH_INSTANCE_ID = `${process.pid}:${crypto.randomUUID()}`;
 const DISPATCH_LEASE_TTL_MS = 90_000;
 const DISPATCH_LEASE_REFRESH_MS = 30_000;
 const DISPATCH_RECOVERY_INTERVAL_MS = 30_000;
+// A ride offer nobody can act on after a minute; FCM drops it instead of delivering it late.
+const RIDE_REQUEST_PUSH_TTL_MS = 60 * 1000;
 const LATE_DRIVER_NOTIFICATION_COOLDOWN_MS = 10_000;
 
 const roundMoney = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -875,12 +877,17 @@ const emitRideRequestToDrivers = async ({
     }));
   }
 
+  // Data-only on Android: the driver app's background handler shows ONE full-screen ride alert on its
+  // ride_requests channel. A notification block would add a second, plain tray alert that wins on tap.
   sendPushNotificationToEntities({
     driverIds: targetDrivers.map((driver) => String(driver._id)),
     title: ride.serviceType === 'parcel' ? 'New delivery request' : 'New ride request',
     body: ride.pickupAddress
       ? `Pickup: ${ride.pickupAddress}`
       : 'A new booking is waiting for your response.',
+    dataOnly: true,
+    collapseKey: `ride_${String(ride._id)}`,
+    ttlMs: RIDE_REQUEST_PUSH_TTL_MS,
     data: {
       type: 'ride_request',
       rideId: String(ride._id),

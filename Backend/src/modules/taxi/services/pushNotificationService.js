@@ -32,6 +32,63 @@ const summarizeFailures = (failures = []) => {
   return [...byCode.values()];
 };
 
+/**
+ * The FCM multicast message for one batch of tokens.
+ *
+ * Normal mode: `notification` + `data` (the OS draws a tray notification when the app is in the background).
+ *
+ * `dataOnly` (driver ride requests): NO `notification` block, so Android draws nothing itself and only wakes the
+ * app's background handler, which shows one full-screen ride alert on its own channel. `android.priority: high`
+ * is required to wake a killed / dozing app; `ttl` drops an offer nobody can act on any more; `collapseKey` makes
+ * a later dispatch wave for the same ride replace the earlier one. iOS cannot reliably run a handler for a
+ * data-only message, so iPhones still get a visible alert through `apns`. Title/body are copied into `data`
+ * because the app reads them from there when there is no notification block.
+ */
+export const buildMulticastMessage = ({
+  tokens = [],
+  title = '',
+  body = '',
+  image = '',
+  data = {},
+  dataOnly = false,
+  collapseKey = '',
+  ttlMs = 0,
+}) => {
+  const safeData = Object.fromEntries(
+    Object.entries({ ...(data || {}), ...(dataOnly ? { title, body } : {}) })
+      .map(([key, value]) => [key, String(value ?? '')]),
+  );
+  const message = {
+    tokens,
+    data: { ...safeData, click_action: 'FLUTTER_NOTIFICATION_CLICK' },
+    android: {
+      priority: 'high',
+      ...(ttlMs > 0 ? { ttl: ttlMs } : {}),
+      ...(collapseKey ? { collapseKey } : {}),
+      ...(!dataOnly && image ? { notification: { imageUrl: image } } : {}),
+    },
+    webpush: {
+      notification: { title, body, ...(image ? { image } : {}) },
+    },
+  };
+
+  if (dataOnly) {
+    message.apns = {
+      headers: {
+        'apns-priority': '10',
+        'apns-push-type': 'alert',
+        ...(collapseKey ? { 'apns-collapse-id': collapseKey.slice(0, 64) } : {}),
+        ...(ttlMs > 0 ? { 'apns-expiration': String(Math.floor((Date.now() + ttlMs) / 1000)) } : {}),
+      },
+      payload: { aps: { alert: { title, body }, sound: 'default' } },
+    };
+  } else {
+    message.notification = { title, body, ...(image ? { imageUrl: image } : {}) };
+  }
+
+  return message;
+};
+
 const chunk = (items, size) => {
   const groups = [];
 
@@ -146,6 +203,9 @@ const sendPushToTargets = async ({
   body,
   image = '',
   data = {},
+  dataOnly = false,
+  collapseKey = '',
+  ttlMs = 0,
 }) => {
   const messaging = getFirebaseMessaging();
 
@@ -188,29 +248,16 @@ const sendPushToTargets = async ({
   );
 
   for (const batch of chunk(dedupedTargets, 500)) {
-    const response = await messaging.sendEachForMulticast({
+    const response = await messaging.sendEachForMulticast(buildMulticastMessage({
       tokens: batch.map((target) => target.token),
-      notification: {
-        title,
-        body,
-        ...(image ? { imageUrl: image } : {}),
-      },
-      data: {
-        ...safeData,
-        click_action: 'FLUTTER_NOTIFICATION_CLICK',
-      },
-      android: {
-        priority: 'high',
-        notification: image ? { imageUrl: image } : undefined,
-      },
-      webpush: {
-        notification: {
-          title,
-          body,
-          ...(image ? { image } : {}),
-        },
-      },
-    });
+      title,
+      body,
+      image,
+      data: safeData,
+      dataOnly,
+      collapseKey,
+      ttlMs,
+    }));
 
     response.responses.forEach((item, index) => {
       if (item.success) {
@@ -417,6 +464,9 @@ export const sendPushNotificationToEntities = async ({
   body,
   image = '',
   data = {},
+  dataOnly = false,
+  collapseKey = '',
+  ttlMs = 0,
 }) => {
   const targets = await collectDirectTargets({ userIds, driverIds });
   return sendPushToTargets({
@@ -425,5 +475,8 @@ export const sendPushNotificationToEntities = async ({
     body,
     image,
     data,
+    dataOnly,
+    collapseKey,
+    ttlMs,
   });
 };
