@@ -5,6 +5,7 @@ import { env } from './src/config/env.js';
 import { connectRedis, getRedisStatus } from './src/infrastructure/redis/redisClient.js';
 import { configureTaxiSocketServer } from './src/modules/taxi/socket/index.js';
 import { User } from './src/modules/taxi/user/models/User.js';
+import { getFirebaseStatus } from './src/config/firebase.js';
 import { restoreScheduledDispatches, startDispatchRecoveryLoop } from './src/modules/taxi/services/dispatchService.js';
 
 const bootstrap = async () => {
@@ -16,6 +17,13 @@ const bootstrap = async () => {
     if (!redisClient?.isReady) {
       console.warn('[redis] startup connect did not complete; app will continue and fall back to in-memory rate limiting until Redis is ready');
     }
+  }
+
+  const firebaseStatus = getFirebaseStatus();
+  if (firebaseStatus.configured) {
+    console.log(`[push] Firebase configured (project ${firebaseStatus.projectId || 'unknown'})`);
+  } else {
+    console.error(`[push] PUSH NOTIFICATIONS ARE OFF - ${firebaseStatus.reason}`);
   }
 
   const app = createApp();

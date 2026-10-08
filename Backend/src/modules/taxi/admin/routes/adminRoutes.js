@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../middlewares/authMiddleware.js';
+import { getPushDiagnostics, sendTestPush } from '../controllers/pushDiagnosticsController.js';
 import {
   loginRateLimit,
   otpSendRateLimit,
@@ -261,6 +262,8 @@ adminRouter.post('/admin/reset-password', otpVerifyRateLimit, resetPassword);
 adminRouter.get('/admin/general-settings/:category', getGeneralSettingsCategory);
 
 adminRouter.use('/admin', authenticate(['admin']));
+adminRouter.get('/admin/push/status', getPushDiagnostics);
+adminRouter.post('/admin/push/test', sendTestPush);
 
 adminRouter.get('/admin/permissions', getAdminPermissions);
 adminRouter.get('/admin/admin-management/admins', getAdmins);

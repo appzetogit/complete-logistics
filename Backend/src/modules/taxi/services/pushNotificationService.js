@@ -1,4 +1,4 @@
-import { getFirebaseMessaging } from '../../../config/firebase.js';
+import { getFirebaseMessaging, getFirebaseStatus } from '../../../config/firebase.js';
 import { Driver } from '../driver/models/Driver.js';
 import { User } from '../user/models/User.js';
 import { listEntityPushTokens } from './pushTokenService.js';
@@ -8,6 +8,29 @@ const INVALID_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
   'messaging/invalid-argument',
 ]);
+
+// "Not configured" used to be returned silently, so a server with no Firebase key just never sent a push and
+// nothing in the logs said why. Log it (at most once a minute so a busy server does not flood the log).
+let lastNotConfiguredLogAt = 0;
+const logPushNotConfigured = () => {
+  const now = Date.now();
+  if (now - lastNotConfiguredLogAt < 60_000) {
+    return;
+  }
+  lastNotConfiguredLogAt = now;
+  console.error(`[push] NOT SENT - ${getFirebaseStatus().reason || 'Firebase messaging is not configured on the backend'}`);
+};
+
+const summarizeFailures = (failures = []) => {
+  const byCode = new Map();
+  failures.forEach((error) => {
+    const code = error?.code || 'unknown';
+    const entry = byCode.get(code) || { code, message: String(error?.message || '').slice(0, 200), count: 0 };
+    entry.count += 1;
+    byCode.set(code, entry);
+  });
+  return [...byCode.values()];
+};
 
 const chunk = (items, size) => {
   const groups = [];
@@ -127,13 +150,15 @@ const sendPushToTargets = async ({
   const messaging = getFirebaseMessaging();
 
   if (!messaging) {
+    logPushNotConfigured();
     return {
       attempted: false,
       deliveredCount: 0,
       failedCount: 0,
       invalidTokenCount: 0,
       targetCount: 0,
-      reason: 'Firebase messaging is not configured on the backend',
+      errors: [],
+      reason: getFirebaseStatus().reason || 'Firebase messaging is not configured on the backend',
     };
   }
 
@@ -142,12 +167,14 @@ const sendPushToTargets = async ({
   );
 
   if (dedupedTargets.length === 0) {
+    console.warn(`[push] not sent: no saved FCM token for the recipient (${title || 'notification'}). The app must call POST /users/fcm-token or /drivers/fcm-token after login.`);
     return {
       attempted: true,
       deliveredCount: 0,
       failedCount: 0,
       invalidTokenCount: 0,
       targetCount: 0,
+      errors: [],
       reason: 'No saved FCM tokens were found for the selected entities',
     };
   }
@@ -155,6 +182,7 @@ const sendPushToTargets = async ({
   let deliveredCount = 0;
   let failedCount = 0;
   const invalidTargets = [];
+  const failures = [];
   const safeData = Object.fromEntries(
     Object.entries(data || {}).map(([key, value]) => [key, String(value ?? '')]),
   );
@@ -191,6 +219,7 @@ const sendPushToTargets = async ({
       }
 
       failedCount += 1;
+      failures.push(item.error);
       if (INVALID_TOKEN_CODES.has(item.error?.code)) {
         invalidTargets.push(batch[index]);
       }
@@ -198,6 +227,14 @@ const sendPushToTargets = async ({
   }
 
   const invalidTokenCount = await removeInvalidTokens(invalidTargets);
+  const errors = summarizeFailures(failures);
+
+  if (failedCount > 0) {
+    console.error(
+      `[push] ${failedCount}/${dedupedTargets.length} failed for "${title || 'notification'}": `
+      + errors.map((entry) => `${entry.code} x${entry.count} (${entry.message})`).join('; '),
+    );
+  }
 
   return {
     attempted: true,
@@ -205,6 +242,7 @@ const sendPushToTargets = async ({
     failedCount,
     invalidTokenCount,
     targetCount: dedupedTargets.length,
+    errors,
     reason: '',
   };
 };
@@ -337,6 +375,38 @@ export const sendPushNotificationToAudience = async ({
     invalidTokenCount,
     targetCount: dedupedTargets.length,
     reason: '',
+  };
+};
+
+/**
+ * Everything needed to answer "why is no push arriving": is Firebase configured on this server, and how many
+ * users / drivers have a saved device token. No secrets are returned.
+ */
+export const getPushStatus = async () => {
+  const firebase = getFirebaseStatus();
+  const hasToken = { $or: [{ fcmTokenMobile: { $nin: ['', null] } }, { fcmTokenWeb: { $nin: ['', null] } }] };
+  const [users, usersWithToken, drivers, driversWithToken, onlineDrivers, onlineDriversWithToken] = await Promise.all([
+    User.countDocuments({ deletedAt: null }),
+    User.countDocuments({ deletedAt: null, ...hasToken }),
+    Driver.countDocuments({ deletedAt: null }),
+    Driver.countDocuments({ deletedAt: null, ...hasToken }),
+    Driver.countDocuments({ deletedAt: null, isOnline: true }),
+    Driver.countDocuments({ deletedAt: null, isOnline: true, ...hasToken }),
+  ]);
+
+  return {
+    firebase,
+    tokens: {
+      users: { total: users, withToken: usersWithToken },
+      drivers: { total: drivers, withToken: driversWithToken },
+      onlineDrivers: { total: onlineDrivers, withToken: onlineDriversWithToken },
+    },
+    hints: [
+      !firebase.configured && firebase.reason,
+      firebase.configured && driversWithToken === 0 && 'No driver has saved a device token: the driver app must call POST /drivers/fcm-token after login.',
+      firebase.configured && usersWithToken === 0 && 'No user has saved a device token: the user app must call POST /users/fcm-token after login.',
+      firebase.configured && onlineDrivers > onlineDriversWithToken && `${onlineDrivers - onlineDriversWithToken} online driver(s) have no device token and cannot get ride-request pushes.`,
+    ].filter(Boolean),
   };
 };
 

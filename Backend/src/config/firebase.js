@@ -6,6 +6,7 @@ import { env } from './env.js';
 let firebaseDatabase = null;
 let firebaseMessaging = null;
 let firebaseInitAttempted = false;
+let lastInitError = '';
 
 const parseServiceAccountJson = (rawJson) => {
   if (!rawJson) {
@@ -68,9 +69,48 @@ const getFirebaseApp = () => {
       ...(env.firebase.databaseURL ? { databaseURL: env.firebase.databaseURL } : {}),
     });
   } catch (error) {
+    lastInitError = error.message;
     console.error('Firebase admin initialization failed:', error.message);
     return null;
   }
+};
+
+/**
+ * Why push notifications can or cannot be sent, without exposing any secret.
+ * `configured` is true only when a usable service account (or application default credential) is present:
+ * a database URL alone is not enough to send FCM messages.
+ */
+export const getFirebaseStatus = () => {
+  let serviceAccount = null;
+  let problem = '';
+
+  try {
+    serviceAccount = readServiceAccount();
+  } catch (error) {
+    problem = error.message;
+  }
+
+  const hasServiceAccount = Boolean(serviceAccount?.private_key && serviceAccount?.client_email);
+  // A key that is present but cannot be turned into a Firebase app (bad private key, wrong JSON) is also "off".
+  const canMessage = hasServiceAccount && Boolean(getFirebaseMessaging());
+
+  if (hasServiceAccount && !canMessage && !problem) {
+    problem = `Firebase could not start with the configured service account: ${lastInitError || 'unknown error'}. Check that FIREBASE_SERVICE_ACCOUNT_JSON is the complete, unmodified JSON key.`;
+  }
+
+  if (!hasServiceAccount && !problem) {
+    problem = env.firebase.serviceAccountJson || env.firebase.serviceAccountPath
+      ? 'The Firebase service account was found but is missing private_key / client_email, or could not be read.'
+      : 'No Firebase service account is configured. Set FIREBASE_SERVICE_ACCOUNT_JSON (the whole service-account JSON) or FIREBASE_SERVICE_ACCOUNT_PATH in the server .env, then restart with --update-env.';
+  }
+
+  return {
+    configured: canMessage,
+    projectId: serviceAccount?.project_id || '',
+    clientEmail: serviceAccount?.client_email || '',
+    hasDatabaseUrl: Boolean(env.firebase.databaseURL),
+    reason: canMessage ? '' : problem,
+  };
 };
 
 export const getFirebaseDatabase = () => {
