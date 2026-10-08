@@ -215,3 +215,28 @@ test('ride history (GET /rides and GET /deliveries) carries cancellation; null f
   assert.equal(a.cancellation.reason, 'Plans changed');
   assert.equal(b.cancellation, null);
 });
+
+test('feeGoesTo is "driver" only when the driver really received the rider\'s cancellation fee', async () => {
+  const vehicle = await t.factories.vehicle({ setPrice: { user_cancellation_fee_type: 'fixed', user_cancellation_fee: 30, cancellation_fee_goes_to: 'driver' } });
+  const driver = await t.factories.driver({ vehicleTypeId: vehicle._id });
+
+  // accepted ride: the fee is credited to the driver
+  const rider = await t.factories.user();
+  await t.factories.wallet(rider.user._id, 500);
+  const rideId = await bookTaxi(rider, vehicle);
+  await t.acceptRide(rideId, driver.driver._id);
+  const cancel = await t.api('PATCH', `/rides/${rideId}/cancel`, { token: rider.token });
+  assert.equal(cancel.status, 200, cancel.text);
+  assert.equal(cancel.body.data.cancellation.fee, 30);
+  assert.equal(cancel.body.data.cancellation.feeGoesTo, 'driver');
+  const credit = await t.m.WalletTransaction.findOne({ rideId, driverId: driver.driver._id }).lean();
+  assert.ok(credit && credit.amount === 30, 'the driver wallet really got the fee');
+
+  // no driver assigned yet: the setting says "driver" but nobody can receive it, so the platform keeps it
+  const rider2 = await t.factories.user();
+  await t.factories.wallet(rider2.user._id, 500);
+  const searching = await bookTaxi(rider2, vehicle);
+  const cancel2 = await t.api('PATCH', `/rides/${searching}/cancel`, { token: rider2.token });
+  assert.equal(cancel2.body.data.cancellation.fee, 30);
+  assert.equal(cancel2.body.data.cancellation.feeGoesTo, 'admin');
+});
