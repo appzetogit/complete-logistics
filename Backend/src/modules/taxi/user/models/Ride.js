@@ -470,6 +470,16 @@ const rideSchema = new mongoose.Schema(
     // Goods (parcel) bookings only: advance paid online before dispatch.
     // pending = not yet paid (ride must not be dispatched), paid = held,
     // refunded = returned to the rider, forfeited = kept after a rider cancel.
+    /// Who cancelled the ride, when, why, and the cancellation fee charged. Empty (`by: ''`) until cancelled.
+    cancellation: {
+      by: { type: String, enum: ['', 'user', 'driver', 'admin', 'system'], default: '' },
+      at: { type: Date, default: null },
+      code: { type: String, default: '', trim: true },
+      reason: { type: String, default: '', trim: true },
+      fee: { type: Number, default: 0, min: 0 },
+      feeStatus: { type: String, enum: ['none', 'charged', 'not_charged'], default: 'none' },
+      feeGoesTo: { type: String, default: '', trim: true },
+    },
     goodsAdvance: {
       percent: { type: Number, default: 0, min: 0 },
       amount: { type: Number, default: 0, min: 0 },

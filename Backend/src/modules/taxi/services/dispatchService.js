@@ -14,7 +14,7 @@ import {
 } from '../constants/index.js';
 import { Delivery } from '../user/models/Delivery.js';
 import { Vehicle } from '../admin/models/Vehicle.js';
-import { getRideRoom, resolveSetPriceForRide } from './rideService.js';
+import { buildRideCancellation, getRideRoom, resolveSetPriceForRide, serializeRideCancellation } from './rideService.js';
 import { SOCKET_EVENTS } from '../socket/events.js';
 import { resolveTransportDispatchConfig } from './transportSettingsService.js';
 import { sendPushNotificationToEntities } from './pushNotificationService.js';
@@ -987,6 +987,7 @@ const closeRideAsUnmatched = async (rideId) => {
       status: RIDE_STATUS.CANCELLED,
       liveStatus: RIDE_LIVE_STATUS.CANCELLED,
       biddingStatus: 'expired',
+      cancellation: buildRideCancellation({ by: 'system', code: 'no_driver_found', reason: 'No driver accepted the request' }),
     },
     { returnDocument: 'after' },
   );
@@ -1031,7 +1032,7 @@ const closeRideAsUnmatched = async (rideId) => {
   });
 };
 
-export const cancelRideByAdmin = async (rideId) => {
+export const cancelRideByAdmin = async (rideId, { reason = '' } = {}) => {
   stopDispatchFlow(rideId, { releaseLease: false });
 
   const ride = await Ride.findById(rideId);
@@ -1045,6 +1046,9 @@ export const cancelRideByAdmin = async (rideId) => {
   ride.liveStatus = RIDE_LIVE_STATUS.CANCELLED;
   if (ride.bookingMode === 'bidding') {
     ride.biddingStatus = 'cancelled';
+  }
+  if (!ride.cancellation?.by) {
+    ride.cancellation = buildRideCancellation({ by: 'admin', code: 'cancelled_by_admin', reason: reason || 'Cancelled by admin' });
   }
   await ride.save();
 
@@ -1127,7 +1131,7 @@ export const releaseReplacedRide = async (ride) => {
   return { refunded: Boolean(result.refunded) };
 };
 
-export const cancelRideByUser = async ({ rideId, userId }) => {
+export const cancelRideByUser = async ({ rideId, userId, reason = '' }) => {
   const dispatchState = getDispatchState(rideId);
   stopDispatchFlow(rideId, { releaseLease: false });
   const session = await mongoose.startSession();
@@ -1162,6 +1166,16 @@ export const cancelRideByUser = async ({ rideId, userId }) => {
     if (ride.bookingMode === 'bidding') {
       ride.biddingStatus = 'cancelled';
     }
+    const userFeeCharged = ['applied', 'existing'].includes(cancellationSettlement?.userDebitStatus);
+    ride.cancellation = buildRideCancellation({
+      by: 'user',
+      code: 'cancelled_by_user',
+      reason: reason || 'Cancelled by rider',
+      fee: userFeeCharged ? cancellationSettlement.feeAmount : 0,
+      // A fee was due but the rider's wallet could not cover it.
+      feeStatus: Number(cancellationSettlement?.feeAmount || 0) > 0 && !userFeeCharged ? 'not_charged' : undefined,
+      feeGoesTo: cancellationSettlement?.driverCreditStatus && !['none', 'skipped'].includes(cancellationSettlement.driverCreditStatus) ? 'driver' : 'admin',
+    });
     await ride.save({ session });
 
     if (ride.deliveryId) {
@@ -1292,6 +1306,13 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
     if (ride.bookingMode === 'bidding') {
       ride.biddingStatus = 'cancelled';
     }
+    ride.cancellation = buildRideCancellation({
+      by: 'driver',
+      code: 'cancelled_by_driver',
+      reason: 'Driver cancelled the scheduled ride',
+      fee: cancellationSettlement?.feeAmount || 0,
+      feeGoesTo: Number(cancellationSettlement?.feeAmount || 0) > 0 ? 'user' : '',
+    });
     await ride.save({ session });
 
     if (ride.deliveryId) {
@@ -1447,6 +1468,7 @@ export const cancelActiveRideByDriver = async ({ rideId, driverId, reason = '' }
           status: RIDE_STATUS.CANCELLED,
           liveStatus: RIDE_LIVE_STATUS.CANCELLED,
           biddingStatus: 'cancelled',
+          cancellation: buildRideCancellation({ by: 'driver', code: 'cancelled_by_driver', reason: cleanReason || 'Driver cancelled the ride' }),
         },
         $push: { driverCancellations: cancellationEntry },
       };
@@ -1777,7 +1799,11 @@ export const expireStaleAdvanceRides = async () => {
   for (const item of stale) {
     const ride = await Ride.findOneAndUpdate(
       { _id: item._id, status: RIDE_STATUS.SEARCHING, 'goodsAdvance.status': 'pending' },
-      { status: RIDE_STATUS.CANCELLED, liveStatus: RIDE_LIVE_STATUS.CANCELLED },
+      {
+        status: RIDE_STATUS.CANCELLED,
+        liveStatus: RIDE_LIVE_STATUS.CANCELLED,
+        cancellation: buildRideCancellation({ by: 'system', code: 'advance_not_paid', reason: 'Advance payment was not completed in time' }),
+      },
       { returnDocument: 'after' },
     );
 

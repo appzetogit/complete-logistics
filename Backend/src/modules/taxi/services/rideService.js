@@ -29,6 +29,41 @@ import { applyPromoToRideInTransaction } from './promoService.js';
 import { getTipSettings } from './appSettingsService.js';
 import { getBidRideSettings, getTransportRideSettings } from './transportSettingsService.js';
 
+const CANCEL_REASON_MAX = 300;
+
+/**
+ * The `cancellation` block stored on a ride. `by`: user | driver | admin | system;
+ * `code`: a stable machine-readable reason; `reason`: free text (the canceller's own words, or a default).
+ */
+export const buildRideCancellation = ({ by, code, reason = '', fee = 0, feeStatus, feeGoesTo = '' }) => {
+  const safeFee = Math.max(0, Math.round(Number(fee || 0) * 100) / 100);
+  return {
+    by,
+    at: new Date(),
+    code: String(code || '').trim(),
+    reason: String(reason || '').trim().slice(0, CANCEL_REASON_MAX),
+    fee: safeFee,
+    feeStatus: feeStatus || (safeFee > 0 ? 'charged' : 'none'),
+    feeGoesTo: safeFee > 0 ? String(feeGoesTo || '') : '',
+  };
+};
+
+export const serializeRideCancellation = (ride) => {
+  const value = ride?.cancellation;
+  if (!value?.by) {
+    return null;
+  }
+  return {
+    by: value.by,
+    at: value.at || null,
+    code: value.code || '',
+    reason: value.reason || '',
+    fee: Number(value.fee || 0),
+    feeStatus: value.feeStatus || 'none',
+    feeGoesTo: value.feeGoesTo || '',
+  };
+};
+
 const clearUserActiveRideIfPresent = async (user) => {
   if (!user?.currentRideId) {
     return;
@@ -50,6 +85,11 @@ const clearUserActiveRideIfPresent = async (user) => {
 
   activeRide.status = RIDE_STATUS.CANCELLED;
   activeRide.liveStatus = RIDE_LIVE_STATUS.CANCELLED;
+  activeRide.cancellation = buildRideCancellation({
+    by: 'user',
+    code: 'replaced_by_new_booking',
+    reason: 'Replaced by a new booking',
+  });
   await activeRide.save();
   await syncDeliveryWithRide(activeRide);
   // Drivers must stop seeing the old offer. A booking nobody had accepted yet is not a
@@ -1442,6 +1482,7 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
       }
     : null,
   freeRide: { covered: Boolean(ride.freeRide?.covered) },
+  cancellation: serializeRideCancellation(ride),
   goodsAdvance: serializeGoodsAdvance(ride),
   remainingFare: getRemainingFare(ride),
   otp: ride.otp || '',

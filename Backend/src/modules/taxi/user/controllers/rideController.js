@@ -24,6 +24,7 @@ import {
   serializeRideRealtime,
   submitRideFeedback,
   withoutAcceptSelfie,
+  serializeRideCancellation,
   updateRideLifecycle,
 } from '../../services/rideService.js';
 import {
@@ -377,10 +378,13 @@ export const getRideById = async (req, res) => {
 
   // The accept selfie is admin-only; the driver keeps seeing their own.
   const payload = req.auth.role === 'driver' ? ride : withoutAcceptSelfie(ride);
+  const plain = typeof payload.toObject === 'function' ? payload.toObject() : payload;
+  // Same shape as every other ride payload: null until the ride is cancelled.
+  plain.cancellation = serializeRideCancellation(ride);
 
   res.json({
     success: true,
-    data: freeRides ? { ...(typeof payload.toObject === 'function' ? payload.toObject() : payload), freeRides } : payload,
+    data: freeRides ? { ...plain, freeRides } : plain,
   });
 };
 
@@ -1087,6 +1091,7 @@ export const cancelRide = async (req, res) => {
   const ride = await cancelRideByUser({
     rideId: req.params.rideId,
     userId: req.auth.sub,
+    reason: req.body?.reason,
   });
 
   if (!ride) {
@@ -1102,6 +1107,7 @@ export const cancelRide = async (req, res) => {
       // Goods advance: a rider cancel never refunds it (forfeited).
       advanceRefunded: Boolean(ride.$locals?.advance?.refunded),
       advanceStatus: ride.$locals?.advance?.status || ride.goodsAdvance?.status || 'none',
+      cancellation: serializeRideCancellation(ride),
     },
   });
 };

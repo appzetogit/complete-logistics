@@ -6,10 +6,34 @@ import { connectRedis, getRedisStatus } from './src/infrastructure/redis/redisCl
 import { configureTaxiSocketServer } from './src/modules/taxi/socket/index.js';
 import { User } from './src/modules/taxi/user/models/User.js';
 import { getFirebaseStatus } from './src/config/firebase.js';
+import { Driver } from './src/modules/taxi/driver/models/Driver.js';
+import { Zone } from './src/modules/taxi/driver/models/Zone.js';
+import { ServiceLocation } from './src/modules/taxi/admin/models/ServiceLocation.js';
+
+// Production runs with autoIndex off, so the geo indexes driver matching needs ($near on drivers,
+// zone lookup) may never have been built - then every dispatch attempt throws. Make sure they exist;
+// creating an index that already exists is a no-op.
+const ensureDispatchGeoIndexes = async () => {
+  const wanted = [
+    [Driver, { location: '2dsphere' }],
+    [Driver, { 'routeBooking.anchorLocation': '2dsphere' }],
+    [Zone, { geometry: '2dsphere' }],
+    [ServiceLocation, { location: '2dsphere' }],
+  ];
+  for (const [model, keys] of wanted) {
+    try {
+      await model.collection.createIndex(keys);
+    } catch (error) {
+      console.error(`[indexes] could not create ${model.collection.collectionName} ${JSON.stringify(keys)}: ${error.message}`);
+    }
+  }
+  console.log('[indexes] dispatch geo indexes checked');
+};
 import { restoreScheduledDispatches, startDispatchRecoveryLoop } from './src/modules/taxi/services/dispatchService.js';
 
 const bootstrap = async () => {
   await connectDatabase();
+  await ensureDispatchGeoIndexes();
   if (!env.redis.enabled || !env.redis.url) {
     console.warn('[redis] disabled or not configured, falling back to in-memory rate limiting');
   } else {
