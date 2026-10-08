@@ -890,14 +890,35 @@ export const getOpenRideOffersForDriver = async (driverId) => {
   }
 
   const dispatchConfig = await resolveTransportDispatchConfig();
+
+  // In one-by-one mode only the driver whose turn it is has an open window; the ones the
+  // dispatch already moved past were told `rideRequestClosed` and must not see it again.
+  const openRides = dispatchConfig.dispatchType !== 'one_by_one' ? rides : rides.filter((ride) => {
+    const turnDriverIds = getDispatchState(ride._id).driverIds;
+    if (turnDriverIds.length) {
+      return turnDriverIds.includes(safeDriverId);
+    }
+    // This worker holds no live state for the ride: fall back to what was persisted.
+    const notified = normalizeDispatchDriverIds(ride.dispatchTracking?.notifiedDriverIds);
+    const lastAttemptAt = ride.dispatchTracking?.lastDispatchAttemptAt
+      ? new Date(ride.dispatchTracking.lastDispatchAttemptAt).getTime()
+      : 0;
+    return notified[notified.length - 1] === safeDriverId
+      && Date.now() - lastAttemptAt <= dispatchConfig.retryDelayMs;
+  });
+
+  if (!openRides.length) {
+    return [];
+  }
+
   const requestExpiresAt = new Date(Date.now() + dispatchConfig.retryDelayMs).toISOString();
-  const vehicleIds = [...new Set(rides.map((ride) => String(ride.vehicleTypeId || '')).filter(Boolean))];
+  const vehicleIds = [...new Set(openRides.map((ride) => String(ride.vehicleTypeId || '')).filter(Boolean))];
   const vehicles = vehicleIds.length
     ? await Vehicle.find({ _id: { $in: vehicleIds } }).select('name capacity_label load_capacity_ton').lean()
     : [];
   const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle._id), vehicle]));
 
-  return rides.map((ride) => buildRideRequestPayload({
+  return openRides.map((ride) => buildRideRequestPayload({
     ride,
     bookedVehicle: vehicleById.get(String(ride.vehicleTypeId || '')) || null,
     effectiveRadius: 0,

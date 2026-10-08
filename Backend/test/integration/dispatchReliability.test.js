@@ -318,3 +318,31 @@ test('verify is not starved by the shared payment rate limit (20 order attempts,
   assert.notEqual(verify.status, 429, 'verify has its own, higher limit');
   await sleep(0);
 });
+
+test('one-by-one: a driver the dispatch already moved past is not offered the request again', async () => {
+  await t.setSettings('transport_ride', { trip_accept_reject_duration_for_driver: '2' });
+  try {
+    const vehicle = await t.factories.vehicle({ commission: 10 });
+    const rider = await t.factories.user();
+    const a = await t.factories.driver({ vehicleTypeId: vehicle._id });
+    const b = await t.factories.driver({ vehicleTypeId: vehicle._id });
+    await t.factories.wallet(rider.user._id, 5000);
+    const delivery = await book({ vehicle, rider });
+    await payWithWallet(rider, delivery.rideId);
+
+    const ride = await waitFor(async () => {
+      const current = await loadRide(delivery.rideId);
+      return current.dispatchTracking.notifiedDriverIds.length >= 2 ? current : null;
+    }, { message: 'dispatch moved to the second driver', timeout: 12000 });
+
+    const [firstId, secondId] = ride.dispatchTracking.notifiedDriverIds;
+    const tokenOf = (id) => [a, b].find((item) => String(item.driver._id) === id).token;
+
+    const first = await t.api('GET', '/drivers/ride-offers', { token: tokenOf(firstId) });
+    assert.equal(first.body.data.results.length, 0, 'window closed for the first driver');
+    const second = await t.api('GET', '/drivers/ride-offers', { token: tokenOf(secondId) });
+    assert.equal(second.body.data.results.length, 1, 'the driver whose turn it is still sees it');
+  } finally {
+    await t.setSettings('transport_ride', { trip_accept_reject_duration_for_driver: '15' });
+  }
+});
