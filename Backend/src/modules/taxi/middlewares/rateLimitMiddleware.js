@@ -283,6 +283,15 @@ export const paymentOrderRateLimit = createRateLimitMiddleware({
   message: 'Too many payment requests. Please try again later.',
 });
 
+// Confirming an advance the rider has ALREADY paid must not be blocked by the shared payment limiter.
+export const goodsAdvanceConfirmRateLimit = createRateLimitMiddleware({
+  scope: 'goods_advance_confirm',
+  max: 60,
+  windowMs: 15 * 60 * 1000,
+  mode: 'auth_or_ip',
+  message: 'Too many payment confirmations. Please try again shortly.',
+});
+
 export const availableDriversRateLimit = createRateLimitMiddleware({
   scope: 'available_drivers',
   max: 60,

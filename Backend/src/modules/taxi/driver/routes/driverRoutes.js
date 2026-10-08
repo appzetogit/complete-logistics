@@ -118,6 +118,7 @@ import {
   uploadPoolingOnboardingImageRequest,
 } from "../controllers/driverController.js";
 import { triggerDriverSosAlert } from '../../safety/controllers/safetyController.js';
+import { getOpenRideOffersForDriver } from '../../services/dispatchService.js';
 
 export const driverRouter = Router();
 
@@ -154,6 +155,16 @@ driverRouter.post(
 driverRouter.post(
   "/pooling/onboarding/upload-image",
   asyncHandler(uploadPoolingOnboardingImageRequest),
+);
+// Requests this driver was offered and has not answered: lets the app recover one it missed
+// (socket was down, app was in the background). Same shape as the `rideRequest` event.
+driverRouter.get(
+  "/ride-offers",
+  authenticate(["driver"]),
+  asyncHandler(async (req, res) => {
+    const results = await getOpenRideOffersForDriver(req.auth.sub);
+    res.json({ success: true, data: { results, total: results.length } });
+  }),
 );
 driverRouter.get(
   "/me",

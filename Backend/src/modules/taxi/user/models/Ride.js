@@ -470,6 +470,8 @@ const rideSchema = new mongoose.Schema(
       },
       provider: { type: String, default: '', trim: true },
       providerOrderId: { type: String, default: '', trim: true },
+      // Every order created for this advance, so a payment on an older order can still be reconciled.
+      providerOrderIds: { type: [String], default: [] },
       providerPaymentId: { type: String, default: '', trim: true },
       refundDestination: { type: String, default: '', trim: true },
       paidAt: { type: Date, default: null },

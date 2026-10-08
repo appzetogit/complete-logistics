@@ -194,7 +194,10 @@ export const createGoodsAdvanceOrder = async ({ rideId, userId, deps = {} }) => 
   // Only the latest order for this ride can be verified.
   await RideModel.updateOne(
     { _id: ride._id, 'goodsAdvance.status': 'pending' },
-    { $set: { 'goodsAdvance.provider': 'razorpay', 'goodsAdvance.providerOrderId': order.id } },
+    {
+      $set: { 'goodsAdvance.provider': 'razorpay', 'goodsAdvance.providerOrderId': order.id },
+      $addToSet: { 'goodsAdvance.providerOrderIds': order.id },
+    },
   );
 
   return {
@@ -316,6 +319,202 @@ export const verifyGoodsAdvancePayment = async ({
   }
 
   return { ride: paid, alreadyPaid: false };
+};
+
+/**
+ * Applies a captured Razorpay payment to the goods advance it was made for, no matter
+ * which path learned about it first (checkout verify, webhook or reconcile).
+ * Identified by the order notes we wrote when creating the order, and checked against
+ * the advance amount. Idempotent: the same payment twice is a no-op; a second payment
+ * on an advance that is already settled (or a booking that closed) is refunded.
+ * Returns { handled, ride?, alreadyPaid?, refunded?, reason? }.
+ */
+export const applyGatewayAdvancePayment = async ({ orderId, paymentId, amountPaise, notes = {}, deps = {} }) => {
+  const RideModel = deps.Ride || Ride;
+  const rideId = String(notes?.rideId || '');
+
+  if (notes?.purpose !== 'goods_advance' || !mongoose.isValidObjectId(rideId) || !orderId || !paymentId) {
+    return { handled: false, reason: 'not_a_goods_advance_payment' };
+  }
+
+  const ride = await RideModel.findOne({ _id: rideId, serviceType: 'parcel' });
+  if (!ride || !ride.goodsAdvance || ride.goodsAdvance.status === 'none') {
+    return { handled: false, reason: 'booking_not_found' };
+  }
+
+  if (notes.userId && String(ride.userId) !== String(notes.userId)) {
+    return { handled: false, reason: 'rider_mismatch' };
+  }
+
+  const expectedPaise = Math.round(roundMoney(ride.goodsAdvance.amount) * 100);
+  if (Number(amountPaise) !== expectedPaise) {
+    return { handled: false, reason: 'amount_mismatch' };
+  }
+
+  if (ride.goodsAdvance.providerPaymentId === paymentId) {
+    return { handled: true, ride, alreadyPaid: true };
+  }
+
+  const refundThisPayment = async (reason) => {
+    await refundRazorpayPayment({
+      paymentId,
+      amount: ride.goodsAdvance.amount,
+      notes: { rideId: String(ride._id), reason },
+      deps,
+    }).catch((error) => {
+      console.error('Goods advance auto-refund failed', String(ride._id), paymentId, error?.message || error);
+    });
+    return { handled: true, ride, refunded: true, reason };
+  };
+
+  if (ride.goodsAdvance.status !== 'pending') {
+    return refundThisPayment('advance_already_settled');
+  }
+
+  const duplicate = await RideModel.exists({
+    _id: { $ne: ride._id },
+    'goodsAdvance.providerPaymentId': paymentId,
+  });
+  if (duplicate) {
+    return { handled: false, reason: 'payment_used_elsewhere' };
+  }
+
+  const paid = await RideModel.findOneAndUpdate(
+    { _id: ride._id, status: RIDE_STATUS.SEARCHING, 'goodsAdvance.status': 'pending' },
+    {
+      $set: {
+        'goodsAdvance.status': 'paid',
+        'goodsAdvance.provider': 'razorpay',
+        'goodsAdvance.providerOrderId': orderId,
+        'goodsAdvance.providerPaymentId': paymentId,
+        'goodsAdvance.paidAt': new Date(),
+      },
+      $addToSet: { 'goodsAdvance.providerOrderIds': orderId },
+    },
+    { returnDocument: 'after' },
+  );
+
+  if (!paid) {
+    return refundThisPayment('booking_closed_before_payment');
+  }
+
+  return { handled: true, ride: paid, alreadyPaid: false };
+};
+
+const WEBHOOK_PAYMENT_EVENTS = new Set(['payment.captured', 'order.paid']);
+
+/**
+ * Razorpay webhook. The signature is checked against the RAW request body with
+ * RAZORPAY_WEBHOOK_SECRET. Only payment.captured / order.paid for goods advances are acted on;
+ * everything else is acknowledged and ignored.
+ */
+export const handleRazorpayWebhook = async ({ rawBody, signature, deps = {} }) => {
+  const secret = String(deps.webhookSecret ?? process.env.RAZORPAY_WEBHOOK_SECRET ?? '').trim();
+  if (!secret) {
+    throw new ApiError(503, 'Razorpay webhook is not configured');
+  }
+
+  const body = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody || ''));
+  const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
+  if (!signature || !signaturesMatch(expected, signature)) {
+    throw new ApiError(400, 'Invalid webhook signature');
+  }
+
+  let event;
+  try {
+    event = JSON.parse(body.toString('utf8'));
+  } catch {
+    throw new ApiError(400, 'Invalid webhook body');
+  }
+
+  if (!WEBHOOK_PAYMENT_EVENTS.has(event?.event)) {
+    return { handled: false, reason: 'ignored_event' };
+  }
+
+  const payment = event?.payload?.payment?.entity;
+  const orderEntity = event?.payload?.order?.entity;
+  const orderId = String(payment?.order_id || orderEntity?.id || '');
+  if (!payment?.id || !orderId || payment.status !== 'captured') {
+    return { handled: false, reason: 'no_payment' };
+  }
+
+  let notes = orderEntity?.notes?.purpose ? orderEntity.notes : payment?.notes;
+  if (!notes?.purpose) {
+    // Payment entities do not always carry the order's notes: read them from the order.
+    const { keyId, keySecret } = await (deps.resolveCredentials || resolveRazorpayCredentials)();
+    const order = await (deps.razorpayRequest || razorpayRequest)({
+      method: 'GET',
+      path: `/orders/${encodeURIComponent(orderId)}`,
+      keyId,
+      keySecret,
+    });
+    notes = order?.notes || {};
+  }
+
+  return applyGatewayAdvancePayment({
+    orderId,
+    paymentId: String(payment.id),
+    amountPaise: payment.amount,
+    notes,
+    deps,
+  });
+};
+
+/**
+ * The rider's app lost the verify call after paying (network, timeout). Asks Razorpay
+ * about every order created for this booking and applies a captured payment if there is one.
+ * Returns { ride, alreadyPaid }.
+ */
+export const reconcileGoodsAdvancePayment = async ({ rideId, userId, deps = {} }) => {
+  const RideModel = deps.Ride || Ride;
+  const ride = await loadOwnPendingAdvanceRide({ rideId, userId, RideModel });
+
+  if (ride.goodsAdvance.status === 'paid') {
+    return { ride, alreadyPaid: true };
+  }
+  if (ride.goodsAdvance.status !== 'pending') {
+    throw new ApiError(409, 'The advance for this booking is not payable');
+  }
+
+  const orderIds = [...new Set([
+    ride.goodsAdvance.providerOrderId,
+    ...(ride.goodsAdvance.providerOrderIds || []),
+  ].filter(Boolean))];
+
+  if (!orderIds.length) {
+    throw new ApiError(404, 'No online payment was started for this booking');
+  }
+
+  const { keyId, keySecret } = await (deps.resolveCredentials || resolveRazorpayCredentials)();
+  const request = deps.razorpayRequest || razorpayRequest;
+
+  for (const orderId of orderIds) {
+    const [order, payments] = await Promise.all([
+      request({ method: 'GET', path: `/orders/${encodeURIComponent(orderId)}`, keyId, keySecret }),
+      request({ method: 'GET', path: `/orders/${encodeURIComponent(orderId)}/payments`, keyId, keySecret }),
+    ]);
+    const captured = (payments?.items || []).find((item) => item?.status === 'captured');
+    if (!captured) {
+      continue;
+    }
+
+    const result = await applyGatewayAdvancePayment({
+      orderId,
+      paymentId: String(captured.id),
+      amountPaise: captured.amount,
+      notes: order?.notes || {},
+      deps,
+    });
+
+    if (result.handled && result.ride && !result.refunded) {
+      return { ride: result.ride, alreadyPaid: Boolean(result.alreadyPaid) };
+    }
+    if (result.refunded) {
+      throw new ApiError(409, 'This booking is no longer open. Any amount paid will be refunded.');
+    }
+  }
+
+  throw new ApiError(404, 'No completed payment was found for this booking yet');
 };
 
 // ------------------------------------------------------------------ Wallet

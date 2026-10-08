@@ -3,7 +3,9 @@ import { startDispatchFlow } from '../../services/dispatchService.js';
 import { getRideDetails } from '../../services/rideService.js';
 import {
   createGoodsAdvanceOrder,
+  handleRazorpayWebhook,
   payGoodsAdvanceWithWallet,
+  reconcileGoodsAdvancePayment,
   verifyGoodsAdvancePayment,
 } from '../services/goodsAdvanceService.js';
 import { serializeDeliveryRealtime } from '../services/deliveryService.js';
@@ -133,6 +135,32 @@ export const verifyGoodsAdvanceRazorpayPayment = async (req, res) => {
   });
 
   await respondAfterAdvancePaid(res, { ride });
+};
+
+export const reconcileGoodsAdvanceRazorpayPayment = async (req, res) => {
+  const { ride } = await reconcileGoodsAdvancePayment({
+    rideId: String(req.body?.rideId || '').trim(),
+    userId: req.auth.sub,
+  });
+
+  await respondAfterAdvancePaid(res, { ride });
+};
+
+// Razorpay -> server. Starts dispatch even if the rider's app never called verify.
+export const razorpayAdvanceWebhook = async (req, res) => {
+  const result = await handleRazorpayWebhook({
+    rawBody: req.rawBody,
+    signature: String(req.get('x-razorpay-signature') || ''),
+  });
+
+  if (result.handled && result.ride && !result.refunded) {
+    const detailed = await getRideDetails(result.ride._id);
+    if (detailed.status === 'searching' && !detailed.driverId) {
+      await startDispatchFlow(detailed);
+    }
+  }
+
+  res.json({ success: true, handled: Boolean(result.handled) });
 };
 
 export const payGoodsAdvanceFromWallet = async (req, res) => {

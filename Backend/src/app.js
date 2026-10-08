@@ -15,7 +15,15 @@ app.use(
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
-  app.use(express.json({ limit: '25mb' }));
+  app.use(express.json({
+    limit: '25mb',
+    // Razorpay signs the exact bytes it sent, so keep them for the webhook route only.
+    verify: (req, _res, buf) => {
+      if (String(req.originalUrl || '').includes('/advance/razorpay/webhook')) {
+        req.rawBody = buf;
+      }
+    },
+  }));
   app.use(express.urlencoded({ extended: true })); 
   app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
 

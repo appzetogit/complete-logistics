@@ -706,6 +706,7 @@ const getDispatchState = (rideId) => {
     driverIds: Array.isArray(state.driverIds) ? state.driverIds : [],
     notifiedDriverIds: Array.isArray(state.notifiedDriverIds) ? state.notifiedDriverIds : [],
     rejectedDriverIds: Array.isArray(state.rejectedDriverIds) ? state.rejectedDriverIds : [],
+    errorRetries: Number.isInteger(state.errorRetries) ? state.errorRetries : 0,
   };
 };
 
@@ -739,6 +740,74 @@ const closeDriverRequestWindow = (rideId, driverIds = []) => {
   }
 };
 
+const buildRideRequestPayload = ({
+  ride,
+  bookedVehicle = null,
+  zone = null,
+  effectiveRadius = 0,
+  dispatchVehicleTypeIds = [],
+  dispatchConfig,
+  attemptIndex = 0,
+  requestExpiresAt,
+}) => ({
+  rideId: String(ride._id),
+  type: ride.serviceType || 'ride',
+  serviceType: ride.serviceType || 'ride',
+  userId: String(ride.userId),
+  user: {
+    id: ride.userId?._id ? String(ride.userId._id) : String(ride.userId || ''),
+    name: ride.userId?.name || 'Customer',
+    phone: ride.userId?.phone || '',
+    countryCode: ride.userId?.countryCode || '',
+  },
+  pickupLocation: ride.pickupLocation,
+  pickupAddress: ride.pickupAddress || '',
+  dropLocation: ride.dropLocation,
+  dropAddress: ride.dropAddress || '',
+  scheduledAt: ride.scheduledAt || null,
+  estimatedDistanceMeters: ride.estimatedDistanceMeters || 0,
+  estimatedDurationMinutes: ride.estimatedDurationMinutes || 0,
+  vehicleTypeId: ride.vehicleTypeId ? String(ride.vehicleTypeId) : null,
+  vehicleTypeName: bookedVehicle?.name || '',
+  vehicleCapacityLabel:
+    bookedVehicle?.capacity_label ||
+    (Number(bookedVehicle?.load_capacity_ton || 0) > 0 ? `${bookedVehicle.load_capacity_ton} Ton` : ''),
+  vehicleTypeIds: dispatchVehicleTypeIds,
+  vehicleIconType: ride.vehicleIconType,
+  vehicleIconUrl: ride.vehicleIconUrl || '',
+  fare: ride.fare,
+  baseFare: Number(ride.baseFare || ride.fare || 0),
+  bookingMode: ride.bookingMode || 'normal',
+  pricingNegotiationMode: ride.pricingNegotiationMode || 'none',
+  biddingStatus: ride.biddingStatus || 'none',
+  bidding: ride.pricingNegotiationMode === 'driver_bid'
+    ? {
+        enabled: true,
+        baseFare: Number(ride.baseFare || ride.fare || 0),
+        bidFloorFare: Number(ride.bidFloorFare ?? ride.baseFare ?? ride.fare ?? 0),
+        userMaxBidFare: Number(ride.userMaxBidFare || ride.fare || 0),
+        bidCeilingMaxFare: Number(ride.bidCeilingMaxFare || ride.userMaxBidFare || ride.fare || 0),
+        bidStepAmount: Number(ride.bidStepAmount || 10),
+      }
+    : {
+        enabled: false,
+      },
+  fareIncreaseWaitMinutes: Number(ride.fareIncreaseWaitMinutes || 0),
+  nextFareIncreaseAt: ride.nextFareIncreaseAt || null,
+  paymentMethod: ride.paymentMethod,
+  goodsAdvance: serializeGoodsAdvance(ride),
+  remainingFare: getRemainingFare(ride),
+  parcel: ride.parcel || null,
+  intercity: ride.intercity || null,
+  radius: effectiveRadius,
+  attempt: attemptIndex + 1,
+  maxAttempts: dispatchConfig.maxAttempts,
+  acceptRejectDurationSeconds: dispatchConfig.retryWindowSeconds,
+  expiresInSeconds: dispatchConfig.retryWindowSeconds,
+  requestExpiresAt,
+  zoneId: zone?._id ? String(zone._id) : null,
+});
+
 const emitRideRequestToDrivers = async ({
   ride,
   targetDrivers = [],
@@ -764,64 +833,16 @@ const emitRideRequestToDrivers = async ({
   const requestExpiresAt = new Date(Date.now() + dispatchConfig.retryDelayMs).toISOString();
 
   for (const driver of targetDrivers) {
-    emitToDriver(driver._id, 'rideRequest', {
-      rideId: String(ride._id),
-      type: ride.serviceType || 'ride',
-      serviceType: ride.serviceType || 'ride',
-      userId: String(ride.userId),
-      user: {
-        id: ride.userId?._id ? String(ride.userId._id) : String(ride.userId || ''),
-        name: ride.userId?.name || 'Customer',
-        phone: ride.userId?.phone || '',
-        countryCode: ride.userId?.countryCode || '',
-      },
-      pickupLocation: ride.pickupLocation,
-      pickupAddress: ride.pickupAddress || '',
-      dropLocation: ride.dropLocation,
-      dropAddress: ride.dropAddress || '',
-      scheduledAt: ride.scheduledAt || null,
-      estimatedDistanceMeters: ride.estimatedDistanceMeters || 0,
-      estimatedDurationMinutes: ride.estimatedDurationMinutes || 0,
-      vehicleTypeId: ride.vehicleTypeId ? String(ride.vehicleTypeId) : null,
-      vehicleTypeName: bookedVehicle?.name || '',
-      vehicleCapacityLabel:
-        bookedVehicle?.capacity_label ||
-        (Number(bookedVehicle?.load_capacity_ton || 0) > 0 ? `${bookedVehicle.load_capacity_ton} Ton` : ''),
-      vehicleTypeIds: dispatchVehicleTypeIds,
-      vehicleIconType: ride.vehicleIconType,
-      vehicleIconUrl: ride.vehicleIconUrl || '',
-      fare: ride.fare,
-      baseFare: Number(ride.baseFare || ride.fare || 0),
-      bookingMode: ride.bookingMode || 'normal',
-      pricingNegotiationMode: ride.pricingNegotiationMode || 'none',
-      biddingStatus: ride.biddingStatus || 'none',
-      bidding: ride.pricingNegotiationMode === 'driver_bid'
-        ? {
-            enabled: true,
-            baseFare: Number(ride.baseFare || ride.fare || 0),
-            bidFloorFare: Number(ride.bidFloorFare ?? ride.baseFare ?? ride.fare ?? 0),
-            userMaxBidFare: Number(ride.userMaxBidFare || ride.fare || 0),
-            bidCeilingMaxFare: Number(ride.bidCeilingMaxFare || ride.userMaxBidFare || ride.fare || 0),
-            bidStepAmount: Number(ride.bidStepAmount || 10),
-          }
-        : {
-            enabled: false,
-          },
-      fareIncreaseWaitMinutes: Number(ride.fareIncreaseWaitMinutes || 0),
-      nextFareIncreaseAt: ride.nextFareIncreaseAt || null,
-      paymentMethod: ride.paymentMethod,
-      goodsAdvance: serializeGoodsAdvance(ride),
-      remainingFare: getRemainingFare(ride),
-      parcel: ride.parcel || null,
-      intercity: ride.intercity || null,
-      radius: effectiveRadius,
-      attempt: attemptIndex + 1,
-      maxAttempts: dispatchConfig.maxAttempts,
-      acceptRejectDurationSeconds: dispatchConfig.retryWindowSeconds,
-      expiresInSeconds: dispatchConfig.retryWindowSeconds,
+    emitToDriver(driver._id, 'rideRequest', buildRideRequestPayload({
+      ride,
+      bookedVehicle,
+      zone,
+      effectiveRadius,
+      dispatchVehicleTypeIds,
+      dispatchConfig,
+      attemptIndex,
       requestExpiresAt,
-      zoneId: zone?._id ? String(zone._id) : null,
-    });
+    }));
   }
 
   sendPushNotificationToEntities({
@@ -839,6 +860,60 @@ const emitRideRequestToDrivers = async ({
   }).catch((error) => {
     console.error('Failed to send driver ride-request push notification', error);
   });
+};
+
+/**
+ * Searching rides this driver was already offered (and has not rejected), in the
+ * same shape as the `rideRequest` socket event. Used by GET /drivers/ride-offers
+ * and re-sent when the driver's socket (re)connects, so a request emitted while
+ * their socket was down is not lost.
+ */
+export const getOpenRideOffersForDriver = async (driverId) => {
+  const safeDriverId = String(driverId || '');
+  if (!safeDriverId) {
+    return [];
+  }
+
+  const rides = await Ride.find({
+    status: RIDE_STATUS.SEARCHING,
+    'dispatchTracking.notifiedDriverIds': safeDriverId,
+    'dispatchTracking.rejectedDriverIds': { $ne: safeDriverId },
+    'goodsAdvance.status': { $ne: 'pending' },
+    $or: [{ driverId: null }, { driverId: { $exists: false } }],
+  })
+    .sort({ createdAt: -1 })
+    .limit(10)
+    .populate('userId', 'name phone countryCode');
+
+  if (!rides.length) {
+    return [];
+  }
+
+  const dispatchConfig = await resolveTransportDispatchConfig();
+  const requestExpiresAt = new Date(Date.now() + dispatchConfig.retryDelayMs).toISOString();
+  const vehicleIds = [...new Set(rides.map((ride) => String(ride.vehicleTypeId || '')).filter(Boolean))];
+  const vehicles = vehicleIds.length
+    ? await Vehicle.find({ _id: { $in: vehicleIds } }).select('name capacity_label load_capacity_ton').lean()
+    : [];
+  const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle._id), vehicle]));
+
+  return rides.map((ride) => buildRideRequestPayload({
+    ride,
+    bookedVehicle: vehicleById.get(String(ride.vehicleTypeId || '')) || null,
+    effectiveRadius: 0,
+    dispatchVehicleTypeIds: getDispatchVehicleTypeIds(ride),
+    dispatchConfig,
+    attemptIndex: getDispatchState(ride._id).radiusIndex,
+    requestExpiresAt,
+  }));
+};
+
+export const emitOpenRideOffersToDriver = async (driverId) => {
+  const offers = await getOpenRideOffersForDriver(driverId);
+  for (const offer of offers) {
+    emitToDriver(driverId, 'rideRequest', offer);
+  }
+  return offers.length;
 };
 
 export const markDriverRejectedFromDispatch = async (rideId, driverId) => {
@@ -964,6 +1039,41 @@ export const cancelRideByAdmin = async (rideId) => {
 
   stopDispatchFlow(rideId);
   return ride;
+};
+
+/**
+ * A new booking replaced this ride (already marked cancelled by the caller).
+ * Stops its dispatch, closes the offer on every driver's screen and, when no
+ * driver had taken it yet, refunds a paid goods advance: the rider did not
+ * really cancel, so the advance must not be forfeited.
+ * Returns { refunded } - when false and a driver was assigned the caller keeps the forfeit rule.
+ */
+export const releaseReplacedRide = async (ride) => {
+  const rideId = String(ride._id);
+  const dispatchState = getDispatchState(rideId);
+  const notifiedDriverIds = [...new Set([
+    ...dispatchState.notifiedDriverIds,
+    ...normalizeDispatchDriverIds(ride.dispatchTracking?.notifiedDriverIds),
+  ])];
+
+  stopDispatchFlow(rideId);
+  await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
+
+  for (const driverId of [...notifiedDriverIds, ...(ride.driverId ? [String(ride.driverId)] : [])]) {
+    emitToDriver(driverId, 'rideRequestClosed', {
+      rideId,
+      reason: 'user-replaced-booking',
+      message: 'The rider made a new booking.',
+    });
+  }
+  emitToRoom(getRideRoom(rideId), 'rideRequestClosed', { rideId, reason: 'user-replaced-booking' });
+
+  if (ride.driverId || ride.serviceType !== 'parcel' || ride.goodsAdvance?.status !== 'paid') {
+    return { refunded: false };
+  }
+
+  const result = await refundGoodsAdvanceForRide(rideId, 'replaced_by_new_booking');
+  return { refunded: Boolean(result.refunded) };
 };
 
 export const cancelRideByUser = async ({ rideId, userId }) => {
@@ -1401,14 +1511,17 @@ export const cancelActiveRideByDriver = async ({ rideId, driverId, reason = '' }
   return { ride, redispatched: reopen, advanceRefunded, cancelStatus };
 };
 
-const scheduleNextAttempt = (rideId, nextAttemptIndex, retryDelayMs) => {
+const DISPATCH_ERROR_MAX_RETRIES = 3;
+const DISPATCH_ERROR_RETRY_DELAY_MS = Number(process.env.DISPATCH_ERROR_RETRY_DELAY_MS) || 5000;
+
+const scheduleNextAttempt = (rideId, nextAttemptIndex, retryDelayMs, extraState = {}) => {
   const timer = setTimeout(() => {
     dispatchAttempt(rideId, nextAttemptIndex).catch((error) => {
       console.error('Dispatch retry failed', error);
     });
   }, retryDelayMs);
 
-  saveDispatchState(rideId, { timer });
+  saveDispatchState(rideId, { timer, errorRetries: 0, ...extraState });
 };
 
 const getAttemptRadiusMeters = (baseDistanceMeters, attemptIndex) => {
@@ -1525,6 +1638,14 @@ const dispatchAttempt = async (rideId, attemptIndex = 0) => {
 
     scheduleNextAttempt(rideId, attemptIndex + 1, dispatchConfig.retryDelayMs);
   } catch (error) {
+    console.error('Dispatch attempt failed', String(rideId), `attempt ${attemptIndex + 1}`, error?.message || error);
+    const failures = Number(getDispatchState(rideId).errorRetries || 0);
+    if (failures < DISPATCH_ERROR_MAX_RETRIES) {
+      // Transient (DB blip, missing index, ...): try this same attempt again
+      // instead of cancelling the rider's booking (and refunding their advance).
+      scheduleNextAttempt(rideId, attemptIndex, DISPATCH_ERROR_RETRY_DELAY_MS, { errorRetries: failures + 1 });
+      return;
+    }
     await closeRideAsUnmatched(rideId);
     stopDispatchFlow(rideId);
     throw error;
@@ -1627,6 +1748,33 @@ export const expireStaleAdvanceRides = async () => {
   }
 };
 
+/**
+ * A driver left flagged `isOnRide` with no live ride is excluded from matching until
+ * they go online again. The sweep clears the flag for drivers who have no accepted or
+ * ongoing ride any more.
+ */
+export const healStaleDriverOnRideFlags = async () => {
+  const flagged = await Driver.find({ isOnRide: true }).select('_id').limit(500).lean();
+  if (!flagged.length) {
+    return 0;
+  }
+
+  const ids = flagged.map((driver) => driver._id);
+  const busyDriverIds = new Set(
+    (await Ride.distinct('driverId', {
+      driverId: { $in: ids },
+      status: { $in: [RIDE_STATUS.ACCEPTED, RIDE_STATUS.ONGOING] },
+    })).map((id) => String(id)),
+  );
+  const staleIds = ids.filter((id) => !busyDriverIds.has(String(id)));
+
+  if (staleIds.length) {
+    await Driver.updateMany({ _id: { $in: staleIds }, isOnRide: true }, { isOnRide: false });
+  }
+
+  return staleIds.length;
+};
+
 export const startDispatchRecoveryLoop = () => {
   if (dispatchRecoveryTimer) {
     return;
@@ -1638,6 +1786,9 @@ export const startDispatchRecoveryLoop = () => {
     });
     expireStaleAdvanceRides().catch((error) => {
       console.error('Stale goods advance sweep failed', error);
+    });
+    healStaleDriverOnRideFlags().catch((error) => {
+      console.error('Stale isOnRide sweep failed', error);
     });
   }, DISPATCH_RECOVERY_INTERVAL_MS);
 

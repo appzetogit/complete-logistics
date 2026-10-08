@@ -19,6 +19,7 @@ import {
   joinRideRoom,
   markDriverRejectedFromDispatch,
   notifyLateAvailableDriver,
+  emitOpenRideOffersToDriver,
   notifyRideAccepted,
   notifyRideBidUpdated,
   setSocketServer,
@@ -116,6 +117,10 @@ export const configureTaxiSocketServer = async (httpServer) => {
       });
       notifyLateAvailableDriver(identity.sub).catch((error) => {
         console.error('Failed to notify late-available driver on socket connect', error);
+      });
+      // A request emitted while this socket was down is re-sent now.
+      emitOpenRideOffersToDriver(identity.sub).catch((error) => {
+        console.error('Failed to re-send open ride offers on socket connect', error);
       });
     }
 
