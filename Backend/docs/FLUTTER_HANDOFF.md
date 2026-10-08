@@ -19,6 +19,8 @@ Base URL / login / socket ki basic jaankari: `FLUTTER_DEVELOPER_GUIDE.md`.
 | 10 | **Cancel preview** (fee + advance warning) | User app | section 12 |
 | 11 | Free ride: `maxFare`, quote me `coveredBy` | User app | section 13 |
 | 12 | **Subscription**: Razorpay purchase, multi-vehicle plan | User app | section 14, `SELFIES_FREE_RIDES_SUBSCRIPTIONS.md` |
+| 13 | Ride **cancellation details** (by, at, reason, fee) + cancel reason | User app + Driver app | section 16, `RIDE_CANCELLATION_DETAILS.md` |
+| 14 | **Push notifications** fix (FCM token sync, permission, foreground, tap) | User app + Driver app | section 17, `FLUTTER_PUSH_NOTIFICATIONS.md` |
 
 > **Sabse zaroori:** Feature 1 (advance) app me na ho to goods booking driver tak jaati hi nahi
 > (30 min baad auto-cancel). Pehle ye bana lo.
@@ -248,3 +250,73 @@ Cancel confirm dialog se pehle: `GET /rides/:rideId/cancel-preview`
 - [ ] User: cancel dialog `cancel-preview` se fee aur advance warning dikhata hai.
 - [ ] User: `coveredBy` set ho to advance/payment UI nahi, "FREE"/"covered" dikhta hai.
 - [ ] User: subscription Razorpay se kharido, multi-vehicle plan par dono vehicles covered, payment sheet skip.
+
+---
+
+# Latest changes (cancellation details, push notifications)
+
+## 16. Ride cancellation details (User app + Driver app)
+
+Har cancelled ride ab batati hai **kisne**, **kab**, **kyun** cancel kiya aur **kitni fee** lagi. Detail: `RIDE_CANCELLATION_DETAILS.md`.
+
+```json
+"cancellation": {
+  "by": "user" | "driver" | "admin" | "system",
+  "at": "2026-10-08T10:15:00.000Z",
+  "code": "cancelled_by_user",
+  "reason": "Driver too far away",
+  "fee": 25,
+  "feeStatus": "charged" | "not_charged" | "none",
+  "feeGoesTo": "admin" | "driver" | "user" | ""
+}
+```
+- Ride cancel nahi hui ho to **`cancellation: null`**. Purani (is change se pehle ki) cancelled rides me bhi `null` aa sakta hai –
+  tab sirf "Cancelled" dikhao.
+- Kahan milta hai: `PATCH /rides/:id/cancel` ka response, `GET /rides/:id`, `GET /rides/active/me`, **ride history**
+  (`GET /rides`, `GET /deliveries`), socket `ride:state`. Rider aur driver dono ko same block.
+
+| `by` / `code` | Matlab | UI text (suggestion) |
+|---|---|---|
+| `user` / `cancelled_by_user` | Rider ne cancel kiya | "You cancelled" / driver app: "Rider cancelled" |
+| `user` / `replaced_by_new_booking` | Rider ne nayi booking ki | "Replaced by a new booking" |
+| `driver` / `cancelled_by_driver` | Driver ne scheduled ya bidding ride cancel ki | "Driver cancelled" |
+| `admin` / `cancelled_by_admin` | Support/admin ne cancel kiya | "Cancelled by support" |
+| `system` / `no_driver_found` | Koi driver nahi mila | "No driver found" |
+| `system` / `advance_not_paid` | Goods advance 30 min me pay nahi hua | "Advance not paid in time" |
+
+- Normal ride par driver cancel kare to ride **cancel nahi hoti** (dobara driver dhundhti hai) – us par `cancellation` nahi aata.
+- **Cancel reason bhejna (User app):** `PATCH /rides/:id/cancel` body `{ "reason": "…" }` (optional, max 300 chars).
+  Cancel dialog me reason list/text do. Na bhejo to `"Cancelled by rider"`.
+- **Fee:** `fee > 0` -> "Cancellation fee ₹{fee}". `feeStatus: "not_charged"` -> fee lagni thi par wallet me paisa kam tha (kuch nahi kata).
+  Driver app me `feeGoesTo == "driver"` ho to "₹{fee} cancellation fee aapke wallet me aayi".
+- Cancel se **pehle** fee dikhane ke liye `GET /rides/:id/cancel-preview` (section 12).
+
+## 17. Push notifications (User app + Driver app)
+
+Server ab Firebase project **`rentol-157dc`** se push bhejta hai. Test me kuch phones par deliver hua, kuch ke saved token
+**dead** the (`registration-token-not-registered`) – app ne naya token server ko nahi bheja tha. Poora detail + Dart code:
+`FLUTTER_PUSH_NOTIFICATIONS.md`.
+
+Short me (zaroori):
+1. `google-services.json` / `GoogleService-Info.plist` **`rentol-157dc`** project ke hon; iOS ke liye APNs key Firebase me.
+2. FCM token server ko bhejo – **login ke baad, har app start par (logged in ho to), aur `onTokenRefresh` par**:
+   User app `POST /users/fcm-token`, Driver app `POST /drivers/fcm-token`, body `{ "token": "<fcm>", "platform": "android" | "ios" }`.
+3. `FirebaseMessaging.instance.requestPermission()` (Android 13+ / iOS).
+4. App open ho to `onMessage` me local notification dikhao (Flutter khud nahi dikhata).
+5. Tap par `data.type` se screen kholo:
+
+| `data.type` | Kisko | Kya karna hai |
+|---|---|---|
+| `ride_request` | Driver | `GET /drivers/ride-offers` -> request card |
+| `ride_accepted` | User | Ride tracking (`GET /rides/active/me`) |
+| `ride_cancelled_by_driver` | User | Active ride refresh |
+| `driver_wallet_credit` | Driver | Wallet refresh |
+| `test_push` | Dono | Kuch nahi |
+
+## 18. Final QA (latest)
+- [ ] Rider cancel (reason ke saath) -> response aur history me `cancellation.by == "user"`, reason, fee sahi.
+- [ ] Driver app: rider ne cancel kiya -> history me "Rider cancelled", fee driver ko gayi ho to dikhe.
+- [ ] Koi driver nahi mila -> "No driver found"; goods advance time par nahi diya -> "Advance not paid in time".
+- [ ] Non-cancelled ride par `cancellation == null` handle (crash nahi).
+- [ ] Fresh install -> login -> `fcm-token` call; app restart par phir call; reinstall ke baad push aata hai.
+- [ ] App open / background / killed teeno me push dikhta hai; tap par sahi screen.
