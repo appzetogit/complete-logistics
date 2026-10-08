@@ -88,3 +88,25 @@ test('a goods delivery request is also data-only with the delivery title', async
   assert.equal(push.data.title, 'New delivery request');
   assert.equal(push.data.serviceType, 'parcel');
 });
+
+test('admin switch ride_request_push_data_only=0 brings the normal notification block back', async () => {
+  await t.setSettings('transport_ride', { ride_request_push_data_only: '0' });
+  try {
+    const vehicle = await t.factories.vehicle();
+    await t.factories.driver({ vehicleTypeId: vehicle._id, fcmTokenMobile: 'driver3-token-'.padEnd(40, 'w') });
+    const rider = await t.factories.user();
+    const created = await t.api('POST', '/rides', {
+      token: rider.token,
+      body: { pickup: t.locations.pickup, drop: t.locations.drop, fare: 150, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash' },
+    });
+    const rideId = created.body.data.ride._id;
+    const [push] = await waitFor(() => {
+      const found = ofType('ride_request').filter((message) => message.data.rideId === String(rideId));
+      return found.length ? found : null;
+    }, { message: 'ride_request push with the switch off' });
+    assert.equal(push.notification.title, 'New ride request');
+    assert.equal(push.apns, undefined);
+  } finally {
+    await t.setSettings('transport_ride', { ride_request_push_data_only: '1' });
+  }
+});

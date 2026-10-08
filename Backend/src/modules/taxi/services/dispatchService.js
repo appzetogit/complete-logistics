@@ -16,7 +16,7 @@ import { Delivery } from '../user/models/Delivery.js';
 import { Vehicle } from '../admin/models/Vehicle.js';
 import { buildRideCancellation, getRideRoom, resolveSetPriceForRide, withoutParcelSelfies } from './rideService.js';
 import { SOCKET_EVENTS } from '../socket/events.js';
-import { resolveTransportDispatchConfig } from './transportSettingsService.js';
+import { getTransportRideSettings, resolveTransportDispatchConfig } from './transportSettingsService.js';
 import { sendPushNotificationToEntities } from './pushNotificationService.js';
 import { ApiError } from '../../../utils/ApiError.js';
 import { registerDriverCancel, serializeCancelStatus } from '../driver/services/driverCancelService.js';
@@ -877,6 +877,13 @@ const emitRideRequestToDrivers = async ({
     }));
   }
 
+  // Admin switch: '0' sends the ride request with a normal notification block again (a safe fallback if a
+  // driver app build cannot show the alert itself from a data-only message).
+  const transportSettings = await getTransportRideSettings().catch(() => ({}));
+  const dataOnlyRidePush = !['0', 'false', 'off', 'no'].includes(
+    String(transportSettings.ride_request_push_data_only ?? '1').trim().toLowerCase(),
+  );
+
   // Data-only on Android: the driver app's background handler shows ONE full-screen ride alert on its
   // ride_requests channel. A notification block would add a second, plain tray alert that wins on tap.
   sendPushNotificationToEntities({
@@ -885,7 +892,7 @@ const emitRideRequestToDrivers = async ({
     body: ride.pickupAddress
       ? `Pickup: ${ride.pickupAddress}`
       : 'A new booking is waiting for your response.',
-    dataOnly: true,
+    dataOnly: dataOnlyRidePush,
     collapseKey: `ride_${String(ride._id)}`,
     ttlMs: RIDE_REQUEST_PUSH_TTL_MS,
     data: {
