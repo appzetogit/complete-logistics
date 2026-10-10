@@ -5733,7 +5733,11 @@ export const createSubscriptionPlan = async (payload) => {
 };
 
 export const listCustomerSubscriptionPlans = async () =>
-  SubscriptionPlan.find({ audience: 'user' }).sort({ createdAt: -1 }).populate('vehicle_type_id').lean();
+  SubscriptionPlan.find({ audience: 'user' })
+    .sort({ createdAt: -1 })
+    .populate('vehicle_type_id', 'name image icon_types transport_type status active')
+    .populate('vehicle_type_ids', 'name image icon_types transport_type status active')
+    .lean();
 
 // A customer plan covers one or more vehicle types: `vehicle_type_ids` (list) or the older single
 // `vehicle_type_id`. The first id stays in `vehicle_type_id` for older readers.
@@ -5753,6 +5757,37 @@ const resolvePlanVehicleTypeIds = (payload = {}) => {
   return unique;
 };
 
+const PLAN_BADGE_MAX = 20;
+const PLAN_BENEFITS_MAX = 4;
+const PLAN_BENEFIT_MAX_LENGTH = 40;
+
+// `badge`: optional ribbon text (max 20 chars). `benefits`: optional tick list (max 4, each max 40 chars).
+const normalizePlanMarketing = (payload = {}) => {
+  const out = {};
+  if (payload.badge !== undefined) {
+    const badge = String(payload.badge ?? '').trim();
+    if (badge.length > PLAN_BADGE_MAX) {
+      throw new ApiError(400, `Badge must be at most ${PLAN_BADGE_MAX} characters`);
+    }
+    out.badge = badge;
+  }
+  if (payload.benefits !== undefined) {
+    const raw = Array.isArray(payload.benefits)
+      ? payload.benefits
+      : String(payload.benefits ?? '').split('\n');
+    const benefits = raw.map((item) => String(item ?? '').trim()).filter(Boolean);
+    if (benefits.length > PLAN_BENEFITS_MAX) {
+      throw new ApiError(400, `At most ${PLAN_BENEFITS_MAX} benefits are allowed`);
+    }
+    const tooLong = benefits.find((item) => item.length > PLAN_BENEFIT_MAX_LENGTH);
+    if (tooLong) {
+      throw new ApiError(400, `Each benefit must be at most ${PLAN_BENEFIT_MAX_LENGTH} characters ("${tooLong.slice(0, 20)}…")`);
+    }
+    out.benefits = benefits;
+  }
+  return out;
+};
+
 export const createCustomerSubscriptionPlan = async (payload = {}) => {
   if (!String(payload?.name || '').trim()) {
     throw new ApiError(400, 'Subscription name is required');
@@ -5763,8 +5798,11 @@ export const createCustomerSubscriptionPlan = async (payload = {}) => {
     ? 'unlimited'
     : 'limited';
 
+  const marketing = normalizePlanMarketing(payload);
+
   const plan = await SubscriptionPlan.create({
     ...payload,
+    ...marketing,
     audience: 'user',
     vehicle_type_id: vehicleTypeIds[0],
     vehicle_type_ids: vehicleTypeIds,
@@ -5820,6 +5858,10 @@ export const updateCustomerSubscriptionPlan = async (planId, payload = {}) => {
   }
 
   if (payload.active !== undefined) plan.active = Boolean(payload.active);
+
+  const marketing = normalizePlanMarketing(payload);
+  if (marketing.badge !== undefined) plan.badge = marketing.badge;
+  if (marketing.benefits !== undefined) plan.benefits = marketing.benefits;
 
   await plan.save();
   return plan.toObject();

@@ -111,6 +111,7 @@ export const adminService = {
   updateSubscriptionSettings: (data) => api.post('/admin/driver-subscriptions/settings', data),
   getUserSubscriptionPlans: () => api.get('/admin/user-subscriptions/plans/list'),
   createUserSubscriptionPlan: (planData) => api.post('/admin/user-subscriptions/plans/create', planData),
+  updateUserSubscriptionPlan: (id, planData) => api.patch(`/admin/user-subscriptions/plans/${id}`, planData),
   getUserSubscriptionsByUserId: (id) => api.get(`/admin/users/${id}/subscriptions`),
   
   /**

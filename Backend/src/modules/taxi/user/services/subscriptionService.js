@@ -64,6 +64,50 @@ const buildSubscriptionMetrics = (subscription = {}) => {
   };
 };
 
+// Vehicle fields the app needs for the vehicle-first subscription page (photo + fallback icon).
+const VEHICLE_FIELDS = 'name image icon_types transport_type status active';
+
+const isPopulatedVehicle = (value) => Boolean(value && typeof value === 'object' && value._id && 'name' in value);
+const isVehicleEnabled = (vehicle) => Number(vehicle.status ?? 1) !== 0 && vehicle.active !== false;
+
+const serializeVehicle = (vehicle) => ({
+  id: String(vehicle._id),
+  name: String(vehicle.name || '').trim(),
+  image: String(vehicle.image || '').trim(),
+  icon_types: String(vehicle.icon_types || '').trim(),
+  transport_type: String(vehicle.transport_type || '').trim(),
+});
+
+// Every enabled vehicle a plan / subscription covers, with its details, de-duplicated, `vehicle_type_id` first.
+const collectVehicleTypes = (record = {}) => {
+  const seen = new Set();
+  return [record.vehicle_type_id, ...(Array.isArray(record.vehicle_type_ids) ? record.vehicle_type_ids : [])]
+    .filter((vehicle) => isPopulatedVehicle(vehicle) && isVehicleEnabled(vehicle))
+    .filter((vehicle) => {
+      const id = String(vehicle._id);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .map(serializeVehicle);
+};
+
+const serializeSingleVehicle = (vehicle) => (
+  vehicle?._id
+    ? {
+        id: String(vehicle._id),
+        name: String(vehicle.name || '').trim(),
+        image: String(vehicle.image || '').trim(),
+        icon_types: String(vehicle.icon_types || '').trim(),
+      }
+    : null
+);
+
+const normalizeBadge = (value) => String(value || '').trim();
+const normalizeBenefits = (value) => (Array.isArray(value) ? value : [])
+  .map((item) => String(item || '').trim())
+  .filter(Boolean);
+
 // Every vehicle type a plan / subscription covers, as strings (the first one is `vehicle_type_id`).
 const collectVehicleTypeIds = (record = {}) => {
   const ids = [
@@ -83,16 +127,14 @@ export const serializeSubscriptionPlan = (plan = {}) => ({
   duration: Math.max(0, Number(plan.duration || 0)),
   transport_type: String(plan.transport_type || 'taxi').trim().toLowerCase(),
   vehicle_type_id: plan.vehicle_type_id?._id ? String(plan.vehicle_type_id._id) : (plan.vehicle_type_id ? String(plan.vehicle_type_id) : ''),
-  vehicle_type: plan.vehicle_type_id?._id
-    ? {
-        id: String(plan.vehicle_type_id._id),
-        name: String(plan.vehicle_type_id.name || '').trim(),
-      }
-    : null,
+  vehicle_type: serializeSingleVehicle(plan.vehicle_type_id),
   vehicle_type_ids: collectVehicleTypeIds(plan),
+  vehicle_types: collectVehicleTypes(plan),
   benefit_type: normalizeBenefitType(plan.benefit_type),
   ride_limit: Math.max(0, Number(plan.ride_limit || 0)),
   how_it_works: String(plan.how_it_works || '').trim(),
+  badge: normalizeBadge(plan.badge),
+  benefits: normalizeBenefits(plan.benefits),
   active: plan.active !== false,
   audience: String(plan.audience || 'driver').trim().toLowerCase(),
   createdAt: plan.createdAt || null,
@@ -115,18 +157,15 @@ export const serializeUserSubscription = (subscription = {}) => {
       : subscription.vehicle_type_id
         ? String(subscription.vehicle_type_id)
         : (subscription.planId?.vehicle_type_id?._id ? String(subscription.planId.vehicle_type_id._id) : ''),
-    vehicle_type: subscription.vehicle_type_id?._id
-      ? {
-          id: String(subscription.vehicle_type_id._id),
-          name: String(subscription.vehicle_type_id.name || '').trim(),
-        }
-      : subscription.planId?.vehicle_type_id?._id
-        ? {
-            id: String(subscription.planId.vehicle_type_id._id),
-            name: String(subscription.planId.vehicle_type_id.name || '').trim(),
-          }
-        : null,
+    vehicle_type: serializeSingleVehicle(subscription.vehicle_type_id?._id ? subscription.vehicle_type_id : subscription.planId?.vehicle_type_id),
     vehicle_type_ids: collectVehicleTypeIds(subscription.vehicle_type_ids?.length ? subscription : { ...subscription, vehicle_type_ids: collectVehicleTypeIds(subscription.planId || {}) }),
+    // The subscription's own snapshot of covered vehicles; older ones (single vehicle) fall back to the plan's list.
+    vehicle_types: subscription.vehicle_type_ids?.length
+      ? collectVehicleTypes(subscription)
+      : collectVehicleTypes({
+          vehicle_type_id: subscription.vehicle_type_id?._id ? subscription.vehicle_type_id : subscription.planId?.vehicle_type_id,
+          vehicle_type_ids: subscription.planId?.vehicle_type_ids || [],
+        }),
     benefit_type: metrics.benefitType,
     ride_limit: metrics.rideLimit,
     rides_used: metrics.ridesUsed,
@@ -150,7 +189,8 @@ export const listCustomerSubscriptionPlans = async () => {
     active: true,
   })
     .sort({ amount: 1, createdAt: -1 })
-    .populate('vehicle_type_id', 'name')
+    .populate('vehicle_type_id', VEHICLE_FIELDS)
+    .populate('vehicle_type_ids', VEHICLE_FIELDS)
     .lean();
 
   return plans.map(serializeSubscriptionPlan);
@@ -159,8 +199,16 @@ export const listCustomerSubscriptionPlans = async () => {
 export const listUserSubscriptions = async (userId) => {
   const items = await UserSubscription.find({ userId })
     .sort({ active: -1, expiresAt: 1, createdAt: -1 })
-    .populate('planId', 'name description amount duration transport_type vehicle_type_id benefit_type ride_limit')
-    .populate('vehicle_type_id', 'name');
+    .populate({
+      path: 'planId',
+      select: 'name description amount duration transport_type vehicle_type_id vehicle_type_ids benefit_type ride_limit',
+      populate: [
+        { path: 'vehicle_type_id', select: VEHICLE_FIELDS },
+        { path: 'vehicle_type_ids', select: VEHICLE_FIELDS },
+      ],
+    })
+    .populate('vehicle_type_id', VEHICLE_FIELDS)
+    .populate('vehicle_type_ids', VEHICLE_FIELDS);
 
   const refreshed = [];
   for (const item of items) {
@@ -227,7 +275,8 @@ const loadPurchasablePlan = async (planId) => {
   }
 
   const plan = await SubscriptionPlan.findOne({ _id: planId, audience: 'user', active: true })
-    .populate('vehicle_type_id', 'name');
+    .populate('vehicle_type_id', VEHICLE_FIELDS)
+    .populate('vehicle_type_ids', VEHICLE_FIELDS);
 
   if (!plan) {
     throw new ApiError(404, 'Subscription plan not found');
@@ -241,7 +290,13 @@ const loadPurchasablePlan = async (planId) => {
   return { plan, amount };
 };
 
-export const purchaseUserSubscription = async ({ userId, planId, paymentSource = 'wallet' }) => {
+/**
+ * Wallet purchase. The debit and the new subscription are written in ONE transaction:
+ * either the rider pays and gets the pass, or nothing happens. The debit is conditional
+ * (`balance >= amount` in the same update), so two quick taps cannot both pass the check
+ * on a stale balance.
+ */
+export const purchaseUserSubscription = async ({ userId, planId, paymentSource = 'wallet', deps = {} }) => {
   const { plan, amount } = await loadPurchasablePlan(planId);
 
   await UserWallet.updateOne(
@@ -249,41 +304,50 @@ export const purchaseUserSubscription = async ({ userId, planId, paymentSource =
     { $setOnInsert: { userId, balance: 0, refundWallet: 0, transactions: [] } },
     { upsert: true },
   );
-  const wallet = await UserWallet.findOne({ userId });
-  if (!wallet) {
-    throw new ApiError(404, 'User wallet not found');
-  }
-
-  if (Number(wallet.balance || 0) < amount) {
-    throw new ApiError(400, 'Insufficient wallet balance');
-  }
 
   const now = new Date();
-
-  wallet.balance = roundMoney(Number(wallet.balance || 0) - amount);
-  wallet.transactions.push({
+  const debitEntry = {
     kind: 'debit',
     amount,
     title: `Subscription purchase: ${plan.name || 'Plan'}`,
     provider: 'user_subscription_wallet',
     providerPaymentId: `sub_${Date.now().toString(36)}_${String(plan._id).slice(-6)}`,
+    createdAt: now,
+  };
+
+  let wallet = null;
+  let subscription = null;
+  const runInTransaction = deps.runInTransaction || ((work) => mongoose.connection.transaction(work));
+
+  await runInTransaction(async (session) => {
+    wallet = await UserWallet.findOneAndUpdate(
+      { userId, balance: { $gte: amount } },
+      {
+        $inc: { balance: -amount },
+        $push: { transactions: { $each: [debitEntry], $slice: -50 } },
+      },
+      { returnDocument: 'after', session },
+    );
+
+    if (!wallet) {
+      throw new ApiError(400, 'Insufficient wallet balance');
+    }
+
+    [subscription] = await (deps.UserSubscription || UserSubscription).create([buildSubscriptionDoc({
+      userId,
+      plan,
+      amount,
+      paymentSource: paymentSource === 'admin' ? 'admin' : 'wallet',
+      now,
+    })], { session });
   });
-  wallet.transactions = wallet.transactions.slice(-50);
-
-  const subscription = new UserSubscription(buildSubscriptionDoc({
-    userId,
-    plan,
-    amount,
-    paymentSource: paymentSource === 'admin' ? 'admin' : 'wallet',
-    now,
-  }));
-
-  await Promise.all([wallet.save(), subscription.save()]);
 
   return {
     subscription: serializeUserSubscription({
       ...subscription.toObject(),
       vehicle_type_id: plan.vehicle_type_id,
+      // The populated vehicles, so the response carries their names and photos.
+      vehicle_type_ids: plan.vehicle_type_ids,
       planId: plan,
     }),
     wallet: {
@@ -386,6 +450,8 @@ export const verifySubscriptionRazorpayPayment = async ({ userId, orderId, payme
     subscription: serializeUserSubscription({
       ...subscription.toObject(),
       vehicle_type_id: plan.vehicle_type_id,
+      // The populated vehicles, so the response carries their names and photos.
+      vehicle_type_ids: plan.vehicle_type_ids,
       planId: plan,
     }),
     alreadyPurchased: false,
