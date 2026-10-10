@@ -281,3 +281,160 @@ test('goods quote: an active subscription covers the booking, so no advance is q
   assert.equal(after.body.data.advanceAmount, 0);
   assert.deepEqual(after.body.data.advanceOptions, []);
 });
+
+// ------------------------------------------------------------------ vehicle-first offers
+test('plans carry vehicle_types (name, image, icon) for every covered vehicle; a disabled vehicle is left out', async () => {
+  const bike = await t.factories.vehicle({ name: 'VF Bike', image: 'https://cdn.example.com/bike.webp', icon_types: 'bike' });
+  const scooty = await t.factories.vehicle({ name: 'VF Scooty', image: 'https://cdn.example.com/scooty.webp', icon_types: 'bike' });
+  const retired = await t.factories.vehicle({ name: 'VF Retired', icon_types: 'bike' });
+  const created = await createPlan({ name: 'VF Pass', vehicle_type_ids: [String(bike._id), String(scooty._id), String(retired._id)] });
+  assert.equal(created.status, 200, created.text);
+  await t.m.Vehicle.updateOne({ _id: retired._id }, { $set: { status: 0, active: false } });
+
+  const rider = await newUser();
+  const res = await t.api('GET', '/users/subscriptions/plans', { token: rider.token });
+  assert.equal(res.status, 200, res.text);
+  const plan = (res.body.data.results || res.body.data).find((item) => item.name === 'VF Pass');
+  assert.ok(plan, 'plan listed');
+
+  assert.deepEqual(plan.vehicle_types.map((v) => v.name), ['VF Bike', 'VF Scooty'], 'both enabled vehicles, disabled one left out');
+  assert.deepEqual(plan.vehicle_types[0], {
+    id: String(bike._id), name: 'VF Bike', image: 'https://cdn.example.com/bike.webp', icon_types: 'bike', transport_type: 'both',
+  });
+  assert.deepEqual(plan.vehicle_type, { id: String(bike._id), name: 'VF Bike', image: 'https://cdn.example.com/bike.webp', icon_types: 'bike' });
+  // existing keys unchanged: plain id strings, including the disabled one
+  assert.deepEqual(plan.vehicle_type_ids, [String(bike._id), String(scooty._id), String(retired._id)]);
+  assert.equal(plan.vehicle_type_id, String(bike._id));
+  assert.equal(plan.badge, '');
+  assert.deepEqual(plan.benefits, []);
+});
+
+test('a vehicle switched off only through status 0 (active untouched) is also left out', async () => {
+  const bike = await t.factories.vehicle({ name: 'S0 Bike' });
+  const other = await t.factories.vehicle({ name: 'S0 Other' });
+  await createPlan({ name: 'S0 Pass', vehicle_type_ids: [String(bike._id), String(other._id)] });
+  await t.m.Vehicle.collection.updateOne({ _id: other._id }, { $set: { status: 0 } });
+  const rider = await newUser();
+  const res = await t.api('GET', '/users/subscriptions/plans', { token: rider.token });
+  const plan = res.body.data.results.find((item) => item.name === 'S0 Pass');
+  assert.deepEqual(plan.vehicle_types.map((v) => v.name), ['S0 Bike']);
+});
+
+test('badge and benefits: set by admin, validated, returned to the app', async () => {
+  const bike = await t.factories.vehicle({ name: 'BB Bike' });
+  const created = await createPlan({
+    name: 'BB Pass', vehicle_type_ids: [String(bike._id)], badge: '  Most popular  ', benefits: ['Covers the full fare', '  ', 'Valid 30 days'],
+  });
+  assert.equal(created.status, 200, created.text);
+  assert.equal(created.body.data.badge, 'Most popular', 'trimmed');
+  assert.deepEqual(created.body.data.benefits, ['Covers the full fare', 'Valid 30 days'], 'blank lines dropped');
+
+  const id = created.body.data._id;
+  const patch = (body) => t.api('PATCH', `/admin/user-subscriptions/plans/${id}`, { token: admin.token, body });
+  assert.equal((await patch({ badge: 'x'.repeat(21) })).status, 400, 'badge max 20');
+  assert.equal((await patch({ benefits: ['a', 'b', 'c', 'd', 'e'] })).status, 400, 'max 4 benefits');
+  assert.equal((await patch({ benefits: ['y'.repeat(41)] })).status, 400, 'each benefit max 40');
+  assert.equal((await createPlan({ name: 'Bad', vehicle_type_ids: [String(bike._id)], badge: 'z'.repeat(21) })).status, 400, 'create validates too');
+
+  const ok = await patch({ badge: 'Best value', benefits: ['Covers the full fare'] });
+  assert.equal(ok.status, 200, ok.text);
+  const rider = await newUser();
+  const plans = await t.api('GET', '/users/subscriptions/plans', { token: rider.token });
+  const plan = (plans.body.data.results || plans.body.data).find((item) => item.id === id);
+  assert.equal(plan.badge, 'Best value');
+  assert.deepEqual(plan.benefits, ['Covers the full fare']);
+
+  await patch({ badge: '', benefits: [] });
+  const cleared = (await t.api('GET', '/users/subscriptions/plans', { token: rider.token })).body.data.results.find((item) => item.id === id);
+  assert.equal(cleared.badge, '');
+  assert.deepEqual(cleared.benefits, []);
+});
+
+test('admin plan list returns the covered vehicles populated (no more N/A in the panel)', async () => {
+  const bike = await t.factories.vehicle({ name: 'AL Bike' });
+  const scooty = await t.factories.vehicle({ name: 'AL Scooty' });
+  await createPlan({ name: 'AL Pass', vehicle_type_ids: [String(bike._id), String(scooty._id)], badge: 'New' });
+  const list = await t.api('GET', '/admin/user-subscriptions/plans/list', { token: admin.token });
+  assert.equal(list.status, 200, list.text);
+  const plan = list.body.data.results.find((item) => item.name === 'AL Pass');
+  assert.deepEqual(plan.vehicle_type_ids.map((v) => v.name), ['AL Bike', 'AL Scooty']);
+  assert.equal(plan.badge, 'New');
+});
+
+test('my subscriptions carry vehicle_types; a pass without its own vehicle list falls back to the plan', async () => {
+  const bike = await t.factories.vehicle({ name: 'MS Bike', image: 'https://cdn.example.com/msbike.webp', icon_types: 'bike' });
+  const scooty = await t.factories.vehicle({ name: 'MS Scooty', icon_types: 'bike' });
+  const plan = (await createPlan({ name: 'MS Pass', vehicle_type_ids: [String(bike._id), String(scooty._id)] })).body.data;
+  const rider = await newUser();
+  const bought = await buyWithWallet(rider, plan._id);
+  assert.equal(bought.status, 201, bought.text);
+  assert.deepEqual(bought.body.data.subscription.vehicle_types.map((v) => v.name), ['MS Bike', 'MS Scooty'], 'purchase response too');
+
+  const mine = await t.api('GET', '/users/subscriptions/me', { token: rider.token });
+  assert.equal(mine.status, 200, mine.text);
+  const all = [...(mine.body.data.activePlans || []), ...(mine.body.data.history || [])];
+  const pass = all.find((item) => item.name === 'MS Pass');
+  assert.deepEqual(pass.vehicle_types.map((v) => v.name), ['MS Bike', 'MS Scooty']);
+  assert.equal(pass.vehicle_types[0].image, 'https://cdn.example.com/msbike.webp');
+  assert.equal(pass.vehicle_type.icon_types, 'bike');
+
+  await Subscription.updateOne({ _id: bought.body.data.subscription.id }, { $unset: { vehicle_type_ids: 1 } });
+  const again = await t.api('GET', '/users/subscriptions/me', { token: rider.token });
+  const old = [...(again.body.data.activePlans || []), ...(again.body.data.history || [])].find((item) => item.name === 'MS Pass');
+  assert.deepEqual(old.vehicle_types.map((v) => v.name), ['MS Bike', 'MS Scooty']);
+});
+
+test('Razorpay order response carries the plan with vehicle_types', async () => {
+  const bike = await t.factories.vehicle({ name: 'RO Bike', icon_types: 'bike' });
+  const plan = (await createPlan({ name: 'RO Pass', vehicle_type_ids: [String(bike._id)], amount: 99 })).body.data;
+  const rider = await newUser(0);
+  await withRazorpay(() => ({ id: 'order_ro_1', amount: 9900, currency: 'INR' }), async () => {
+    const order = await t.api('POST', '/users/subscriptions/razorpay/order', { token: rider.token, body: { planId: plan._id } });
+    assert.equal(order.status, 201, order.text);
+    assert.deepEqual(order.body.data.plan.vehicle_types.map((v) => v.name), ['RO Bike']);
+  });
+});
+
+// ------------------------------------------------------------------ atomic wallet purchase
+test('wallet purchase: ten parallel taps with money for one pass -> exactly one pass and one debit', async () => {
+  const bike = await t.factories.vehicle({ name: 'AT Bike' });
+  const plan = (await createPlan({ name: 'AT Pass', vehicle_type_ids: [String(bike._id)], amount: 300 })).body.data;
+  const rider = await newUser(500);
+
+  const results = await Promise.all(Array.from({ length: 10 }, () => buyWithWallet(rider, plan._id)));
+  const statuses = results.map((r) => r.status);
+  assert.equal(statuses.filter((code) => code === 201).length, 1, JSON.stringify(results.map((r) => r.body?.message)));
+  assert.equal(statuses.filter((code) => code === 400).length, 9);
+  assert.ok(results.filter((r) => r.status === 400).every((r) => /Insufficient wallet balance/.test(r.body.message)));
+
+  const wallet = await t.m.UserWallet.findOne({ userId: rider.user._id }).lean();
+  assert.equal(wallet.balance, 200, 'charged exactly once');
+  assert.equal(await Subscription.countDocuments({ userId: rider.user._id, planId: plan._id }), 1, 'exactly one pass');
+  assert.equal(wallet.transactions.filter((tx) => tx.provider === 'user_subscription_wallet').length, 1);
+});
+
+test('wallet purchase: if creating the pass fails, the rider is not charged', async () => {
+  const bike = await t.factories.vehicle({ name: 'FL Bike' });
+  const plan = (await createPlan({ name: 'FL Pass', vehicle_type_ids: [String(bike._id)], amount: 150 })).body.data;
+  const rider = await newUser(400);
+  const { purchaseUserSubscription } = await import('../../src/modules/taxi/user/services/subscriptionService.js');
+
+  await assert.rejects(
+    purchaseUserSubscription({
+      userId: rider.user._id,
+      planId: plan._id,
+      deps: { UserSubscription: { create: async () => { throw new Error('simulated write failure'); } } },
+    }),
+    /simulated write failure/,
+  );
+  const wallet = await t.m.UserWallet.findOne({ userId: rider.user._id }).lean();
+  assert.equal(wallet.balance, 400, 'debit rolled back');
+  assert.equal(wallet.transactions.filter((tx) => tx.provider === 'user_subscription_wallet').length, 0);
+  assert.equal(await Subscription.countDocuments({ userId: rider.user._id }), 0);
+
+  const ok = await buyWithWallet(rider, plan._id);
+  assert.equal(ok.status, 201, ok.text);
+  assert.equal(ok.body.data.wallet.balance, 250);
+  assert.equal(typeof ok.body.data.wallet.refundWallet, 'number');
+  assert.ok(ok.body.data.subscription.id);
+});

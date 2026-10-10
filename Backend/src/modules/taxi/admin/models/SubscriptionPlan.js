@@ -26,6 +26,10 @@ const subscriptionPlanSchema = new mongoose.Schema({
     min: 0,
   },
   how_it_works: String,
+  // Admin-set marketing text shown in the app: a short ribbon and a tick list. Only claims the ride flow
+  // really applies (see validation in adminService).
+  badge: { type: String, default: '', trim: true },
+  benefits: { type: [String], default: [] },
   active: { type: Boolean, default: true }
 }, { timestamps: true });
 

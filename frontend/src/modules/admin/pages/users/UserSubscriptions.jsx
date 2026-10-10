@@ -4,6 +4,16 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { adminService } from '../../services/adminService';
 
+// Names of every vehicle the plan covers (the admin list returns them populated).
+const vehicleNames = (plan) => {
+  const vehicles = [plan.vehicle_type_id, ...(plan.vehicle_type_ids || [])].filter((v) => v && typeof v === 'object' && v.name);
+  const seen = new Set();
+  return vehicles
+    .filter((v) => { const key = String(v._id); if (seen.has(key)) return false; seen.add(key); return true; })
+    .map((v) => v.name)
+    .join(', ') || plan.vehicle_type?.name || '';
+};
+
 const UserSubscriptions = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -27,7 +37,7 @@ const UserSubscriptions = () => {
   }, []);
 
   const filteredPlans = plans.filter((item) =>
-    `${item.name || ''} ${item.vehicle_type?.name || ''}`.toLowerCase().includes(searchTerm.toLowerCase()),
+    `${item.name || ''} ${vehicleNames(item)} ${item.badge || ''}`.toLowerCase().includes(searchTerm.toLowerCase()),
   );
 
   return (
@@ -78,6 +88,8 @@ const UserSubscriptions = () => {
                   <th className="px-4 py-3">Benefit</th>
                   <th className="px-4 py-3">Duration</th>
                   <th className="px-4 py-3">Price</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
@@ -89,17 +101,34 @@ const UserSubscriptions = () => {
                           <Ticket size={18} />
                         </div>
                         <div>
-                          <p className="text-sm font-bold text-gray-900">{item.name}</p>
+                          <p className="text-sm font-bold text-gray-900">
+                            {item.name}
+                            {item.badge ? <span className="ml-2 rounded bg-yellow-100 px-1.5 py-0.5 text-[10px] font-bold text-yellow-800">{item.badge}</span> : null}
+                          </p>
                           <p className="text-xs font-medium text-gray-500">{item.description || 'Customer ride pass'}</p>
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-sm font-medium text-gray-600">{item.vehicle_type?.name || 'N/A'}</td>
+                    <td className="px-4 py-3 text-sm font-medium text-gray-600">{vehicleNames(item) || 'N/A'}</td>
                     <td className="px-4 py-3 text-sm font-medium text-gray-600">
                       {item.benefit_type === 'unlimited' ? 'Unlimited rides' : `${item.ride_limit} rides`}
                     </td>
                     <td className="px-4 py-3 text-sm font-medium text-gray-600">{item.duration} days</td>
                     <td className="px-4 py-3 text-sm font-bold text-gray-900">₹{Number(item.amount || 0).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-xs font-bold">
+                      {item.active === false
+                        ? <span className="rounded bg-gray-100 px-2 py-0.5 text-gray-500">Inactive</span>
+                        : <span className="rounded bg-emerald-50 px-2 py-0.5 text-emerald-700">Active</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/admin/users/subscriptions/${item._id || item.id}/edit`)}
+                        className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
+                      >
+                        Edit
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
