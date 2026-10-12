@@ -761,15 +761,72 @@ const hasLocalDispatchFlow = (rideId) => {
     dispatchLeaseRefreshTimers.has(key);
 };
 
-const closeDriverRequestWindow = (rideId, driverIds = []) => {
-  const safeDriverIds = [...new Set((Array.isArray(driverIds) ? driverIds : []).map((id) => String(id || '')).filter(Boolean))];
+/**
+ * A ride offer is no longer available to these drivers: tell their open sockets (`rideRequestClosed`) AND
+ * send a silent data-only push (`type: ride_request_closed`), so a killed or backgrounded driver app closes
+ * its full-screen ride card and stops ringing. The push uses the offer's collapse key, so it replaces a
+ * pending offer push that has not been delivered yet. `skipPushFor` (e.g. the driver who accepted) still
+ * gets the socket event but no push.
+ */
+const closeOfferForDrivers = (rideId, driverIds = [], payload = {}, { skipPushFor = [] } = {}) => {
+  const safeRideId = String(rideId);
+  const safeDriverIds = [...new Set((Array.isArray(driverIds) ? driverIds : [driverIds])
+    .map((id) => String(id?._id || id || ''))
+    .filter(Boolean))];
 
   for (const driverId of safeDriverIds) {
-    emitToDriver(driverId, 'rideRequestClosed', {
-      rideId: String(rideId),
-      reason: 'search-window-expired',
-    });
+    emitToDriver(driverId, 'rideRequestClosed', { rideId: safeRideId, ...payload });
   }
+
+  const skip = new Set((Array.isArray(skipPushFor) ? skipPushFor : [skipPushFor]).map((id) => String(id || '')));
+  const pushDriverIds = safeDriverIds.filter((id) => !skip.has(id));
+  if (!pushDriverIds.length) {
+    return;
+  }
+
+  sendPushNotificationToEntities({
+    driverIds: pushDriverIds,
+    title: '',
+    body: '',
+    dataOnly: true,
+    silent: true,
+    collapseKey: `ride_${safeRideId}`,
+    ttlMs: RIDE_REQUEST_PUSH_TTL_MS,
+    data: {
+      type: 'ride_request_closed',
+      rideId: safeRideId,
+      reason: String(payload.reason || ''),
+    },
+  }).catch((error) => {
+    console.error('Failed to send ride_request_closed push', safeRideId, error?.message || error);
+  });
+};
+
+const closeDriverRequestWindow = (rideId, driverIds = []) => {
+  closeOfferForDrivers(rideId, driverIds, { reason: 'search-window-expired' });
+};
+
+const pushCoordinate = (point, index) => {
+  const value = Number(point?.coordinates?.[index]);
+  return Number.isFinite(value) ? String(value) : '';
+};
+
+const buildRideRequestPushDetails = ({ ride, bookedVehicle, requestExpiresAt, dispatchConfig }) => {
+  const meters = Number(ride.estimatedDistanceMeters);
+  return {
+    pickupAddress: ride.pickupAddress || '',
+    dropAddress: ride.dropAddress || '',
+    pickupLat: pushCoordinate(ride.pickupLocation, 1),
+    pickupLng: pushCoordinate(ride.pickupLocation, 0),
+    dropLat: pushCoordinate(ride.dropLocation, 1),
+    dropLng: pushCoordinate(ride.dropLocation, 0),
+    fare: Number.isFinite(Number(ride.fare)) && ride.fare !== null && ride.fare !== undefined ? String(ride.fare) : '',
+    paymentMethod: ride.paymentMethod || '',
+    distanceKm: Number.isFinite(meters) && meters > 0 ? (meters / 1000).toFixed(1) : '',
+    vehicleTypeName: bookedVehicle?.name || '',
+    acceptanceDeadlineAt: requestExpiresAt || '',
+    acceptTimeoutSeconds: dispatchConfig?.retryWindowSeconds ? String(dispatchConfig.retryWindowSeconds) : '',
+  };
 };
 
 const buildRideRequestPayload = ({
@@ -895,11 +952,14 @@ const emitRideRequestToDrivers = async ({
     dataOnly: dataOnlyRidePush,
     collapseKey: `ride_${String(ride._id)}`,
     ttlMs: RIDE_REQUEST_PUSH_TTL_MS,
+    // The driver app's native "New ride" card reads these straight from the push (no API call, no token),
+    // so it carries what the card shows. Every value becomes a string; missing ones are "".
     data: {
       type: 'ride_request',
       rideId: String(ride._id),
       serviceType: ride.serviceType || 'ride',
       userId: String(ride.userId?._id || ride.userId || ''),
+      ...buildRideRequestPushDetails({ ride, bookedVehicle, requestExpiresAt, dispatchConfig }),
     },
   }).catch((error) => {
     console.error('Failed to send driver ride-request push notification', error);
@@ -1032,12 +1092,7 @@ const closeRideAsUnmatched = async (rideId) => {
     reason: 'unmatched',
   });
 
-  for (const driverId of dispatchState.notifiedDriverIds) {
-    emitToDriver(driverId, 'rideRequestClosed', {
-      rideId: String(ride._id),
-      reason: 'unmatched',
-    });
-  }
+  closeOfferForDrivers(ride._id, dispatchState.notifiedDriverIds, { reason: 'unmatched' });
 
   emitToRoom(getRideRoom(ride._id), SOCKET_EVENTS.RIDE_STATUS_UPDATED, {
     rideId: String(ride._id),
@@ -1089,10 +1144,7 @@ export const cancelRideByAdmin = async (rideId, { reason = '' } = {}) => {
   });
 
   if (ride.driverId) {
-    emitToRoom(getDriverRoom(ride.driverId), 'rideRequestClosed', {
-      rideId: String(ride._id),
-      reason: 'deleted-by-admin',
-    });
+    closeOfferForDrivers(ride._id, [ride.driverId], { reason: 'deleted-by-admin' });
   }
 
   emitToRoom(getRideRoom(ride._id), 'rideRequestClosed', {
@@ -1128,13 +1180,10 @@ export const releaseReplacedRide = async (ride) => {
   stopDispatchFlow(rideId);
   await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
 
-  for (const driverId of [...notifiedDriverIds, ...(ride.driverId ? [String(ride.driverId)] : [])]) {
-    emitToDriver(driverId, 'rideRequestClosed', {
-      rideId,
-      reason: 'user-replaced-booking',
-      message: 'The rider made a new booking.',
-    });
-  }
+  closeOfferForDrivers(rideId, [...notifiedDriverIds, ...(ride.driverId ? [String(ride.driverId)] : [])], {
+    reason: 'user-replaced-booking',
+    message: 'The rider made a new booking.',
+  });
   emitToRoom(getRideRoom(rideId), 'rideRequestClosed', { rideId, reason: 'user-replaced-booking' });
 
   if (ride.driverId || ride.serviceType !== 'parcel' || ride.goodsAdvance?.status !== 'paid') {
@@ -1228,21 +1277,10 @@ export const cancelRideByUser = async ({ rideId, userId, reason = '' }) => {
     reason: 'You cancelled the ride',
   });
 
-  if (ride.driverId) {
-    emitToRoom(getDriverRoom(ride.driverId), 'rideRequestClosed', {
-      rideId: String(ride._id),
-      reason: 'user-cancelled',
-      message: 'User cancelled the ride.',
-    });
-  }
-
-  for (const driverId of dispatchState.notifiedDriverIds) {
-    emitToDriver(driverId, 'rideRequestClosed', {
-      rideId: String(ride._id),
-      reason: 'user-cancelled',
-      message: 'User cancelled the ride.',
-    });
-  }
+  closeOfferForDrivers(ride._id, [...(ride.driverId ? [ride.driverId] : []), ...dispatchState.notifiedDriverIds], {
+    reason: 'user-cancelled',
+    message: 'User cancelled the ride.',
+  });
 
   emitToRoom(getRideRoom(ride._id), 'rideCancelled', {
     rideId: String(ride._id),
@@ -1375,20 +1413,14 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
   });
 
   if (ride.driverId) {
-    emitToRoom(getDriverRoom(ride.driverId), 'rideRequestClosed', {
-      rideId: String(ride._id),
-      reason: 'driver-cancelled',
-      message: 'Scheduled ride cancelled.',
-    });
+    closeOfferForDrivers(ride._id, [ride.driverId], { reason: 'driver-cancelled', message: 'Scheduled ride cancelled.' });
   }
 
-  for (const notifiedDriverId of dispatchState.notifiedDriverIds) {
-    emitToDriver(notifiedDriverId, 'rideRequestClosed', {
-      rideId: String(ride._id),
-      reason: 'driver-cancelled',
-      message: cancelReason,
-    });
-  }
+  closeOfferForDrivers(
+    ride._id,
+    dispatchState.notifiedDriverIds.filter((id) => String(id) !== String(ride.driverId || '')),
+    { reason: 'driver-cancelled', message: cancelReason },
+  );
 
   emitToRoom(getRideRoom(ride._id), SOCKET_EVENTS.RIDE_STATUS_UPDATED, {
     rideId: String(ride._id),
@@ -1524,11 +1556,7 @@ export const cancelActiveRideByDriver = async ({ rideId, driverId, reason = '' }
     console.error('Failed to remove cancelling driver from ride room', error?.message || error);
   }
 
-  emitToDriver(driverId, 'rideRequestClosed', {
-    rideId: String(ride._id),
-    reason: 'driver-cancelled',
-    message: 'You cancelled this ride.',
-  });
+  closeOfferForDrivers(ride._id, [driverId], { reason: 'driver-cancelled', message: 'You cancelled this ride.' });
 
   if (cancelStatus.blocked) {
     emitToDriver(driverId, 'driver:blocked', {
@@ -2075,13 +2103,12 @@ export const notifyRideAccepted = async (ride) => {
         reason: 'accepted-by-another-driver',
   });
 
-  for (const driverId of state.notifiedDriverIds) {
-    emitToDriver(driverId, 'rideRequestClosed', {
-      rideId: String(populatedRide._id),
-      acceptedDriverId: String(populatedRide.driverId._id),
-      reason: 'accepted-by-another-driver',
-    });
-  }
+  closeOfferForDrivers(
+    populatedRide._id,
+    state.notifiedDriverIds,
+    { acceptedDriverId: String(populatedRide.driverId._id), reason: 'accepted-by-another-driver' },
+    { skipPushFor: [String(populatedRide.driverId._id)] },
+  );
 
   sendPushNotificationToEntities({
     userIds: [String(populatedRide.userId)],

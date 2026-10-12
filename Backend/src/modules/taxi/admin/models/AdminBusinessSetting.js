@@ -15,6 +15,8 @@ const adminBusinessSettingSchema = new mongoose.Schema(
     user_home_settings: { type: mongoose.Schema.Types.Mixed, default: {} },
     subscription: { type: mongoose.Schema.Types.Mixed, default: { mode: 'commissionOnly' } },
     free_rides: { type: mongoose.Schema.Types.Mixed, default: {} },
+    // Help-center contact shown in both apps (support_phone, support_email, support_whatsapp).
+    support: { type: mongoose.Schema.Types.Mixed, default: {} },
     referral: {
       type: mongoose.Schema.Types.Mixed,
       default: {

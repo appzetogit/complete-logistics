@@ -1025,6 +1025,7 @@ const AdminLayout = () => {
             subItems: [
               { label: 'Wallet Settings', path: '/admin/settings/app/wallet', permission: 'settings.view' },
               { label: 'Tip Settings', path: '/admin/settings/app/tip', permission: 'settings.view' },
+              { label: 'Support Contact', path: '/admin/settings/app/support', permission: 'settings.view' },
               // { label: 'Mobile App Landing/Onboard Screens Settings', path: '/admin/settings/app/onboard', permission: 'settings.view' },
             ],
           },

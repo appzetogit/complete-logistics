@@ -236,6 +236,7 @@ export const AdminTransportRideSettings = lazy(() => import('../modules/admin/pa
 export const AdminBidRideSettings = lazy(() => import('../modules/admin/pages/settings/BidRideSettings'));
 export const AdminWalletSettings = lazy(() => import('../modules/admin/pages/settings/WalletSettings'));
 export const AdminTipSettings = lazy(() => import('../modules/admin/pages/settings/TipSettings'));
+export const AdminSupportSettings = lazy(() => import('../modules/admin/pages/settings/SupportSettings'));
 export const AdminAppModules = lazy(() => import('../modules/admin/pages/settings/AppModules'));
 export const AdminOnboardingScreens = lazy(() => import('../modules/admin/pages/settings/OnboardingScreens'));
 export const AdminPaymentGateways = lazy(() => import('../modules/admin/pages/settings/PaymentGateways'));

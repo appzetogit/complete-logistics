@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { invalidateCachedValue } from '../../../../utils/cache.js';
 import { storeDataUrlImage } from '../../../../utils/localImageStore.js';
 import { randomBytes } from 'node:crypto';
 import { ApiError } from '../../../../utils/ApiError.js';
@@ -11386,7 +11387,17 @@ export const updateGeneralSettings = async (category, payload) => {
   const bizSettings = await ensureBusinessSettings();
   const appSettings = await ensureAppSettings();
 
-  const newValues = payload.settings || payload;
+  let newValues = payload.settings || payload;
+
+  // Support contact: only the known keys, validated; the public endpoint's cache is dropped.
+  if (category === 'support') {
+    const { normalizeSupportSettings } = await import('../../services/appSettingsService.js');
+    try {
+      newValues = normalizeSupportSettings(newValues);
+    } catch (error) {
+      throw new ApiError(400, error.message);
+    }
+  }
 
   if (appSettingsCategoryMap[category]) {
     const key = appSettingsCategoryMap[category];
@@ -11404,6 +11415,11 @@ export const updateGeneralSettings = async (category, payload) => {
   bizSettings[bizKey] = { ...(bizSettings[bizKey] || {}), ...newValues };
   bizSettings.markModified(bizKey);
   await bizSettings.save();
+  if (category === 'support') {
+    // the public /app-settings/support answer is cached: drop it so the apps see the change right away
+    await invalidateCachedValue('cache:settings:support').catch(() => null);
+    await invalidateCachedValue('cache:public:general_settings:support').catch(() => null);
+  }
   return { settings: bizSettings[bizKey] };
 };
 

@@ -110,3 +110,114 @@ test('admin switch ride_request_push_data_only=0 brings the normal notification 
     await t.setSettings('transport_ride', { ride_request_push_data_only: '1' });
   }
 });
+
+test('ride request push carries what the native card shows (all strings, existing keys unchanged)', async () => {
+  const vehicle = await t.factories.vehicle({ name: 'Card Sedan' });
+  await t.factories.driver({ vehicleTypeId: vehicle._id, fcmTokenMobile: 'card-driver-token-'.padEnd(40, 'c') });
+  const rider = await t.factories.user();
+  const created = await t.api('POST', '/rides', {
+    token: rider.token,
+    body: {
+      pickup: t.locations.pickup, drop: t.locations.drop, pickupAddress: 'MG Road', dropAddress: 'Vijay Nagar',
+      fare: 187.5, estimatedDistanceMeters: 4321, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash',
+    },
+  });
+  assert.equal(created.status, 201, created.text);
+  const rideId = String(created.body.data.ride._id);
+  const [push] = await waitFor(() => {
+    const found = ofType('ride_request').filter((message) => message.data.rideId === rideId);
+    return found.length ? found : null;
+  }, { message: 'ride_request push' });
+
+  const d = push.data;
+  assert.equal(d.type, 'ride_request');
+  assert.equal(d.userId, String(rider.user._id));
+  assert.equal(d.serviceType, 'ride');
+  assert.equal(d.pickupAddress, 'MG Road');
+  assert.equal(d.dropAddress, 'Vijay Nagar');
+  assert.equal(d.pickupLat, String(t.locations.pickup[1]));
+  assert.equal(d.pickupLng, String(t.locations.pickup[0]));
+  assert.equal(d.dropLat, String(t.locations.drop[1]));
+  assert.equal(d.dropLng, String(t.locations.drop[0]));
+  assert.equal(d.fare, String(created.body.data.ride.fare));
+  assert.equal(d.paymentMethod, created.body.data.ride.paymentMethod);
+  assert.equal(d.distanceKm, '4.3');
+  assert.equal(d.vehicleTypeName, 'Card Sedan');
+  assert.ok(!Number.isNaN(Date.parse(d.acceptanceDeadlineAt)), 'ISO deadline');
+  assert.ok(Date.parse(d.acceptanceDeadlineAt) > Date.now());
+  assert.ok(Number(d.acceptTimeoutSeconds) > 0);
+  assert.ok(Object.values(d).every((value) => typeof value === 'string'), 'every value is a string');
+});
+
+test('missing ride values become empty strings in the push', async () => {
+  const vehicle = await t.factories.vehicle({ name: 'Blank Sedan' });
+  await t.factories.driver({ vehicleTypeId: vehicle._id, fcmTokenMobile: 'blank-driver-token-'.padEnd(40, 'b') });
+  const rider = await t.factories.user();
+  const created = await t.api('POST', '/rides', {
+    token: rider.token,
+    body: { pickup: t.locations.pickup, drop: t.locations.drop, fare: 150, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash' },
+  });
+  const rideId = String(created.body.data.ride._id);
+  const [push] = await waitFor(() => {
+    const found = ofType('ride_request').filter((message) => message.data.rideId === rideId);
+    return found.length ? found : null;
+  }, { message: 'ride_request push' });
+  assert.equal(push.data.pickupAddress, '');
+  assert.equal(push.data.dropAddress, '');
+});
+
+test('offer withdrawn: the other drivers get a silent ride_request_closed push, the accepting driver does not', async () => {
+  const vehicle = await t.factories.vehicle({ name: 'Close Sedan' });
+  const a = await t.factories.driver({ vehicleTypeId: vehicle._id, fcmTokenMobile: 'close-a-token-'.padEnd(40, 'a') });
+  const b = await t.factories.driver({ vehicleTypeId: vehicle._id, fcmTokenMobile: 'close-b-token-'.padEnd(40, 'b') });
+  await t.setSettings('transport_ride', { trip_dispatch_type: '2' }); // broadcast: both drivers get the offer
+  try {
+    const rider = await t.factories.user();
+    const created = await t.api('POST', '/rides', {
+      token: rider.token,
+      body: { pickup: t.locations.pickup, drop: t.locations.drop, fare: 150, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash' },
+    });
+    const rideId = String(created.body.data.ride._id);
+    await waitFor(async () => (await t.m.Ride.findById(rideId).lean()).dispatchTracking.notifiedDriverIds.length >= 2, { message: 'both drivers offered' });
+
+    await t.acceptRide(rideId, a.driver._id);
+    const [closed] = await waitFor(() => {
+      const found = ofType('ride_request_closed').filter((message) => message.data.rideId === rideId);
+      return found.length ? found : null;
+    }, { message: 'ride_request_closed push' });
+
+    assert.deepEqual(closed.tokens, [b.driver.fcmTokenMobile], 'only the driver who lost the offer');
+    assert.equal(closed.notification, undefined);
+    assert.equal(closed.android.notification, undefined);
+    assert.equal(closed.android.priority, 'high');
+    assert.equal(closed.android.collapseKey, `ride_${rideId}`, 'replaces the offer push');
+    assert.equal(closed.android.ttl, 60_000);
+    assert.equal(closed.webpush, undefined);
+    assert.equal(closed.apns.headers['apns-push-type'], 'background');
+    assert.equal(closed.data.reason, 'accepted-by-another-driver');
+    assert.equal(closed.data.title, undefined, 'nothing to show');
+  } finally {
+    await t.setSettings('transport_ride', { trip_dispatch_type: '1' });
+  }
+});
+
+test('offer withdrawn because the rider cancelled: every offered driver gets the close push', async () => {
+  const vehicle = await t.factories.vehicle({ name: 'Cancel Sedan' });
+  const a = await t.factories.driver({ vehicleTypeId: vehicle._id, fcmTokenMobile: 'cancel-a-token-'.padEnd(40, 'a') });
+  const rider = await t.factories.user();
+  const created = await t.api('POST', '/rides', {
+    token: rider.token,
+    body: { pickup: t.locations.pickup, drop: t.locations.drop, fare: 150, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash' },
+  });
+  const rideId = String(created.body.data.ride._id);
+  await waitFor(async () => (await t.m.Ride.findById(rideId).lean()).dispatchTracking.notifiedDriverIds.length >= 1, { message: 'driver offered' });
+
+  const cancel = await t.api('PATCH', `/rides/${rideId}/cancel`, { token: rider.token });
+  assert.equal(cancel.status, 200, cancel.text);
+  const [closed] = await waitFor(() => {
+    const found = ofType('ride_request_closed').filter((message) => message.data.rideId === rideId);
+    return found.length ? found : null;
+  }, { message: 'close push after rider cancel' });
+  assert.deepEqual(closed.tokens, [a.driver.fcmTokenMobile]);
+  assert.equal(closed.data.reason, 'user-cancelled');
+});

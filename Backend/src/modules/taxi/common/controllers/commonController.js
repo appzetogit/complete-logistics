@@ -43,6 +43,11 @@ export const uploadImage = asyncHandler(async (req, res) => {
     });
 });
 
+export const getSupportContact = asyncHandler(async (_req, res) => {
+    const { getSupportSettings } = await import('../../services/appSettingsService.js');
+    return res.json({ success: true, data: await getSupportSettings() });
+});
+
 export const getReferralTranslation = asyncHandler(async (req, res) => {
     const languageCode = String(req.query?.language || req.query?.lang || '').trim().toLowerCase();
     const data = await getReferralTranslationContent(languageCode);

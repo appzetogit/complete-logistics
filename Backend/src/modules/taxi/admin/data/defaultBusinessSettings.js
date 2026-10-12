@@ -109,6 +109,12 @@ export const createDefaultBusinessSettings = () => ({
   },
   // First N completed rides (rides + goods) are free for a new user. Off by
   // default. max_fare: a free ride above this fare is charged normally (0 = no cap).
+  // Empty until the admin fills them in; the apps show their own fallback while a value is empty.
+  support: {
+    support_phone: '',
+    support_email: '',
+    support_whatsapp: '',
+  },
   free_rides: {
     enabled: '0',
     limit: '3',

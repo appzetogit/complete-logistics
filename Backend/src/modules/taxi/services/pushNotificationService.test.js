@@ -63,3 +63,24 @@ test('data-only ignores an image for Android (an image would need a notification
   assert.equal(message.android.notification, undefined);
   assert.equal(message.notification, undefined);
 });
+
+test('silent data-only control message: nothing visible anywhere, background push on iOS', () => {
+  const message = buildMulticastMessage({
+    tokens: ['t1'],
+    dataOnly: true,
+    silent: true,
+    collapseKey: 'ride_abc',
+    ttlMs: 60_000,
+    data: { type: 'ride_request_closed', rideId: 'abc' },
+  });
+  assert.equal(message.notification, undefined);
+  assert.equal(message.android.notification, undefined);
+  assert.equal(message.webpush, undefined, 'no web notification either');
+  assert.equal(message.android.priority, 'high');
+  assert.equal(message.android.collapseKey, 'ride_abc');
+  assert.equal(message.android.ttl, 60_000);
+  assert.deepEqual(message.data, { type: 'ride_request_closed', rideId: 'abc', click_action: 'FLUTTER_NOTIFICATION_CLICK' }, 'no title/body copied in');
+  assert.equal(message.apns.headers['apns-push-type'], 'background');
+  assert.equal(message.apns.headers['apns-priority'], '5');
+  assert.deepEqual(message.apns.payload, { aps: { 'content-available': 1 } });
+});

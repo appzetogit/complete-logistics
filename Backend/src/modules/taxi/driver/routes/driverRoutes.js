@@ -119,6 +119,7 @@ import {
 } from "../controllers/driverController.js";
 import { triggerDriverSosAlert } from '../../safety/controllers/safetyController.js';
 import { getOpenRideOffersForDriver } from '../../services/dispatchService.js';
+import { getDriverPerformance } from '../services/driverPerformanceService.js';
 
 export const driverRouter = Router();
 
@@ -164,6 +165,14 @@ driverRouter.get(
   asyncHandler(async (req, res) => {
     const results = await getOpenRideOffersForDriver(req.auth.sub);
     res.json({ success: true, data: { results, total: results.length } });
+  }),
+);
+// "Your Performance": day streak and ride counts (completed rides, IST days, weeks from Monday).
+driverRouter.get(
+  "/performance",
+  authenticate(["driver"]),
+  asyncHandler(async (req, res) => {
+    res.json({ success: true, data: await getDriverPerformance(req.auth.sub) });
   }),
 );
 driverRouter.get(

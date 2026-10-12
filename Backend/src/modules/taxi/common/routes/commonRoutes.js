@@ -12,6 +12,8 @@ commonRouter.post(
   commonController.uploadImage,
 );
 commonRouter.get('/common/referrals/translation', commonController.getReferralTranslation);
+// Help-center contact for both apps (no login).
+commonRouter.get('/app-settings/support', commonController.getSupportContact);
 commonRouter.get('/common/referrals/settings', commonController.getReferralSettingsContent);
 commonRouter.get('/common/payment-gateway', commonController.getPaymentGatewayConfig);
 commonRouter.post('/common/payment-gateway/phonepe/callback', commonController.acknowledgePhonePeCallback);

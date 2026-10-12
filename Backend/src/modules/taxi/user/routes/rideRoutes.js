@@ -34,6 +34,11 @@ export const rideRouter = Router();
 rideRouter.post('/', authenticate(['user']), rideCreationRateLimit, asyncHandler(createRide));
 rideRouter.get('/', authenticate(['user', 'driver']), asyncHandler(listMyRides));
 rideRouter.get('/app-settings/tip', asyncHandler(getRideAppTipSettings));
+// Same help-center contact as GET /app-settings/support, next to the tip settings the apps already read.
+rideRouter.get('/app-settings/support', asyncHandler(async (_req, res) => {
+  const { getSupportSettings } = await import('../../services/appSettingsService.js');
+  res.json({ success: true, data: await getSupportSettings() });
+}));
 rideRouter.get('/available-drivers', availableDriversRateLimit, asyncHandler(listAvailableDrivers));
 rideRouter.get('/active/me', authenticate(['user', 'driver']), asyncHandler(getMyActiveRide));
 rideRouter.get('/:rideId/cancel-preview', authenticate(['user']), asyncHandler(getRideCancelPreview));

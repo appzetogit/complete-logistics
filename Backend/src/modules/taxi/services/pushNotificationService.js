@@ -53,9 +53,13 @@ export const buildMulticastMessage = ({
   dataOnly = false,
   collapseKey = '',
   ttlMs = 0,
+  // A control message for the app (e.g. "this ride offer is gone"): data only everywhere, nothing shown,
+  // and a background push on iOS instead of a visible alert.
+  silent = false,
 }) => {
+  const quiet = dataOnly && silent;
   const safeData = Object.fromEntries(
-    Object.entries({ ...(data || {}), ...(dataOnly ? { title, body } : {}) })
+    Object.entries({ ...(data || {}), ...(dataOnly && !quiet ? { title, body } : {}) })
       .map(([key, value]) => [key, String(value ?? '')]),
   );
   const message = {
@@ -67,12 +71,24 @@ export const buildMulticastMessage = ({
       ...(collapseKey ? { collapseKey } : {}),
       ...(!dataOnly && image ? { notification: { imageUrl: image } } : {}),
     },
-    webpush: {
-      notification: { title, body, ...(image ? { image } : {}) },
-    },
+    ...(quiet ? {} : {
+      webpush: {
+        notification: { title, body, ...(image ? { image } : {}) },
+      },
+    }),
   };
 
-  if (dataOnly) {
+  if (quiet) {
+    message.apns = {
+      headers: {
+        'apns-priority': '5',
+        'apns-push-type': 'background',
+        ...(collapseKey ? { 'apns-collapse-id': collapseKey.slice(0, 64) } : {}),
+        ...(ttlMs > 0 ? { 'apns-expiration': String(Math.floor((Date.now() + ttlMs) / 1000)) } : {}),
+      },
+      payload: { aps: { 'content-available': 1 } },
+    };
+  } else if (dataOnly) {
     message.apns = {
       headers: {
         'apns-priority': '10',
@@ -206,6 +222,7 @@ const sendPushToTargets = async ({
   dataOnly = false,
   collapseKey = '',
   ttlMs = 0,
+  silent = false,
 }) => {
   const messaging = getFirebaseMessaging();
 
@@ -257,6 +274,7 @@ const sendPushToTargets = async ({
       dataOnly,
       collapseKey,
       ttlMs,
+      silent,
     }));
 
     response.responses.forEach((item, index) => {
@@ -467,6 +485,7 @@ export const sendPushNotificationToEntities = async ({
   dataOnly = false,
   collapseKey = '',
   ttlMs = 0,
+  silent = false,
 }) => {
   const targets = await collectDirectTargets({ userIds, driverIds });
   return sendPushToTargets({
@@ -478,5 +497,6 @@ export const sendPushNotificationToEntities = async ({
     dataOnly,
     collapseKey,
     ttlMs,
+    silent,
   });
 };
