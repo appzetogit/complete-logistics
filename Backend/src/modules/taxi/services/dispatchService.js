@@ -720,7 +720,7 @@ export const restartRideDispatchWithLatestFare = async (rideId) => {
   stopDispatchFlow(rideId, { releaseLease: false });
   await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
 
-  const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode');
+  const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode rating ratingCount');
   if (!ride || ride.status !== RIDE_STATUS.SEARCHING || ride.liveStatus !== RIDE_LIVE_STATUS.SEARCHING) {
     return;
   }
@@ -848,6 +848,8 @@ const buildRideRequestPayload = ({
     name: ride.userId?.name || 'Customer',
     phone: ride.userId?.phone || '',
     countryCode: ride.userId?.countryCode || '',
+    rating: Number(ride.userId?.rating || 0),
+    ratingCount: Number(ride.userId?.ratingCount || 0),
   },
   pickupLocation: ride.pickupLocation,
   pickupAddress: ride.pickupAddress || '',
@@ -987,7 +989,7 @@ export const getOpenRideOffersForDriver = async (driverId) => {
   })
     .sort({ createdAt: -1 })
     .limit(10)
-    .populate('userId', 'name phone countryCode');
+    .populate('userId', 'name phone countryCode rating ratingCount');
 
   if (!rides.length) {
     return [];
@@ -1589,7 +1591,7 @@ export const cancelActiveRideByDriver = async ({ rideId, driverId, reason = '' }
     });
 
     try {
-      const fresh = await Ride.findById(ride._id).populate('userId', 'name phone countryCode');
+      const fresh = await Ride.findById(ride._id).populate('userId', 'name phone countryCode rating ratingCount');
       await startDispatchFlow(fresh, { forceRestart: true });
     } catch (error) {
       console.error('Re-dispatch after driver cancel failed', String(ride._id), error?.message || error);
@@ -1657,7 +1659,7 @@ const dispatchAttempt = async (rideId, attemptIndex = 0) => {
     return;
   }
 
-  const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode');
+  const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode rating ratingCount');
 
   if (!ride || ride.status !== RIDE_STATUS.SEARCHING) {
     stopDispatchFlow(rideId);
@@ -1947,7 +1949,7 @@ export const notifyLateAvailableDriver = async (driverId) => {
     const activeRideIds = Array.from(activeDispatches.keys());
 
     for (const rideId of activeRideIds) {
-      const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode');
+      const ride = await Ride.findById(rideId).populate('userId', 'name phone countryCode rating ratingCount');
 
       if (!ride || ride.status !== RIDE_STATUS.SEARCHING) {
         continue;

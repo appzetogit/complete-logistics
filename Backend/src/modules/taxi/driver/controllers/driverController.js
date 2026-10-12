@@ -2772,6 +2772,8 @@ const serializeDriverScheduledRide = (ride = {}, currentDriverId = "") => ({
         name: ride.userId.name || "Customer",
         phone: ride.userId.phone || "",
         countryCode: ride.userId.countryCode || "",
+        rating: Number(ride.userId.rating || 0),
+        ratingCount: Number(ride.userId.ratingCount || 0),
       }
     : null,
   createdAt: ride.createdAt || null,
@@ -3247,7 +3249,7 @@ export const getDriverScheduledRides = async (req, res) => {
         "createdAt",
         "updatedAt",
       ].join(" "))
-      .populate("userId", "name phone countryCode")
+      .populate("userId", "name phone countryCode rating ratingCount")
       .lean(),
     Ride.countDocuments(query),
   ]);

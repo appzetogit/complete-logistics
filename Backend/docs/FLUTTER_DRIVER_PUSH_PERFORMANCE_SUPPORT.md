@@ -1,7 +1,7 @@
 # Ride-request push fields, offer-closed push, driver performance, support contact – Flutter Developer Notes
 
-Backend changes for the "Backend requirements – Rentol user & driver apps" list (items 1–4). Item 5 (rider rating for the
-driver): **decision (a) – drop it**: the driver app removes the hardcoded `4.8`; no backend change.
+Backend changes for the "Backend requirements – Rentol user & driver apps" list, items 1–5. Item 5 is built as
+option (b): the driver rates the rider, and the driver app shows the rider's real rating.
 
 ---
 
@@ -65,10 +65,27 @@ Driver token. Response:
   dummy number from both apps.
 - WhatsApp link: `https://wa.me/<digits only>`.
 
-## 5. Rider rating shown to the driver
+## 5. Rider rating (Driver app)
 
-Decision (a): remove the hardcoded rider rating (`4.8`) from the driver app's Active Ride screen. The backend has no
-driver→rider rating.
+**Show it:** every ride payload the driver gets has the rider's average in `user`:
+```json
+"user": { "id": "...", "name": "Asha", "phone": "...", "countryCode": "+91", "rating": 4.5, "ratingCount": 12 }
+```
+That covers the `rideRequest` socket offer, `GET /drivers/ride-offers`, the active ride, `GET /rides/:rideId` and
+`GET /rides` (history). Replace the hardcoded `4.8` with `user.rating`. When `ratingCount == 0` the rider is new, so
+show "New" instead of `0.0`.
+
+**Rate the rider after the trip:** `PATCH /api/v1/rides/:rideId/rider-rating` (driver token)
+```json
+{ "rating": 4, "comment": "optional, up to 500 chars" }
+```
+- `rating` is a whole number from 1 to 5.
+- 200: returns the ride, with `driverFeedback: { rating, comment, submittedAt }`.
+- 409: already rated (once per ride; a double tap counts once). 404: not your ride, or not completed. 400: bad rating
+  or comment.
+- Optional and skippable: show it on the trip-completed screen with a Skip button.
+- `driverFeedback` is `null` until rated, on `GET /rides/:rideId` and in history. Use it to hide the "Rate rider" button.
+- Riders never see what the driver wrote; only the average reaches the driver apps.
 
 ## App-side only (data already sent)
 
@@ -83,4 +100,6 @@ driver→rider rating.
 - [ ] One-by-one dispatch moves to the next driver: the first driver's card closes.
 - [ ] Performance tab shows real numbers; a new driver sees zeros.
 - [ ] Help Center shows the admin's phone/email; empty WhatsApp hides the option.
+- [ ] Active Ride shows the rider's real rating ("New" for a first-time rider); after the trip the driver can rate
+      once, and a second try gets 409.
 - [ ] Xiaomi/Oppo/Vivo: Autostart allowed + battery "No restrictions", or no push reaches a killed app.

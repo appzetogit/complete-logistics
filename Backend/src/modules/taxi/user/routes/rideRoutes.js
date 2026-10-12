@@ -22,6 +22,7 @@ import {
   listAvailableDrivers,
   payRideCompletionWithWallet,
   submitAcceptSelfie,
+  submitRiderRating,
   submitRideReview,
   updateRideBidCeiling,
   updateRideStatus,
@@ -56,3 +57,5 @@ rideRouter.post('/:rideId/tip/razorpay/verify', authenticate(['user']), asyncHan
 rideRouter.patch('/:rideId/feedback', authenticate(['user']), asyncHandler(submitRideReview));
 rideRouter.patch('/:rideId/accept-selfie', authenticate(['driver']), asyncHandler(submitAcceptSelfie));
 rideRouter.post('/:rideId/driver-cancel', authenticate(['driver']), asyncHandler(driverCancelRide));
+// The driver rates the rider after the trip (once per ride).
+rideRouter.patch('/:rideId/rider-rating', authenticate(['driver']), asyncHandler(submitRiderRating));

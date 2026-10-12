@@ -83,6 +83,23 @@ const userSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    // Average of the ratings drivers gave this rider (0 until the first one).
+    rating: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 5,
+    },
+    ratingCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    totalRatingScore: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     email: {
       type: String,
       default: '',

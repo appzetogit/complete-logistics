@@ -778,6 +778,30 @@ const rideSchema = new mongoose.Schema(
         default: null,
       },
     },
+    // The driver's rating of the rider (the reverse of `feedback`). Seen by drivers and admin only, so it is
+    // never loaded unless asked for (`+driverFeedback`); raw ride documents sent to riders cannot leak it.
+    driverFeedback: {
+      type: new mongoose.Schema({
+        rating: {
+          type: Number,
+          default: null,
+          min: 1,
+          max: 5,
+        },
+        comment: {
+          type: String,
+          default: '',
+          trim: true,
+          maxlength: 500,
+        },
+        submittedAt: {
+          type: Date,
+          default: null,
+        },
+      }, { _id: false }),
+      default: null,
+      select: false,
+    },
   },
   { timestamps: true },
 );

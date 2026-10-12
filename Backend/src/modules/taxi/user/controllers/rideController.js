@@ -23,6 +23,7 @@ import {
   audienceForRole,
   serializeRideRealtime,
   submitRideFeedback,
+  submitRiderRatingByDriver,
   withoutAcceptSelfie,
   serializeRideCancellation,
   updateRideLifecycle,
@@ -371,7 +372,8 @@ export const getRideById = async (req, res) => {
     entityId: req.auth.sub,
   });
 
-  const ride = await getRideDetails(req.params.rideId);
+  // Only the driver sees their own rating of the rider.
+  const ride = await getRideDetails(req.params.rideId, { includeDriverFeedback: req.auth.role === 'driver' });
   const freeRides = req.auth.role === 'user'
     ? await getFreeRidesSummaryForUser(req.auth.sub).catch(() => null)
     : null;
@@ -531,6 +533,25 @@ export const submitRideReview = async (req, res) => {
   res.json({
     success: true,
     data: serializeRideRealtime(ride),
+  });
+};
+
+/// The driver rates the rider after a completed ride (once per ride).
+export const submitRiderRating = async (req, res) => {
+  if (req.auth.role !== 'driver') {
+    throw new ApiError(403, 'Only drivers can rate riders');
+  }
+
+  const ride = await submitRiderRatingByDriver({
+    rideId: req.params.rideId,
+    driverId: req.auth.sub,
+    rating: req.body?.rating,
+    comment: req.body?.comment,
+  });
+
+  res.json({
+    success: true,
+    data: serializeRideRealtime(ride, { audience: RIDE_AUDIENCE.DRIVER }),
   });
 };
 

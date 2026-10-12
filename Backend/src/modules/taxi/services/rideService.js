@@ -1350,10 +1350,11 @@ export const createRideRecord = async ({
   throw lastError || new ApiError(500, 'Failed to create ride with promo');
 };
 
-export const getRideDetails = async (rideId) => {
+export const getRideDetails = async (rideId, { includeDriverFeedback = false } = {}) => {
   const ride = await Ride.findById(rideId)
+    .select(includeDriverFeedback ? '+driverFeedback' : '')
     .populate('deliveryId')
-    .populate('userId', 'name phone')
+    .populate('userId', 'name phone rating ratingCount')
     .populate('driverId', 'name phone profileImage vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel vehicleImage rating');
 
   if (!ride) {
@@ -1369,8 +1370,9 @@ const activeRideStatuses = [RIDE_STATUS.SEARCHING, RIDE_STATUS.ACCEPTED, RIDE_ST
 
 const populateRideRealtime = async (rideId) =>
   Ride.findById(rideId)
+    .select('+driverFeedback')
     .populate('deliveryId')
-    .populate('userId', 'name phone')
+    .populate('userId', 'name phone rating ratingCount')
     .populate('driverId', 'name phone profileImage vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel vehicleImage rating')
     .maxTimeMS(8000);
 
@@ -1550,6 +1552,7 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
   createdAt: ride.createdAt || null,
   updatedAt: ride.updatedAt || null,
   feedback: ride.feedback || null,
+  ...(audience !== RIDE_AUDIENCE.USER ? { driverFeedback: ride.driverFeedback?.submittedAt ? ride.driverFeedback : null } : {}),
   lastDriverLocation: ride.lastDriverLocation?.coordinates?.length
     ? {
         type: ride.lastDriverLocation.type,
@@ -1605,7 +1608,7 @@ export const getActiveRideForIdentity = async ({ role, entityId }) => {
       status: { $in: activeRideStatuses },
     })
       .sort({ updatedAt: -1 })
-      .populate('userId', 'name phone')
+      .populate('userId', 'name phone rating ratingCount')
       .populate('driverId', 'name phone profileImage vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel vehicleImage rating');
 
     // A scheduled ride that is still in the future is normally not "active", but one that was just
@@ -1655,7 +1658,7 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
   const counterpartPath = role === 'driver' ? 'userId' : 'driverId';
   const counterpartSelect =
     role === 'driver'
-      ? 'name phone profileImage'
+      ? 'name phone profileImage rating ratingCount'
       : 'name phone profileImage vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel vehicleImage rating';
 
   const ridesQuery = Ride.find(query)
@@ -1697,6 +1700,8 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
       'startedAt',
       'completedAt',
       'feedback',
+      // the driver's own rating of the rider; never selected for the rider
+      ...(role === 'driver' ? ['+driverFeedback'] : []),
       'createdAt',
       'updatedAt',
       'userId',
@@ -1771,6 +1776,7 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
     startedAt: ride.startedAt,
     completedAt: ride.completedAt,
     feedback: ride.feedback || null,
+    ...(role === 'driver' ? { driverFeedback: ride.driverFeedback?.submittedAt ? ride.driverFeedback : null } : {}),
     createdAt: ride.createdAt,
     updatedAt: ride.updatedAt,
     user: role === 'driver' ? (ride.userId || null) : null,
@@ -2470,6 +2476,71 @@ export const acceptRideBidAssignment = async ({ rideId, bidId, userId }) => {
   }
 
   throw lastError || new ApiError(500, 'Failed to accept ride bid');
+};
+
+/**
+ * The driver rates the rider after a completed ride. Once per ride: the claim on the ride is atomic,
+ * so a double tap cannot count twice. The rider's average is recomputed in the same update.
+ */
+export const submitRiderRatingByDriver = async ({ rideId, driverId, rating, comment = '' }) => {
+  const numericRating = Number(rating);
+  if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) {
+    throw new ApiError(400, 'rating must be an integer between 1 and 5');
+  }
+  const cleanComment = String(comment ?? '').trim();
+  if (cleanComment.length > 500) {
+    throw new ApiError(400, 'comment must be at most 500 characters');
+  }
+  if (!mongoose.Types.ObjectId.isValid(String(rideId))) {
+    throw new ApiError(404, 'Completed ride not found');
+  }
+
+  const claimed = await Ride.findOneAndUpdate(
+    {
+      _id: rideId,
+      driverId,
+      status: RIDE_STATUS.COMPLETED,
+      'driverFeedback.submittedAt': null,
+    },
+    {
+      $set: {
+        driverFeedback: { rating: numericRating, comment: cleanComment, submittedAt: new Date() },
+      },
+    },
+    { new: true },
+  ).select('_id userId').maxTimeMS(8000);
+
+  if (!claimed) {
+    const existing = await Ride.findOne({ _id: rideId, driverId, status: RIDE_STATUS.COMPLETED })
+      .select('_id')
+      .maxTimeMS(8000)
+      .lean();
+    throw existing
+      ? new ApiError(409, 'You already rated this rider for this ride')
+      : new ApiError(404, 'Completed ride not found');
+  }
+
+  try {
+    await User.updateOne(
+      { _id: claimed.userId },
+      [
+        {
+          $set: {
+            ratingCount: { $add: [{ $ifNull: ['$ratingCount', 0] }, 1] },
+            totalRatingScore: { $add: [{ $ifNull: ['$totalRatingScore', 0] }, numericRating] },
+          },
+        },
+        { $set: { rating: { $round: [{ $divide: ['$totalRatingScore', '$ratingCount'] }, 1] } } },
+      ],
+      { updatePipeline: true },
+    ).maxTimeMS(8000);
+  } catch (error) {
+    // Not counted: release the claim so the driver can submit again.
+    await Ride.updateOne({ _id: claimed._id }, { $set: { driverFeedback: null } }).catch(() => null);
+    throw error;
+  }
+
+  return populateRideRealtime(claimed._id);
 };
 
 export const submitRideFeedback = async ({ rideId, userId, rating, comment = '', tipAmount = 0 }) => {
