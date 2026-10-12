@@ -243,3 +243,43 @@ test('admin deletes a ride that is still searching: the offered driver gets the 
   assert.deepEqual(closed.tokens, [a.driver.fcmTokenMobile]);
   assert.equal(closed.data.reason, 'deleted-by-admin');
 });
+
+// After a server restart the in-memory dispatch state is gone; the offered drivers saved on the ride still get the close.
+for (const ending of ['accepted', 'rider-cancelled']) {
+  test(`offer withdrawn after a restart (${ending}): drivers saved on the ride still get the close push`, async () => {
+    const { stopDispatchFlow } = await import('../../src/modules/taxi/services/dispatchService.js');
+    const vehicle = await t.factories.vehicle({ name: `Restart ${ending}` });
+    const a = await t.factories.driver({ vehicleTypeId: vehicle._id, fcmTokenMobile: `restart-a-${ending}-`.padEnd(40, 'a') });
+    const b = await t.factories.driver({ vehicleTypeId: vehicle._id, fcmTokenMobile: `restart-b-${ending}-`.padEnd(40, 'b') });
+    await t.setSettings('transport_ride', { trip_dispatch_type: '2' });
+    try {
+      const rider = await t.factories.user();
+      const created = await t.api('POST', '/rides', {
+        token: rider.token,
+        body: { pickup: t.locations.pickup, drop: t.locations.drop, fare: 150, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash' },
+      });
+      const rideId = String(created.body.data.ride._id);
+      await waitFor(async () => (await t.m.Ride.findById(rideId).lean()).dispatchTracking.notifiedDriverIds.length >= 2, { message: 'both offered' });
+
+      stopDispatchFlow(rideId); // what a restart leaves behind: no memory of who was offered
+
+      let expectedTokens;
+      if (ending === 'accepted') {
+        await t.acceptRide(rideId, a.driver._id);
+        expectedTokens = [b.driver.fcmTokenMobile];
+      } else {
+        const cancel = await t.api('PATCH', `/rides/${rideId}/cancel`, { token: rider.token });
+        assert.equal(cancel.status, 200, cancel.text);
+        expectedTokens = [a.driver.fcmTokenMobile, b.driver.fcmTokenMobile].sort();
+      }
+      const closed = await waitFor(() => {
+        const found = ofType('ride_request_closed').filter((message) => message.data.rideId === rideId);
+        const tokens = found.flatMap((message) => message.tokens).sort();
+        return tokens.length >= expectedTokens.length ? tokens : null;
+      }, { message: 'close push reached the saved drivers' });
+      assert.deepEqual(closed, expectedTokens);
+    } finally {
+      await t.setSettings('transport_ride', { trip_dispatch_type: '1' });
+    }
+  });
+}

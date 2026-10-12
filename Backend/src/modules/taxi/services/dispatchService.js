@@ -761,6 +761,13 @@ const hasLocalDispatchFlow = (rideId) => {
     dispatchLeaseRefreshTimers.has(key);
 };
 
+// Every driver who was offered this ride: the in-memory dispatch state plus the list saved on the ride
+// (the memory is empty after a restart or on another process). Read before the tracking is reset.
+const offeredDriverIdsFor = (ride, dispatchState) => normalizeDispatchDriverIds([
+  ...(dispatchState?.notifiedDriverIds || []),
+  ...(ride?.dispatchTracking?.notifiedDriverIds || []),
+]);
+
 /**
  * A ride offer is no longer available to these drivers: tell their open sockets (`rideRequestClosed`) AND
  * send a silent data-only push (`type: ride_request_closed`), so a killed or backgrounded driver app closes
@@ -1094,7 +1101,7 @@ const closeRideAsUnmatched = async (rideId) => {
     reason: 'unmatched',
   });
 
-  closeOfferForDrivers(ride._id, dispatchState.notifiedDriverIds, { reason: 'unmatched' });
+  closeOfferForDrivers(ride._id, offeredDriverIdsFor(ride, dispatchState), { reason: 'unmatched' });
 
   emitToRoom(getRideRoom(ride._id), SOCKET_EVENTS.RIDE_STATUS_UPDATED, {
     rideId: String(ride._id),
@@ -1281,7 +1288,7 @@ export const cancelRideByUser = async ({ rideId, userId, reason = '' }) => {
     reason: 'You cancelled the ride',
   });
 
-  closeOfferForDrivers(ride._id, [...(ride.driverId ? [ride.driverId] : []), ...dispatchState.notifiedDriverIds], {
+  closeOfferForDrivers(ride._id, [...(ride.driverId ? [ride.driverId] : []), ...offeredDriverIdsFor(ride, dispatchState)], {
     reason: 'user-cancelled',
     message: 'User cancelled the ride.',
   });
@@ -1422,7 +1429,7 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
 
   closeOfferForDrivers(
     ride._id,
-    dispatchState.notifiedDriverIds.filter((id) => String(id) !== String(ride.driverId || '')),
+    offeredDriverIdsFor(ride, dispatchState).filter((id) => String(id) !== String(ride.driverId || '')),
     { reason: 'driver-cancelled', message: cancelReason },
   );
 
@@ -2018,6 +2025,8 @@ export const notifyLateAvailableDriver = async (driverId) => {
 
 export const notifyRideAccepted = async (ride) => {
   const state = getDispatchState(ride._id);
+  const tracked = await Ride.findById(ride._id).select('dispatchTracking.notifiedDriverIds').lean().catch(() => null);
+  const offeredDriverIds = offeredDriverIdsFor(tracked, state);
   stopDispatchFlow(ride._id);
   await persistDispatchTrackingProgress({ rideId: ride._id, reset: true }).catch(() => null);
 
@@ -2103,13 +2112,13 @@ export const notifyRideAccepted = async (ride) => {
   emitToRoom(getRideRoom(populatedRide._id), 'rideRequestClosed', {
     rideId: String(populatedRide._id),
         acceptedDriverId: String(populatedRide.driverId._id),
-        notifiedDriverIds: state.notifiedDriverIds,
+        notifiedDriverIds: offeredDriverIds,
         reason: 'accepted-by-another-driver',
   });
 
   closeOfferForDrivers(
     populatedRide._id,
-    state.notifiedDriverIds,
+    offeredDriverIds,
     { acceptedDriverId: String(populatedRide.driverId._id), reason: 'accepted-by-another-driver' },
     { skipPushFor: [String(populatedRide.driverId._id)] },
   );
