@@ -221,3 +221,25 @@ test('offer withdrawn because the rider cancelled: every offered driver gets the
   assert.deepEqual(closed.tokens, [a.driver.fcmTokenMobile]);
   assert.equal(closed.data.reason, 'user-cancelled');
 });
+
+test('admin deletes a ride that is still searching: the offered driver gets the close push', async () => {
+  const vehicle = await t.factories.vehicle({ name: 'Admin Del Sedan' });
+  const a = await t.factories.driver({ vehicleTypeId: vehicle._id, fcmTokenMobile: 'admindel-a-token-'.padEnd(40, 'a') });
+  const admin = await t.factories.admin();
+  const rider = await t.factories.user();
+  const created = await t.api('POST', '/rides', {
+    token: rider.token,
+    body: { pickup: t.locations.pickup, drop: t.locations.drop, fare: 150, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash' },
+  });
+  const rideId = String(created.body.data.ride._id);
+  await waitFor(async () => (await t.m.Ride.findById(rideId).lean()).dispatchTracking.notifiedDriverIds.length >= 1, { message: 'driver offered' });
+
+  const deleted = await t.api('DELETE', `/admin/ongoing-rides/${rideId}`, { token: admin.token });
+  assert.equal(deleted.status, 200, deleted.text);
+  const [closed] = await waitFor(() => {
+    const found = ofType('ride_request_closed').filter((message) => message.data.rideId === rideId);
+    return found.length ? found : null;
+  }, { message: 'close push after admin delete' });
+  assert.deepEqual(closed.tokens, [a.driver.fcmTokenMobile]);
+  assert.equal(closed.data.reason, 'deleted-by-admin');
+});

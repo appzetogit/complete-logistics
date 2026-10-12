@@ -1143,9 +1143,11 @@ export const cancelRideByAdmin = async (rideId, { reason = '' } = {}) => {
     reason: 'Ride was deleted by admin',
   });
 
-  if (ride.driverId) {
-    closeOfferForDrivers(ride._id, [ride.driverId], { reason: 'deleted-by-admin' });
-  }
+  // The assigned driver and every driver still holding the offer (a ride deleted while searching).
+  const offeredDriverIds = (ride.dispatchTracking?.notifiedDriverIds || []).map(String);
+  closeOfferForDrivers(ride._id, [...(ride.driverId ? [String(ride.driverId)] : []), ...offeredDriverIds], {
+    reason: 'deleted-by-admin',
+  });
 
   emitToRoom(getRideRoom(ride._id), 'rideRequestClosed', {
     rideId: String(ride._id),
