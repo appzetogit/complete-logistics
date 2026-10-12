@@ -2487,6 +2487,9 @@ export const submitRiderRatingByDriver = async ({ rideId, driverId, rating, comm
   if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) {
     throw new ApiError(400, 'rating must be an integer between 1 and 5');
   }
+  if (comment !== undefined && comment !== null && typeof comment !== 'string') {
+    throw new ApiError(400, 'comment must be text');
+  }
   const cleanComment = String(comment ?? '').trim();
   if (cleanComment.length > 500) {
     throw new ApiError(400, 'comment must be at most 500 characters');
@@ -2507,7 +2510,7 @@ export const submitRiderRatingByDriver = async ({ rideId, driverId, rating, comm
         driverFeedback: { rating: numericRating, comment: cleanComment, submittedAt: new Date() },
       },
     },
-    { new: true },
+    { returnDocument: 'after' },
   ).select('_id userId').maxTimeMS(8000);
 
   if (!claimed) {
@@ -2536,7 +2539,7 @@ export const submitRiderRatingByDriver = async ({ rideId, driverId, rating, comm
     ).maxTimeMS(8000);
   } catch (error) {
     // Not counted: release the claim so the driver can submit again.
-    await Ride.updateOne({ _id: claimed._id }, { $set: { driverFeedback: null } }).catch(() => null);
+    await Ride.updateOne({ _id: claimed._id }, { $unset: { driverFeedback: 1 } }).catch(() => null);
     throw error;
   }
 

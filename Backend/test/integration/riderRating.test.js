@@ -63,6 +63,7 @@ test('rejects bad ratings, other drivers, unfinished rides and non-drivers', asy
     assert.equal((await rate(rideId, driver.token, { rating })).status, 400, `rating ${rating}`);
   }
   assert.equal((await rate(rideId, driver.token, { rating: 4, comment: 'x'.repeat(501) })).status, 400);
+  assert.equal((await rate(rideId, driver.token, { rating: 4, comment: { a: 1 } })).status, 400, 'comment must be text');
   assert.equal((await rate(rideId, stranger.token, { rating: 4 })).status, 404, 'not their ride');
   assert.ok([401, 403].includes((await rate(rideId, rider.token, { rating: 4 })).status), 'riders cannot use it');
   assert.equal((await rate('not-an-id', driver.token, { rating: 4 })).status, 404);
@@ -152,4 +153,28 @@ test('driver ride history shows which rides were rated and the rider rating', as
 
   const riderHistory = await t.api('GET', '/rides', { token: rider.token });
   assert.ok(riderHistory.body.data.results.every((ride) => !('driverFeedback' in ride)));
+});
+
+test('if the rider average cannot be updated, the rating is released and can be sent again', async () => {
+  const vehicle = await t.factories.vehicle();
+  const driver = await t.factories.driver({ vehicleTypeId: vehicle._id });
+  const rider = await t.factories.user();
+  const rideId = await completedRide({ vehicle, driver, rider });
+
+  const original = t.m.User.updateOne;
+  t.m.User.updateOne = function failingOnce() {
+    t.m.User.updateOne = original;
+    return { maxTimeMS: () => Promise.reject(new Error('simulated write failure')) };
+  };
+  try {
+    const failed = await rate(rideId, driver.token, { rating: 4 });
+    assert.equal(failed.status, 500);
+  } finally {
+    t.m.User.updateOne = original;
+  }
+  const released = await t.m.Ride.collection.findOne({ _id: new t.mongoose.Types.ObjectId(rideId) });
+  assert.equal(released.driverFeedback, undefined, 'claim released');
+
+  assert.equal((await rate(rideId, driver.token, { rating: 4 })).status, 200, 'retry works');
+  assert.equal((await t.m.User.findById(rider.user._id).lean()).ratingCount, 1);
 });

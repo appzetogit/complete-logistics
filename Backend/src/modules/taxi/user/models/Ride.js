@@ -799,7 +799,7 @@ const rideSchema = new mongoose.Schema(
           default: null,
         },
       }, { _id: false }),
-      default: null,
+      default: undefined, // absent until the driver rates
       select: false,
     },
   },
