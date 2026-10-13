@@ -2020,12 +2020,13 @@ const rideStatusConfig = {
     requiresProof: 'dropProof',
     atTarget: 'drop',
   },
+  // No location check here: the strict order means the driver was already verified at the drop ("arrived" /
+  // "goods_delivered"). Checking again would strand a ride whose driver moved off while collecting cash.
   [RIDE_LIVE_STATUS.COMPLETED]: {
     persistedStatus: RIDE_STATUS.COMPLETED,
     allowedCurrent: (ride) => (isParcelRide(ride)
       ? [RIDE_LIVE_STATUS.GOODS_DELIVERED]
       : [RIDE_LIVE_STATUS.ARRIVED]),
-    atTarget: 'drop',
   },
 };
 
@@ -2033,6 +2034,11 @@ const OTP_MAX_FAILED_ATTEMPTS = 5;
 const OTP_LOCK_MS = 10 * 60 * 1000;
 // A saved GPS point older than this cannot prove where the driver is now.
 const DRIVER_LOCATION_MAX_AGE_MS = 2 * 60 * 1000;
+
+const isSettingOn = (value, fallback = true) => {
+  if (value === undefined || value === null || String(value).trim() === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+};
 
 const readRadiusSetting = (value, fallback) => {
   const parsed = Number(value);
@@ -2058,18 +2064,31 @@ const assertDriverAtTarget = async ({ ride, target, coordinates }) => {
     return; // nothing to compare against (e.g. a ride without a drop point)
   }
 
+  // Where the driver is: the coordinates sent with this request; else the last GPS point of this ride; else the
+  // driver's live location (online heartbeat). The saved points only count while fresh.
   let driverPoint = null;
   if (coordinates !== undefined && coordinates !== null) {
     driverPoint = normalizePoint(coordinates, 'coordinates');
   } else {
+    const isFresh = (at) => Boolean(at) && Date.now() - new Date(at).getTime() <= DRIVER_LOCATION_MAX_AGE_MS;
     const saved = ride.lastDriverLocation;
-    const savedAt = saved?.updatedAt ? new Date(saved.updatedAt).getTime() : 0;
-    if (Array.isArray(saved?.coordinates) && saved.coordinates.length === 2 && Date.now() - savedAt <= DRIVER_LOCATION_MAX_AGE_MS) {
+    if (Array.isArray(saved?.coordinates) && saved.coordinates.length === 2 && isFresh(saved.updatedAt)) {
       driverPoint = saved.coordinates;
+    } else if (ride.driverId) {
+      const driver = await Driver.findById(ride.driverId).select('location incentiveTracking.lastSeenAt').lean();
+      const live = driver?.location?.coordinates;
+      if (Array.isArray(live) && live.length === 2 && (live[0] || live[1]) && isFresh(driver?.incentiveTracking?.lastSeenAt)) {
+        driverPoint = live;
+      }
     }
   }
 
   if (!driverPoint) {
+    // Admin switch for a rollout: '0' lets the step through when no position is known at all (a driver that is
+    // known to be far away is still refused).
+    if (!isSettingOn(settings.status_location_required, true)) {
+      return;
+    }
     throw new ApiError(409, 'Your current location is needed for this step. Turn on GPS and try again.', {
       code: 'LOCATION_REQUIRED',
     });
@@ -2091,6 +2110,11 @@ const assertStartOtp = async ({ ride, otp }) => {
   const expected = String(ride.otp || '').trim();
   if (!expected) {
     return; // rides created before OTPs existed
+  }
+  // Admin switch for a rollout: '0' starts trips without the OTP (e.g. while an app build cannot send it).
+  const settings = await getTransportRideSettings();
+  if (!isSettingOn(settings.start_trip_otp_required, true)) {
+    return;
   }
 
   const lockedUntil = ride.otpCheck?.lockedUntil ? new Date(ride.otpCheck.lockedUntil) : null;

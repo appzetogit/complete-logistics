@@ -82,6 +82,10 @@ export const createDefaultBusinessSettings = () => ({
     // "arrived at drop" / complete. 0 turns the check off.
     arrival_radius_meters: '200',
     drop_radius_meters: '300',
+    // 1 = refuse an arrival step when the driver's position is unknown (no GPS for 2 min); 0 = let it through.
+    status_location_required: '1',
+    // 1 = "start trip" needs the OTP the rider reads out; 0 = off (only for an app rollout problem).
+    start_trip_otp_required: '1',
     trip_dispatch_type: '1',
     maximum_time_for_accept_reject_bidding_ride: '60',
     maximum_time_for_find_drivers_for_bitting_ride: '300',

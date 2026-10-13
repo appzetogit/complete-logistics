@@ -7,10 +7,10 @@ Items 13, 14, 16, 17 and 19 were already shipped. See `FLUTTER_DRIVER_PUSH_PERFO
 - Every error body: `{ "success": false, "message": "...", "code": "MACHINE_CODE", "details": { ... } }`.
   **Branch on `code`**, and show `message`. Socket errors (`errorMessage`) now carry the same `code` and `details`.
 
-> ⚠️ **Release order matters for the driver app (#1, #2).** Once this backend is live, a driver app that doesn't send
-> the OTP on "Start trip" cannot start rides. The current app already sends `otp`; please confirm before deploying.
-> The radius check falls back to the last GPS point the app streams during a ride, so older builds keep working as
-> long as they are streaming location.
+> ⚠️ **Driver app rollout (#1, #2).** The current driver app already sends `otp` on "Start trip" and streams its
+> location, which the radius check uses when `coordinates` is not sent. If a build misbehaves after the deploy, the
+> admin can switch either check off in **Transport Ride Settings** without a redeploy:
+> *Start Trip Needs Rider OTP* and *When the Driver's Location Is Unknown*. Both are on by default.
 
 ---
 
@@ -42,7 +42,10 @@ The server now refuses these steps when the driver is too far away:
 | step | must be near | default radius |
 |---|---|---|
 | `arriving` ("arrived at pickup"), `goods_loaded` | pickup | 200 m (admin: *Arrival Radius at Pickup*) |
-| `arrived` ("arrived at drop"), `goods_delivered`, `completed` | drop | 300 m (admin: *Arrival Radius at Drop*) |
+| `arrived` ("arrived at drop"), `goods_delivered` | drop | 300 m (admin: *Arrival Radius at Drop*) |
+
+`completed` is not checked again, because the driver was already verified at the drop one step earlier. Moving off while
+collecting cash doesn't block completion.
 
 The admin can change both under **Transport Ride Settings**; `0` turns a check off. Keep the app's own button lock,
 but the server decides.
@@ -64,8 +67,14 @@ socket.emit('ride:status:update', {
 });
 ```
 
-If `coordinates` is missing, the server uses the last GPS point from `ride:driver-location:update`, but only if it is
-under 2 minutes old.
+If `coordinates` is missing, the server uses the last GPS point from `ride:driver-location:update`, else the driver's
+live `driver:location` position, each only if under 2 minutes old. With no position at all it refuses with
+`LOCATION_REQUIRED`, unless the admin switched *When the Driver's Location Is Unknown* to "Allow them".
+
+**Wait for the server's answer before moving on.** Status updates sent over the socket can now be refused (radius, OTP,
+order). Don't show "Trip started" or go to the trip-complete screen until `ride:status:updated` / `ride:state` shows the
+new status. On `errorMessage` with a `code`, stay on the step and show the message. The REST `PATCH` returns the result
+directly.
 
 **Errors (HTTP 409):**
 

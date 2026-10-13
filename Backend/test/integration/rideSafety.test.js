@@ -63,7 +63,7 @@ test('without coordinates the last saved GPS point is used if fresh; stale or mi
   assert.equal((await raw(rideId, driver.token, { status: 'arriving' })).status, 200, 'a fresh point does');
 });
 
-test('drop radius: "at drop" and complete are rejected away from the drop', async () => {
+test('drop radius: "at drop" is rejected away from the drop; completing after it is not re-checked', async () => {
   const { rideId, driver } = await acceptedRide();
   await step(rideId, driver, 'arriving');
   await step(rideId, driver, 'started');
@@ -73,9 +73,38 @@ test('drop radius: "at drop" and complete are rejected away from the drop', asyn
   assert.equal(farArrive.body.details.target, 'drop');
   assert.equal(farArrive.body.details.radiusMeters, 300);
   assert.equal((await step(rideId, driver, 'arrived')).status, 200);
-  const farComplete = await raw(rideId, driver.token, { status: 'completed', coordinates: t.locations.pickup });
-  assert.equal(farComplete.body.code, 'OUT_OF_ARRIVAL_RADIUS');
-  assert.equal((await step(rideId, driver, 'completed')).status, 200);
+  // the drop was verified at "arrived": the driver may have moved off while collecting cash
+  const completed = await raw(rideId, driver.token, { status: 'completed', coordinates: t.locations.pickup });
+  assert.equal(completed.status, 200, completed.text);
+});
+
+test("no ride GPS point: the driver's live location (fresh heartbeat) is used", async () => {
+  const { rideId, driver } = await acceptedRide();
+  const atPickup = { location: { type: 'Point', coordinates: near(t.locations.pickup) } };
+  await t.m.Driver.updateOne({ _id: driver.driver._id }, { $set: { ...atPickup, 'incentiveTracking.lastSeenAt': new Date(Date.now() - 10 * 60 * 1000) } });
+  assert.equal((await raw(rideId, driver.token, { status: 'arriving' })).body.code, 'LOCATION_REQUIRED', 'a stale heartbeat does not count');
+  await t.m.Driver.updateOne({ _id: driver.driver._id }, { $set: { 'incentiveTracking.lastSeenAt': new Date() } });
+  assert.equal((await raw(rideId, driver.token, { status: 'arriving' })).status, 200);
+
+  const far = await acceptedRide();
+  await t.m.Driver.updateOne({ _id: far.driver.driver._id }, { $set: { location: { type: 'Point', coordinates: farFromPickup() }, 'incentiveTracking.lastSeenAt': new Date() } });
+  assert.equal((await raw(far.rideId, far.driver.token, { status: 'arriving' })).body.code, 'OUT_OF_ARRIVAL_RADIUS');
+});
+
+test('rollout switches: location unknown can be allowed, and the start OTP can be turned off', async () => {
+  try {
+    await t.setSettings('transport_ride', { status_location_required: '0' });
+    const unknown = await acceptedRide();
+    assert.equal((await raw(unknown.rideId, unknown.driver.token, { status: 'arriving' })).status, 200, 'no position: allowed');
+    const far = await acceptedRide();
+    assert.equal((await raw(far.rideId, far.driver.token, { status: 'arriving', coordinates: farFromPickup() })).body.code,
+      'OUT_OF_ARRIVAL_RADIUS', 'a known far position is still refused');
+
+    await t.setSettings('transport_ride', { start_trip_otp_required: '0' });
+    assert.equal((await raw(unknown.rideId, unknown.driver.token, { status: 'started' })).status, 200, 'no OTP needed');
+  } finally {
+    await t.setSettings('transport_ride', { status_location_required: '1', start_trip_otp_required: '1' });
+  }
 });
 
 test('radius 0 turns the check off; the admin value is used right after saving', async () => {

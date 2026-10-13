@@ -160,6 +160,30 @@ const TransportRideSettings = () => {
                    />
 
                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium text-gray-700 block ml-0.5">Start Trip Needs Rider OTP</label>
+                      <select
+                       value={settings.start_trip_otp_required ?? '1'}
+                       onChange={(e) => handleChange('start_trip_otp_required', e.target.value)}
+                       className="w-full bg-white border border-gray-200 rounded-lg py-2.5 px-4 text-sm text-gray-900 focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400 transition-all outline-none shadow-sm"
+                      >
+                         <option value="1">Yes (recommended)</option>
+                         <option value="0">No</option>
+                      </select>
+                   </div>
+
+                   <div className="space-y-1.5">
+                      <label className="text-sm font-medium text-gray-700 block ml-0.5">When the Driver's Location Is Unknown</label>
+                      <select
+                       value={settings.status_location_required ?? '1'}
+                       onChange={(e) => handleChange('status_location_required', e.target.value)}
+                       className="w-full bg-white border border-gray-200 rounded-lg py-2.5 px-4 text-sm text-gray-900 focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400 transition-all outline-none shadow-sm"
+                      >
+                         <option value="1">Refuse arrival steps (recommended)</option>
+                         <option value="0">Allow them</option>
+                      </select>
+                   </div>
+
+                   <div className="space-y-1.5">
                       <label className="text-sm font-medium text-gray-700 block ml-0.5">Require Admin Approval to End Rental</label>
                       <select 
                        value={settings.require_admin_approval_to_end_rental || '0'} 
