@@ -201,7 +201,7 @@ export const configureTaxiSocketServer = async (httpServer) => {
 
     socket.on(
       'locationUpdate',
-      onAsync(socket, async ({ coordinates }) => {
+      onAsync(socket, async ({ coordinates, heading }) => {
         if (identity.role !== 'driver') {
           return;
         }
@@ -237,6 +237,9 @@ export const configureTaxiSocketServer = async (httpServer) => {
             zoneId: zone?._id || null,
             // heartbeat: an online session only counts as active time while the app keeps reporting
             'incentiveTracking.lastSeenAt': new Date(),
+            ...(Number.isFinite(Number(heading)) && heading !== null && heading !== ''
+              ? { heading: ((Number(heading) % 360) + 360) % 360 }
+              : {}),
           });
         }
 

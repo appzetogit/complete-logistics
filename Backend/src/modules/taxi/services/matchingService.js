@@ -302,7 +302,7 @@ const findDriversForZone = async ({
     vehicleTypeKeys,
   });
   const selectedFields =
-    'name phone socketId vehicleTypeId vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel rating location zoneId service_location_id isOnline isOnRide routeBooking';
+    'name phone socketId vehicleTypeId vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel rating location heading zoneId service_location_id isOnline isOnRide routeBooking';
 
   const [liveLocationDrivers, routeBookingDrivers] = await Promise.all([
     Driver.find({

@@ -485,6 +485,11 @@ const driverSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    // Direction of travel (degrees) from the last location update, for rotating the car on the rider's map.
+    heading: {
+      type: Number,
+      default: null,
+    },
     incentiveTracking: {
       currentOnlineStartedAt: {
         type: Date,

@@ -2451,6 +2451,19 @@ export const updateRideDriverLocation = async ({ rideId, driverId, coordinates, 
     throw new ApiError(404, 'Assigned ride not found');
   }
 
+  // During a ride the app reports here instead of the general `locationUpdate`, so this is also the online
+  // heartbeat (active time). At most one write a minute: the filter matches only a stale heartbeat.
+  Driver.updateOne(
+    {
+      _id: driverId,
+      $or: [
+        { 'incentiveTracking.lastSeenAt': null },
+        { 'incentiveTracking.lastSeenAt': { $lt: new Date(now.getTime() - 60 * 1000) } },
+      ],
+    },
+    { $set: { 'incentiveTracking.lastSeenAt': now } },
+  ).catch(() => null);
+
   return {
     rideId: String(ride._id),
     coordinates: ride.lastDriverLocation?.coordinates || normalizedCoords,

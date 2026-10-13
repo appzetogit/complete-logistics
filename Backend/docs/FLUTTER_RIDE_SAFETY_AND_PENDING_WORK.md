@@ -162,6 +162,10 @@ GET /rides/available-drivers/summary?lat=22.7196&lng=75.8577
 
 - Replace the per-type loop with this call, refreshed every 12–15 s.
 - `markerId` is stable for the same driver, so use it as the map marker key to animate movement.
+- `heading` is the driver's direction in degrees, used to rotate the car icon. It is `null` until the driver app sends it.
+  **Driver app:** add `heading` (from the GPS fix, 0–360) to the `locationUpdate` socket event:
+  `{ 'coordinates': [lng, lat], 'heading': position.heading }`.
+- Limit: 30 calls a minute per rider (the app needs about 5).
 - Drivers' names, plates, vehicle details and ratings are **no longer** returned, here or on the old
   `GET /rides/available-drivers` (which still works with the same shape, minus those fields).
 

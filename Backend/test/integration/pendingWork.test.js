@@ -254,3 +254,29 @@ test('#18 admin driver edit: type and icon follow the catalog vehicle; an unknow
   assert.equal(unknown.status, 400);
   assert.equal(String((await t.m.Driver.findById(driver.driver._id).lean()).vehicleTypeId), String(bike._id), 'unchanged');
 });
+
+test('#10 during a ride the ride location updates keep the online heartbeat alive', async () => {
+  const vehicle = await t.factories.vehicle();
+  const driver = await t.factories.driver({ vehicleTypeId: vehicle._id });
+  const rideId = await createRide(await t.factories.user(), vehicle);
+  await t.acceptRide(rideId, driver.driver._id);
+  const stale = new Date(Date.now() - 30 * 60 * 1000);
+  await t.m.Driver.updateOne({ _id: driver.driver._id }, { $set: { 'incentiveTracking.lastSeenAt': stale } });
+  await t.rideService.updateRideDriverLocation({ rideId, driverId: driver.driver._id, coordinates: t.locations.pickup });
+  await waitFor(async () => {
+    const seen = (await t.m.Driver.findById(driver.driver._id).lean()).incentiveTracking?.lastSeenAt;
+    return seen && new Date(seen) > stale;
+  }, { message: 'heartbeat refreshed by the ride location' });
+});
+
+test('#7 the heading from the driver app reaches the map marker', async () => {
+  const vehicle = await t.factories.vehicle({ name: 'Heading Sedan' });
+  const driver = await t.factories.driver({ vehicleTypeId: vehicle._id });
+  const socket = await t.connectSocket(driver.token);
+  socket.socket.emit('locationUpdate', { coordinates: t.locations.pickup, heading: 450 });
+  await waitFor(async () => (await t.m.Driver.findById(driver.driver._id).lean()).heading === 90, { message: 'heading saved (normalised)' });
+  const rider = await t.factories.user();
+  const [lng, lat] = t.locations.pickup;
+  const res = await t.api('GET', `/rides/available-drivers/summary?lat=${lat}&lng=${lng}&vehicleTypeIds=${vehicle._id}`, { token: rider.token });
+  assert.equal(res.body.data.byVehicleType[String(vehicle._id)].drivers[0].heading, 90);
+});

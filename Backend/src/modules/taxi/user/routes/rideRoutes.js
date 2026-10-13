@@ -3,6 +3,7 @@ import { asyncHandler } from '../../../../utils/asyncHandler.js';
 import { authenticate } from '../../middlewares/authMiddleware.js';
 import {
   availableDriversRateLimit,
+  availableDriversSummaryRateLimit,
   paymentOrderRateLimit,
   rideCreationRateLimit,
 } from '../../middlewares/rateLimitMiddleware.js';
@@ -43,7 +44,7 @@ rideRouter.get('/app-settings/support', asyncHandler(async (_req, res) => {
 }));
 rideRouter.get('/available-drivers', availableDriversRateLimit, asyncHandler(listAvailableDrivers));
 // All vehicle types in one call (markers, counts, closest ETA). Logged-in riders only.
-rideRouter.get('/available-drivers/summary', authenticate(['user']), availableDriversRateLimit, asyncHandler(listAvailableDriversSummary));
+rideRouter.get('/available-drivers/summary', authenticate(['user']), availableDriversSummaryRateLimit, asyncHandler(listAvailableDriversSummary));
 rideRouter.get('/active/me', authenticate(['user', 'driver']), asyncHandler(getMyActiveRide));
 rideRouter.get('/:rideId/cancel-preview', authenticate(['user']), asyncHandler(getRideCancelPreview));
 rideRouter.patch('/:rideId/cancel', authenticate(['user']), asyncHandler(cancelRide));

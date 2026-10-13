@@ -327,6 +327,16 @@ export const paymentConfirmRateLimit = createRateLimitMiddleware({
   message: 'Too many payment confirmations. Please try again shortly.',
 });
 
+// The all-types summary replaces one call per vehicle type: counted per logged-in rider, not per network
+// (many riders share a mobile carrier IP). The app refreshes every 12-15 s, about 5 calls a minute.
+export const availableDriversSummaryRateLimit = createRateLimitMiddleware({
+  scope: 'available_drivers_summary',
+  max: 30,
+  windowMs: 60 * 1000,
+  mode: 'auth_or_ip',
+  message: 'Too many driver availability requests. Please try again later.',
+});
+
 export const availableDriversRateLimit = createRateLimitMiddleware({
   scope: 'available_drivers',
   max: 60,
