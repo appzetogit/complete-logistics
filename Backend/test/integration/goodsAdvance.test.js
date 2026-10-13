@@ -78,7 +78,7 @@ test('booking starts as pending and is NOT dispatched until the advance is paid'
   assert.equal(driverSocket.of('rideRequest').length, 0, 'recovery sweep skipped the unpaid booking');
 });
 
-test('the /rides + parcel and socket-style bypass is gated too', async () => {
+test('goods cannot be booked through /rides (or the requestRide socket) with the app’s own fare', async () => {
   const { vehicle, rider } = await setup();
   const res = await t.api('POST', '/rides', {
     token: rider.token,
@@ -87,12 +87,18 @@ test('the /rides + parcel and socket-style bypass is gated too', async () => {
       serviceType: 'parcel', paymentMethod: 'cash',
     },
   });
-  assert.equal(res.status, 201, res.text);
-  assert.equal(res.body.data.ride.goodsAdvance.status, 'pending');
-  assert.equal(res.body.data.ride.goodsAdvance.amount, 80);
-  await sleep(800);
-  const ride = await loadRide(res.body.data.ride._id);
-  assert.equal(ride.dispatchTracking.notifiedDriverIds.length, 0);
+  assert.equal(res.status, 400, res.text);
+  assert.equal(res.body.code, 'USE_DELIVERIES_ENDPOINT');
+  assert.equal(await t.m.Ride.countDocuments({ userId: rider.user._id }), 0, 'nothing booked');
+
+  const socket = await t.connectSocket(rider.token);
+  await sleep(300);
+  socket.socket.emit('requestRide', {
+    pickup: t.locations.pickup, drop: t.locations.drop, fare: 400, vehicleTypeId: String(vehicle._id), serviceType: 'parcel',
+  });
+  const error = await waitFor(() => socket.of('errorMessage')[0], { message: 'socket refusal' });
+  assert.equal(error.payload.code, 'USE_DELIVERIES_ENDPOINT');
+  assert.equal(await t.m.Ride.countDocuments({ userId: rider.user._id }), 0);
 });
 
 test('plain taxi rides never get an advance', async () => {

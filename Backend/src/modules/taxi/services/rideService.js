@@ -976,6 +976,12 @@ export const createRideRecord = async ({
   advancePercent,
   setPriceRule = null,
 }) => {
+  // Goods are priced only from a delivery Set Price, which only POST /deliveries resolves and passes in here.
+  // A parcel booked any other way (POST /rides, the requestRide socket event) would carry the app's own fare.
+  if (normalizeServiceType(serviceType) === 'parcel' && !setPriceRule) {
+    throw new ApiError(400, 'Goods bookings must be made through POST /deliveries', { code: 'USE_DELIVERIES_ENDPOINT' });
+  }
+
   const user = await User.findById(userId);
 
   if (!user) {

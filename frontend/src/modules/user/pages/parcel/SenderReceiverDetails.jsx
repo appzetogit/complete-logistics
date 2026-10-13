@@ -1400,6 +1400,14 @@ const SenderReceiverDetails = () => {
     if (!PHONE_REGEX.test(receiverMobile)) nextErrors.receiverMobile = 'Enter a valid 10-digit number';
     if (!pickup.trim()) nextErrors.pickup = 'Pickup location is required';
     if (!drop.trim()) nextErrors.drop = 'Drop location is required';
+    // Goods are priced only from the admin's Set Price: without one this vehicle cannot be booked here.
+    if (
+      !nextErrors.drop
+      && serverQuote?.priceNotSet
+      && serverQuote.vehicleId === getVehicleId(primarySelectedVehicle)
+    ) {
+      nextErrors.drop = 'This vehicle has no price set for this area yet. Please choose another vehicle.';
+    }
     setErrors(nextErrors);
     return {
       isValid: Object.keys(nextErrors).length === 0,
