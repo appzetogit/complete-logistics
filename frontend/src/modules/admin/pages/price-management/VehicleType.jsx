@@ -1068,6 +1068,157 @@ const VehicleType = ({ mode: propMode }) => {
             </div>
           ) : null}
 
+          {/* Old Vehicle Type goods prices, hidden: goods prices come only from Pricing -> Set Price (Delivery).
+          {showsDeliveryCategorySelector ? (
+            <div className="lg:col-span-2 rounded-[28px] border border-slate-200 bg-slate-50/70 p-5">
+              <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <label className={labelClass}>Delivery Distance Based Charges</label>
+                  <p className="text-xs text-slate-500">
+                    Enable quick parcel pricing defaults for this delivery-enabled vehicle type.
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-3 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(formData.delivery_distance_pricing?.enabled)}
+                    onChange={(e) => updateForm('delivery_distance_pricing', {
+                      ...formData.delivery_distance_pricing,
+                      enabled: e.target.checked,
+                    })}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  Enable distance based charges
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                <div>
+                  <label className={labelClass}>Base Price</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.delivery_distance_pricing?.base_price ?? ''}
+                    onChange={(e) => updateForm('delivery_distance_pricing', {
+                      ...formData.delivery_distance_pricing,
+                      base_price: e.target.value,
+                    })}
+                    className={inputClass}
+                    placeholder="45"
+                    disabled={!formData.delivery_distance_pricing?.enabled}
+                  />
+                </div>
+
+                <div>
+                  <label className={labelClass}>Base Distance (KM)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.delivery_distance_pricing?.free_distance ?? ''}
+                    onChange={(e) => updateForm('delivery_distance_pricing', {
+                      ...formData.delivery_distance_pricing,
+                      free_distance: e.target.value,
+                    })}
+                    className={inputClass}
+                    placeholder="2"
+                    disabled={!formData.delivery_distance_pricing?.enabled}
+                  />
+                  <p className="mt-2 text-[11px] font-medium text-slate-400">
+                    Distance covered by the base price before per-km charges begin.
+                  </p>
+                </div>
+
+                <div>
+                  <label className={labelClass}>Distance Price</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.delivery_distance_pricing?.distance_price ?? ''}
+                    onChange={(e) => updateForm('delivery_distance_pricing', {
+                      ...formData.delivery_distance_pricing,
+                      distance_price: e.target.value,
+                    })}
+                    className={inputClass}
+                    placeholder="12"
+                    disabled={!formData.delivery_distance_pricing?.enabled}
+                  />
+                </div>
+
+                <div>
+                  <label className={labelClass}>Service Tax (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.service_tax}
+                    onChange={(e) => updateForm('service_tax', clampNonNegativeInput(e.target.value))}
+                    className={inputClass}
+                    placeholder="5"
+                  />
+                  <p className="mt-2 text-[11px] font-medium text-slate-400">
+                    Added on top of the delivery fare shown to the user.
+                  </p>
+                </div>
+
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+                <div>
+                  <label className={labelClass}>Admin Commission Type From Driver</label>
+                  <select
+                    value={formData.admin_commission_type_from_driver}
+                    onChange={(e) => updateForm('admin_commission_type_from_driver', e.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="1">Percentage</option>
+                    <option value="2">Fixed</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className={labelClass}>Admin Commission From Driver</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.admin_commission_from_driver}
+                    onChange={(e) => updateForm('admin_commission_from_driver', clampNonNegativeInput(e.target.value))}
+                    className={inputClass}
+                    placeholder="0"
+                  />
+                </div>
+
+                <div>
+                  <label className={labelClass}>Admin Commission Type From Owner</label>
+                  <select
+                    value={formData.admin_commission_type_for_owner}
+                    onChange={(e) => updateForm('admin_commission_type_for_owner', e.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="1">Percentage</option>
+                    <option value="2">Fixed</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className={labelClass}>Admin Commission From Owner</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.admin_commission_for_owner}
+                    onChange={(e) => updateForm('admin_commission_for_owner', clampNonNegativeInput(e.target.value))}
+                    className={inputClass}
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+
+              <p className="mt-3 text-xs text-slate-500">
+                This section only appears when the vehicle supports `Delivery` or `Both`.
+              </p>
+            </div>
+          ) : null}
+
+          */}
+
           <div>
             <label className={labelClass}>Preview Image</label>
             <div className="rounded-2xl border border-dashed border-slate-300 p-4">
