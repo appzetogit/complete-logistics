@@ -214,8 +214,11 @@ test('delivery rows do not leak into taxi: a taxi ride on the same vehicle still
     body: { pickup: PICKUP, drop: DROP, fare: 150, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash' },
   });
   assert.equal(ride.status, 201, ride.text);
-  assert.equal(ride.body.data.ride.pricingSnapshot.setPriceId, String(bothRow._id));
-  assert.equal(ride.body.data.ride.pricingSnapshot.admin_commission_from_driver, 20);
+  // the rider's booking response carries no commission terms; the stored ride does
+  assert.equal(ride.body.data.ride.pricingSnapshot?.admin_commission_from_driver, undefined);
+  const stored = await t.m.Ride.findById(ride.body.data.ride._id).lean();
+  assert.equal(String(stored.pricingSnapshot.setPriceId), String(bothRow._id));
+  assert.equal(stored.pricingSnapshot.admin_commission_from_driver, 20);
 
   // and the taxi Set Price listing the user app reads never contains the delivery row
   const taxiList = await t.api('GET', '/users/set-prices?scope=ride&transport_type=taxi&limit=100', {});

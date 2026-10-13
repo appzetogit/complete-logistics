@@ -28,6 +28,13 @@ import {
 import { applyPromoToRideInTransaction } from './promoService.js';
 import { getTipSettings } from './appSettingsService.js';
 import { getBidRideSettings, getTransportRideSettings } from './transportSettingsService.js';
+import {
+  captureRideWalletPayment,
+  holdWalletForRide,
+  releaseRideWalletHold,
+  releaseUncommittedHold,
+  walletAmountDueForRide,
+} from './rideWalletService.js';
 
 const CANCEL_REASON_MAX = 300;
 
@@ -102,6 +109,7 @@ const clearUserActiveRideIfPresent = async (user) => {
     reason: 'replaced_by_new_booking',
   });
   await activeRide.save();
+  await releaseRideWalletHold({ rideId: activeRide._id, reason: 'replaced by a new booking' }).catch(() => null);
   await syncDeliveryWithRide(activeRide);
   // Drivers must stop seeing the old offer. A booking nobody had accepted yet is not a
   // real rider cancel, so its paid advance is refunded; one a driver already took keeps
@@ -150,9 +158,13 @@ export const clearDriverActiveRideIfStale = async (driverOrId) => {
   return driver;
 };
 
-const normalizeRidePaymentMethod = (paymentMethod) => (
-  !paymentMethod || String(paymentMethod).trim().toLowerCase() === 'cash' ? 'cash' : 'online'
-);
+// cash | wallet (the rider's in-app wallet, auto-debited at completion) | online (razorpay, card, upi, ...)
+const normalizeRidePaymentMethod = (paymentMethod) => {
+  const value = String(paymentMethod || '').trim().toLowerCase();
+  if (!value || value === 'cash') return 'cash';
+  if (value === 'wallet') return 'wallet';
+  return 'online';
+};
 
 const normalizeServiceType = (serviceType) => {
   const normalized = String(serviceType || 'ride').trim().toLowerCase();
@@ -773,7 +785,7 @@ export const normalizeAllowedRidePaymentMethods = (paymentTypes = []) => {
   const normalized = rawItems
     .map((item) => String(item || '').trim().toLowerCase())
     .filter(Boolean)
-    .map((item) => (item === 'cash' ? 'cash' : item === 'online' || item === 'wallet' ? 'online' : null))
+    .map((item) => (['cash', 'online', 'wallet'].includes(item) ? item : null))
     .filter(Boolean);
 
   const unique = [...new Set(normalized)];
@@ -1216,8 +1228,25 @@ export const createRideRecord = async ({
     throw new ApiError(400, 'Promo codes cannot be combined with subscription rides');
   }
 
+  // Wallet: reserve the amount due now (fare less a goods advance paid online), so it is there at completion.
+  const rideObjectId = new mongoose.Types.ObjectId();
+  const walletHold = effectivePaymentMethod === 'wallet'
+    ? await holdWalletForRide({
+      userId,
+      rideId: rideObjectId,
+      amount: walletAmountDueForRide(
+        { fare: effectiveStartingFare, goodsAdvance: effectiveGoodsAdvance },
+        { includePendingAdvance: true },
+      ),
+    })
+    : null;
+  const requestedPaymentMethod = paymentMethod ? normalizedPaymentMethod : null;
+
+  const createRideDocuments = async () => {
   if (!promoCode) {
     const ride = await Ride.create({
+      _id: rideObjectId,
+      walletHold: walletHold || undefined,
       userId,
       vehicleTypeId: primaryVehicleTypeId,
       dispatchVehicleTypeIds,
@@ -1276,6 +1305,8 @@ export const createRideRecord = async ({
       const ride = await Ride.create(
         [
           {
+            _id: rideObjectId,
+            walletHold: walletHold || undefined,
             userId,
             vehicleTypeId: primaryVehicleTypeId,
             dispatchVehicleTypeIds,
@@ -1353,6 +1384,24 @@ export const createRideRecord = async ({
   }
 
   throw lastError || new ApiError(500, 'Failed to create ride with promo');
+  };
+
+  let createdRide;
+  try {
+    createdRide = await createRideDocuments();
+  } catch (error) {
+    if (walletHold) {
+      await releaseUncommittedHold({ userId, rideId: rideObjectId, amount: walletHold.amount }).catch(() => null);
+    }
+    throw error;
+  }
+  // Wallet (or any method) asked for but not allowed here: the app tells the rider which method was used instead.
+  if (requestedPaymentMethod && createdRide.paymentMethod !== requestedPaymentMethod
+    && !(createdRide.freeRide?.covered || createdRide.subscriptionUsage?.covered)) {
+    createdRide.$locals.paymentMethodChanged = true;
+    createdRide.$locals.requestedPaymentMethod = requestedPaymentMethod;
+  }
+  return createdRide;
 };
 
 export const getRideDetails = async (rideId, { includeDriverFeedback = false } = {}) => {
@@ -1461,6 +1510,39 @@ export const withoutAcceptSelfie = (ride) => {
   return plain;
 };
 
+const PAID_COLLECTION_STATUSES = new Set(['paid', 'captured', 'success', 'completed']);
+
+/**
+ * How the ride is paid, for both apps: isPaid, what the driver must still collect, and the wallet details.
+ *   cash: the driver collects the fare (less a paid goods advance)
+ *   wallet: nothing to collect, unless the wallet fell short at completion (walletShortfall)
+ *   online: nothing to collect
+ */
+export const serializeRidePaymentState = (ride) => {
+  const method = ride?.paymentMethod || 'cash';
+  const collectionPaid = Boolean(ride?.driverPaymentCollection?.paidAt)
+    || PAID_COLLECTION_STATUSES.has(String(ride?.driverPaymentCollection?.status || '').toLowerCase());
+  const shortfall = Number(ride?.walletShortfall || 0);
+  const remaining = getRemainingFare(ride);
+  return {
+    isPaid: collectionPaid || (method === 'wallet' && Boolean(ride?.walletPayment?.at) && shortfall <= 0),
+    amountToCollect: collectionPaid
+      ? 0
+      : method === 'cash'
+        ? remaining
+        : method === 'wallet'
+          ? shortfall
+          : 0,
+    walletHold: ride?.walletHold?.status
+      ? { amount: Number(ride.walletHold.amount || 0), status: ride.walletHold.status }
+      : null,
+    walletPayment: ride?.walletPayment?.at
+      ? { amount: Number(ride.walletPayment.amount || 0), at: ride.walletPayment.at }
+      : null,
+    walletShortfall: shortfall,
+  };
+};
+
 export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = {}) => ({
   rideId: String(ride._id),
   room: getRideRoom(ride._id),
@@ -1531,6 +1613,7 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
   waitingMinutes: Number(ride.waitingMinutes || 0),
   waitingCharge: Number(ride.waitingCharge || 0),
   actualDistanceMeters: Math.round(Number(ride.actualDistanceMeters || 0)),
+  ...serializeRidePaymentState(ride),
   // Set when the trip ended before the booked drop (the rider got off early).
   earlyDrop: ride.earlyDrop?.at
     ? { at: ride.earlyDrop.at, distanceFromDropMeters: ride.earlyDrop.distanceFromDropMeters ?? null }
@@ -1726,6 +1809,10 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
       'waitingMinutes',
       'waitingCharge',
       'actualDistanceMeters',
+      'walletHold',
+      'walletPayment',
+      'walletShortfall',
+      'driverPaymentCollection',
       'cancellation',
       'goodsAdvance',
       'otp',
@@ -1800,6 +1887,7 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
     waitingMinutes: Number(ride.waitingMinutes || 0),
     waitingCharge: Number(ride.waitingCharge || 0),
     actualDistanceMeters: Math.round(Number(ride.actualDistanceMeters || 0)),
+    ...serializeRidePaymentState(ride),
     // The ride carries the authoritative parcel record — the fare engine writes
     // the paid add-ons and the driver's proof photos onto it. The Delivery
     // mirror holds only the booking basics, so it fills gaps rather than
@@ -2354,7 +2442,9 @@ export const updateRideLifecycle = async ({
     }
   }
 
-  if (paymentMethod !== undefined && paymentMethod !== null && String(paymentMethod).trim()) {
+  // The driver's app may report how it was paid (cash/online), but a wallet ride stays a wallet ride: the rider
+  // chose it and the money is already held.
+  if (paymentMethod !== undefined && paymentMethod !== null && String(paymentMethod).trim() && ride.paymentMethod !== 'wallet') {
     ride.paymentMethod = normalizeRidePaymentMethod(paymentMethod);
   }
 
@@ -2374,6 +2464,12 @@ export const updateRideLifecycle = async ({
     ]);
 
     walletUpdate = await settleCompletedRideWallet({ rideId: ride._id });
+    // Wallet ride: debit the rider's wallet now (hold first), no payment sheet. Once per ride.
+    if (ride.paymentMethod === 'wallet') {
+      await captureRideWalletPayment({ rideId: ride._id }).catch((error) => {
+        console.error('Wallet capture failed; the ride stays payable', String(ride._id), error?.message || error);
+      });
+    }
     await consumeUserSubscriptionRide({ ride });
     // Counting a free ride is best-effort: the ride is already completed and
     // settled, so a failure here must not turn the driver's request into a 500.

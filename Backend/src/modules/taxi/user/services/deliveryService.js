@@ -450,7 +450,13 @@ export const createDeliveryRecord = async ({
   await startDispatchFlow(ride);
 
   const detailedRide = await getRideDetails(ride._id);
-  return serializeDeliveryRealtime(ensureParcelRide(detailedRide));
+  const paymentMethodChanged = ride.$locals?.paymentMethodChanged === true;
+  return {
+    ...serializeDeliveryRealtime(ensureParcelRide(detailedRide)),
+    // The requested method (e.g. wallet) is not allowed for this vehicle/zone: `paymentMethod` is what is used.
+    paymentMethodChanged,
+    ...(paymentMethodChanged ? { requestedPaymentMethod: ride.$locals.requestedPaymentMethod } : {}),
+  };
 };
 
 export const getActiveDeliveryForIdentity = async ({ role, entityId }) => {

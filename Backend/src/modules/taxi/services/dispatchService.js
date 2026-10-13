@@ -23,6 +23,7 @@ import {
   withoutParcelSelfies,
 } from './rideService.js';
 import { SOCKET_EVENTS } from '../socket/events.js';
+import { releaseRideWalletHold, releaseStaleRideWalletHolds } from './rideWalletService.js';
 import { getTransportRideSettings, resolveTransportDispatchConfig } from './transportSettingsService.js';
 import { sendPushNotificationToEntities } from './pushNotificationService.js';
 import { ApiError } from '../../../utils/ApiError.js';
@@ -426,6 +427,8 @@ export const previewUserCancellation = async (ride) => {
   const wallet = fee > 0
     ? await UserWallet.findOne({ userId: ride.userId }).select('balance').lean()
     : null;
+  // A wallet ride's hold is given back before the fee is taken, so it counts towards covering the fee.
+  const heldForRide = ride?.walletHold?.status === 'held' ? roundMoney(ride.walletHold.amount) : 0;
 
   return {
     fee,
@@ -433,7 +436,7 @@ export const previewUserCancellation = async (ride) => {
       ? (String(pricing?.cancellation_fee_goes_to || 'admin').trim().toLowerCase() === 'driver' && ride?.driverId ? 'driver' : 'admin')
       : null,
     // The fee is taken from the rider's wallet; with too little balance the cancel cannot take it.
-    walletCoversFee: fee <= 0 ? true : roundMoney(wallet?.balance || 0) >= fee,
+    walletCoversFee: fee <= 0 ? true : roundMoney(Number(wallet?.balance || 0) + heldForRide) >= fee,
     advanceForfeited: advancePaid,
     advanceAmount: advancePaid ? roundMoney(ride.goodsAdvance.amount) : 0,
     advanceRefundable: false,
@@ -1103,6 +1106,7 @@ const closeRideAsUnmatched = async (rideId) => {
   if (!ride) {
     return;
   }
+  await releaseRideWalletHold({ rideId: ride._id, reason: 'no driver found' }).catch(() => null);
 
   if (ride.deliveryId) {
     await Delivery.findByIdAndUpdate(ride.deliveryId, {
@@ -1154,6 +1158,7 @@ export const cancelRideByAdmin = async (rideId, { reason = '' } = {}) => {
     ride.cancellation = buildRideCancellation({ by: 'admin', code: 'cancelled_by_admin', reason: reason || 'Cancelled by admin' });
   }
   await ride.save();
+  await releaseRideWalletHold({ rideId: ride._id, reason: 'cancelled by admin' }).catch(() => null);
 
   if (ride.deliveryId) {
     await Delivery.findByIdAndUpdate(ride.deliveryId, {
@@ -1207,6 +1212,7 @@ export const cancelRideByAdmin = async (rideId, { reason = '' } = {}) => {
  */
 export const releaseReplacedRide = async (ride) => {
   const rideId = String(ride._id);
+  await releaseRideWalletHold({ rideId, reason: 'replaced by a new booking' }).catch(() => null);
   const dispatchState = getDispatchState(rideId);
   const notifiedDriverIds = [...new Set([
     ...dispatchState.notifiedDriverIds,
@@ -1258,6 +1264,9 @@ export const cancelRideByUser = async ({ rideId, userId, reason = '' }) => {
       return ride;
     }
 
+    // Wallet ride: give the hold back first (same transaction); a cancellation fee is then charged from the
+    // balance exactly as for any other ride.
+    await releaseRideWalletHold({ rideId: ride._id, reason: 'you cancelled', session });
     cancellationSettlement = await settleUserCancellationFee(ride, session);
 
     ride.status = RIDE_STATUS.CANCELLED;
@@ -1404,6 +1413,7 @@ export const cancelScheduledRideByDriver = async ({ rideId, driverId }) => {
       driverFee: cancellationSettlement?.feeAmount || 0,
     });
     await ride.save({ session });
+    await releaseRideWalletHold({ rideId: ride._id, reason: 'the driver cancelled', session });
 
     if (ride.deliveryId) {
       await Delivery.findByIdAndUpdate(ride.deliveryId, {
@@ -1571,6 +1581,9 @@ export const cancelActiveRideByDriver = async ({ rideId, driverId, reason = '' }
 
   if (!ride) {
     throw new ApiError(409, 'This ride can no longer be cancelled by the driver');
+  }
+  if (!reopen) {
+    await releaseRideWalletHold({ rideId: ride._id, reason: 'the driver cancelled' }).catch(() => null);
   }
 
   await Driver.updateOne({ _id: driverId }, { isOnRide: false });
@@ -1890,6 +1903,7 @@ export const expireStaleAdvanceRides = async () => {
     if (!ride) {
       continue;
     }
+    await releaseRideWalletHold({ rideId: ride._id, reason: 'advance not paid in time' }).catch(() => null);
 
     if (ride.deliveryId) {
       await Delivery.findByIdAndUpdate(ride.deliveryId, { status: ride.status, liveStatus: ride.liveStatus });
@@ -1946,6 +1960,10 @@ export const startDispatchRecoveryLoop = () => {
     });
     healStaleDriverOnRideFlags().catch((error) => {
       console.error('Stale isOnRide sweep failed', error);
+    });
+    // Backstop: a wallet hold left on a cancelled ride goes back to the rider.
+    releaseStaleRideWalletHolds().catch((error) => {
+      console.error('Stale wallet hold sweep failed', error);
     });
   }, DISPATCH_RECOVERY_INTERVAL_MS);
 

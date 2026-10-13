@@ -382,10 +382,36 @@ const rideSchema = new mongoose.Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ['cash', 'online'],
+      enum: ['cash', 'online', 'wallet'],
       default: 'cash',
       lowercase: true,
       trim: true,
+    },
+    // Wallet rides: the amount reserved from the rider's wallet at booking (services/rideWalletService.js).
+    walletHold: {
+      type: {
+        amount: { type: Number, default: 0, min: 0 },
+        at: { type: Date, default: null },
+        status: { type: String, enum: ['held', 'captured', 'released'], default: 'held' },
+        capturedAmount: { type: Number, default: 0, min: 0 },
+        releasedAt: { type: Date, default: null },
+      },
+      default: undefined,
+    },
+    // Wallet rides: what was debited from the wallet when the trip completed.
+    walletPayment: {
+      type: {
+        amount: { type: Number, default: 0, min: 0 },
+        transferId: { type: String, default: '' },
+        at: { type: Date, default: null },
+      },
+      default: undefined,
+    },
+    // Wallet rides: the part of the fare the wallet could not cover (paid through the normal completion payment).
+    walletShortfall: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
     otp: {
       type: String,

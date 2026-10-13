@@ -2,9 +2,10 @@ import mongoose from 'mongoose';
 
 const walletTransactionSchema = new mongoose.Schema(
   {
+    // hold / release: money reserved for a wallet ride and given back (they move balance <-> heldBalance)
     kind: {
       type: String,
-      enum: ['credit', 'debit'],
+      enum: ['credit', 'debit', 'hold', 'release'],
       required: true,
     },
     amount: {
@@ -60,6 +61,12 @@ const userWalletSchema = new mongoose.Schema(
       index: true,
     },
     refundWallet: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Reserved for wallet rides in progress; already taken out of `balance` (balance = what can be spent).
+    heldBalance: {
       type: Number,
       default: 0,
       min: 0,

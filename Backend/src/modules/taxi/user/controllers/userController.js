@@ -121,7 +121,11 @@ const buildUserWalletPayload = (wallet) => {
   const transactions = Array.isArray(wallet?.transactions) ? wallet.transactions : [];
 
   return {
+    // `balance` is what can be spent: money held for a wallet ride in progress is already taken out of it.
     balance: Number(wallet?.balance || 0),
+    availableBalance: Number(wallet?.balance || 0),
+    heldBalance: Number(wallet?.heldBalance || 0),
+    totalBalance: Math.round((Number(wallet?.balance || 0) + Number(wallet?.heldBalance || 0)) * 100) / 100,
     refundWallet: Number(wallet?.refundWallet || 0),
     currency: 'INR',
     recentTransactions: transactions
@@ -2127,7 +2131,7 @@ export const getUserWallet = async (req, res) => {
   }
 
   await ensureUserWallet(userId);
-  const wallet = await UserWallet.findOne({ userId }).select('balance refundWallet transactions').slice('transactions', -10).lean();
+  const wallet = await UserWallet.findOne({ userId }).select('balance refundWallet heldBalance transactions').slice('transactions', -10).lean();
   const transactions = Array.isArray(wallet?.transactions) ? wallet.transactions : [];
 
   res.json({
@@ -2240,7 +2244,7 @@ export const transferUserWallet = async (req, res) => {
     throw new ApiError(500, 'Transfer failed');
   }
 
-  const wallet = await UserWallet.findOne({ userId: senderId }).select('balance refundWallet transactions').slice('transactions', -10).lean();
+  const wallet = await UserWallet.findOne({ userId: senderId }).select('balance refundWallet heldBalance transactions').slice('transactions', -10).lean();
 
   const transactions = Array.isArray(wallet?.transactions) ? wallet.transactions : [];
 
@@ -2347,7 +2351,7 @@ export const transferUserWalletToDriver = async (req, res) => {
     }).catch(() => {});
 
     const refreshedWallet = await UserWallet.findOne({ userId: senderId })
-      .select('balance refundWallet transactions')
+      .select('balance refundWallet heldBalance transactions')
       .slice('transactions', -10)
       .lean();
 
@@ -2488,7 +2492,7 @@ const verifyAndApplyUserRazorpayWalletTopup = async ({
   }
 
   const wallet = await UserWallet.findOne({ userId: effectiveUserId })
-    .select('balance refundWallet transactions')
+    .select('balance refundWallet heldBalance transactions')
     .slice('transactions', -10)
     .lean();
 
@@ -2924,7 +2928,7 @@ export const verifyPhonePeWalletTopup = async (req, res) => {
     }
 
     const wallet = await UserWallet.findOne({ userId })
-      .select('balance refundWallet transactions')
+      .select('balance refundWallet heldBalance transactions')
       .slice('transactions', -10)
       .lean();
 

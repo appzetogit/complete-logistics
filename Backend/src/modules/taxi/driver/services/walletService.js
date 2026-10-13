@@ -18,9 +18,13 @@ const normalizeAmount = (value, fieldName = 'amount') => {
   return Math.round(amount * 100) / 100;
 };
 
-const normalizePaymentMethod = (value) => (
-  String(value || '').trim().toLowerCase() === 'cash' ? 'cash' : 'online'
-);
+// 'wallet' is kept as itself (it settles like online: the platform collected, the driver is credited), so the
+// ride still says how the rider paid.
+const normalizePaymentMethod = (value) => {
+  const method = String(value || '').trim().toLowerCase();
+  if (method === 'cash') return 'cash';
+  return method === 'wallet' ? 'wallet' : 'online';
+};
 
 const normalizeCommissionType = (value) => {
   const numericValue = Number(value);

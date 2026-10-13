@@ -84,7 +84,7 @@ const deliverySchema = new mongoose.Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ['cash', 'online'],
+      enum: ['cash', 'online', 'wallet'],
       default: 'cash',
       lowercase: true,
       trim: true,

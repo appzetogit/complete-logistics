@@ -116,7 +116,9 @@ const buildCompletionAmounts = (ride, tipAmount = 0) => {
   const normalizedTipAmount = roundMoney(tipAmount || 0);
   // A paid goods advance was already collected at booking, so only the rest is due.
   const advancePaid = getAdvancePaidAmount(ride);
-  const fareDue = isDriverCollectionPaid(ride) ? 0 : Math.max(0, roundMoney(fare - advancePaid));
+  // A wallet ride already paid part (or all) from the wallet at completion: only the shortfall is left.
+  const walletPaid = ride?.paymentMethod === 'wallet' ? roundMoney(ride?.walletPayment?.amount || 0) : 0;
+  const fareDue = isDriverCollectionPaid(ride) ? 0 : Math.max(0, roundMoney(fare - advancePaid - walletPaid));
   return {
     fare,
     fareDue,
@@ -232,7 +234,13 @@ const finalizeRideCompletion = async ({
   }
 
   if (fareDue > 0) {
-    ride.paymentMethod = 'online';
+    // A wallet ride paying its shortfall stays a wallet ride on the receipt.
+    if (ride.paymentMethod !== 'wallet') {
+      ride.paymentMethod = 'online';
+    }
+    if (ride.paymentMethod === 'wallet') {
+      ride.walletShortfall = 0;
+    }
     ride.driverPaymentCollection = {
       provider: paymentRecord?.provider || ride.driverPaymentCollection?.provider || '',
       providerId: paymentRecord?.providerId || ride.driverPaymentCollection?.providerId || paymentRecord?.providerPaymentId || '',
@@ -355,12 +363,17 @@ export const createRide = async (req, res) => {
   await startDispatchFlow(ride);
 
   const freeRides = await getFreeRidesSummaryForUser(req.auth.sub).catch(() => null);
+  const paymentMethodChanged = ride.$locals?.paymentMethodChanged === true;
 
   res.status(201).json({
     success: true,
     data: {
-      ride,
+      // the rider's cut of the document (no commission terms)
+      ride: rawRideForAudience(ride, RIDE_AUDIENCE.USER),
       ...(freeRides ? { freeRides } : {}),
+      // The requested method (e.g. wallet) is not allowed for this vehicle/zone: `ride.paymentMethod` is what is used.
+      paymentMethodChanged,
+      ...(paymentMethodChanged ? { requestedPaymentMethod: ride.$locals.requestedPaymentMethod } : {}),
       realtime: {
         room: getRideRoom(ride._id),
         rideId: String(ride._id),
