@@ -2,7 +2,9 @@ import mongoose from 'mongoose';
 
 const { ObjectId } = mongoose.Schema.Types;
 
-const VEHICLE_ICON_TYPES = [
+// Every icon the admin Vehicle Type form offers (frontend VehicleType.jsx `iconMap`): keep the two lists in step,
+// or saving a vehicle with a missing one fails with "not a valid enum value for path icon_types".
+export const VEHICLE_ICON_TYPES = [
   'car',
   'bike',
   'auto',
@@ -14,6 +16,12 @@ const VEHICLE_ICON_TYPES = [
   'Luxary',
   'premium',
   'suv',
+  'scooty',
+  'car_5_seater',
+  'car_7_seater',
+  'bus',
+  'mini_bus',
+  'motor_bike',
 ];
 
 const VEHICLE_CATEGORIES = [

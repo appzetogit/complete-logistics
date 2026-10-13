@@ -6984,7 +6984,9 @@ export const createVehicleType = async (payload) => {
     throw new ApiError(400, 'Transport type is required');
   }
 
-  const mapIcon = payload.map_icon ?? payload.mapIcon ?? payload.icon ?? payload.image ?? '';
+  // Panels post images as base64: store the files and keep only their URLs (as the update does).
+  const mapIcon = await storeDataUrlImage(payload.map_icon ?? payload.mapIcon ?? payload.icon ?? payload.image ?? '', 'vehicles');
+  const vehicleImage = payload.image !== undefined ? await storeDataUrlImage(payload.image ?? '', 'vehicles') : undefined;
   const transportType = normalizeVehicleTransportType(payload.transport_type);
 
   const vehicle = await Vehicle.create({
@@ -7013,7 +7015,7 @@ export const createVehicleType = async (payload) => {
     admin_commission_from_driver: Number(payload.admin_commission_from_driver ?? 0),
     admin_commission_type_for_owner: Number(payload.admin_commission_type_for_owner ?? 1),
     admin_commission_for_owner: Number(payload.admin_commission_for_owner ?? 0),
-    image: payload.image ?? mapIcon,
+    image: vehicleImage ?? mapIcon,
     icon: mapIcon,
     map_icon: mapIcon,
     status: Number(payload.status ?? 1) ? 1 : 0,
