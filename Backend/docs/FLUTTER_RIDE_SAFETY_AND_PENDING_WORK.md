@@ -459,6 +459,15 @@ await dio.post('/deliveries', data: {
 
 The quote response now also has `estimatedDistanceMeters`, `estimatedDurationMinutes` and `distanceSource` (`route`
 or `straight_line`).
+
+**Goods prices come only from Admin → Set Price (Pricing for: Delivery).** The prices on the Vehicle Type page are no
+longer used. A goods vehicle without a Delivery Set Price for the pickup area is **not priced**:
+- the quote returns `priceNotSet: true`, `priced: false` and `total: 0`. Show "Price not set" on that vehicle's card and
+  disable it;
+- the booking is refused with **409 `PRICE_NOT_SET`**. Show the message and let the rider pick another vehicle;
+- in the vehicle catalog (`/users/vehicle-types`), `delivery_pricing_source: "none"` and
+  `delivery_distance_pricing.enabled: false` mean no All Zones price. Use the quote for the real price, since a
+  zone-specific price only comes through the quote.
 - A distance impossible for the two points (shorter than the straight line, or far longer than it) is ignored and the
   straight line is used (`distanceSource: straight_line`).
 - Without the fields, the straight-line distance is used. The ride no longer stores 0 km / 0 min.
@@ -532,6 +541,7 @@ Also treat any 401 with `code == 'SESSION_ENDED'` as "logged out" (clear storage
 | `RIDE_NOT_AVAILABLE` | – | `acceptRide` ack / `rideAcceptFailed` | ride gone | close the offer |
 | `NOT_ALLOWED` / `INVALID_REQUEST` / `INVALID_SELFIE_URL` / `ACCEPT_FAILED` | – | accept | see B6 | show `reason` |
 | `SESSION_ENDED` | 401 | any user API | logged out elsewhere | go to login |
+| `PRICE_NOT_SET` | 409 | `POST /deliveries` | no Delivery Set Price for this vehicle/area | pick another vehicle |
 
 ### D2 Endpoints
 

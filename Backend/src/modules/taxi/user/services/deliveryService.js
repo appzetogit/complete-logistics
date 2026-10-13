@@ -203,14 +203,15 @@ const computeDeliveryFareBreakdown = ({
   tripDistanceMeters = null,
 }) => {
   const vehiclePricing = vehicle?.delivery_distance_pricing || {};
-  const pricing = pricingOverride || vehiclePricing;
+  // Rates come only from the delivery Set Price (resolveDeliveryPricing); the vehicle keeps only detention terms.
+  const pricing = pricingOverride || { enabled: false };
   const enabled = Boolean(
     pricing?.enabled ||
     Number(pricing?.base_price || 0) > 0 ||
     Number(pricing?.distance_price || 0) > 0
   );
 
-  const serviceTaxPercentage = Math.max(0, Number(serviceTaxOverride ?? vehicle?.service_tax ?? 0));
+  const serviceTaxPercentage = Math.max(0, Number(serviceTaxOverride ?? 0));
   const loadHeight = resolveLoadHeight(vehicle, loadHeightKey);
   const extras = resolveExtras(vehicle, extraKeys);
   const detention = resolveDetentionTerms(vehiclePricing);
@@ -316,6 +317,8 @@ export const quoteDeliveryFare = async ({
     estimatedDistanceMeters: trip.distanceMeters,
     estimatedDurationMinutes: trip.durationMinutes,
     distanceSource: trip.distanceSource,
+    // No delivery Set Price for this vehicle here: show "Price not set" and don't let the rider book it.
+    priceNotSet: resolvedPricing.source !== 'set_price' || !resolvedPricing.pricing.enabled,
   };
 
   // Goods need an advance paid online before dispatch; the rest is paid at completion.
@@ -404,7 +407,14 @@ export const createDeliveryRecord = async ({
     extraKeys,
     tripDistanceMeters: trip.distanceMeters,
   });
-  const resolvedFare = fareBreakdown.total > 0 ? fareBreakdown.total : Number(fare || 0);
+  // Goods are priced only from a delivery Set Price: never from the app's fare or the vehicle type.
+  if (resolvedPricing.source !== 'set_price' || !fareBreakdown.priced || !(fareBreakdown.total > 0)) {
+    throw new ApiError(409, 'This vehicle has no delivery price set for this area yet. Please choose another vehicle.', {
+      code: 'PRICE_NOT_SET',
+      vehicleTypeId: vehicle?._id ? String(vehicle._id) : String(vehicleTypeId || ''),
+    });
+  }
+  const resolvedFare = fareBreakdown.total;
 
   const ride = await createRideRecord({
     userId,
@@ -416,6 +426,8 @@ export const createDeliveryRecord = async ({
     // saved on the ride (it was 0 before): the driver's trip card, today's distance and the receipts use it
     estimatedDistanceMeters: trip.distanceMeters,
     estimatedDurationMinutes: trip.durationMinutes,
+    // the same delivery Set Price that priced the fare gives the commission and payment methods
+    setPriceRule: resolvedPricing.rule,
     vehicleTypeId,
     vehicleTypeIds,
     vehicleIconType,

@@ -1,25 +1,29 @@
 import { SetPrice } from '../admin/models/SetPrice.js';
 import { findZoneByPickup } from './matchingService.js';
 
-// Where a goods (delivery) fare gets its distance charges, service tax and
-// rates from.
-//
-//   1. SetPrice ("Pricing > Set Price"), the source of truth. A rule applies when
-//      it is active, belongs to this vehicle type, is saved for DELIVERY pricing
-//      (transport_type 'delivery') and matches the pickup, most specific first:
-//        pickup zone  ->  pickup service location  ->  "All Zones" (no zone).
-//      Rules saved as 'both' / 'taxi' are never used: on a "Both" vehicle a single
-//      row is shared with taxi rides, so silently reusing it would reprice goods.
-//   2. The vehicle type's own legacy delivery_distance_pricing / service_tax, only
-//      when no delivery SetPrice exists for that vehicle yet. This keeps existing
-//      setups working until their Set Price rows are created
-//      (scripts/migrateDeliveryPricingToSetPrice.js does that for you).
+// Where a goods (delivery) fare gets its distance charges, service tax, commission and payment methods:
+// ONLY SetPrice ("Pricing > Set Price"). A rule applies when it is active, belongs to this vehicle type, is saved
+// for DELIVERY pricing (transport_type 'delivery') and matches the pickup, most specific first:
+//   pickup zone  ->  pickup service location  ->  "All Zones" (no zone).
+// Rules saved as 'both' / 'taxi' are never used: on a "Both" vehicle a single row is shared with taxi rides.
+// With no delivery rule the vehicle is NOT PRICED: the quote says so and a booking is refused. The old prices on
+// the Vehicle Type page are never used (scripts/migrateDeliveryPricingToSetPrice.js copies them into Set Price).
 //
 // Load-height / extras options and detention terms stay on the vehicle type.
 
 export const DELIVERY_PRICING_SOURCE = Object.freeze({
   SET_PRICE: 'set_price',
+  NONE: 'none',
+  // kept for older readers of `delivery_pricing_source`; no longer produced
   VEHICLE: 'vehicle',
+});
+
+const NOT_PRICED = Object.freeze({
+  enabled: false,
+  base_price: 0,
+  base_distance: 0,
+  free_distance: 0,
+  distance_price: 0,
 });
 
 const toNonNegative = (value) => {
@@ -109,6 +113,7 @@ export const resolveDeliveryPricing = async ({ vehicle, pickupCoords, deps = {} 
     return {
       source: DELIVERY_PRICING_SOURCE.SET_PRICE,
       setPriceId: String(rule._id),
+      rule,
       pricing: buildPricingFromSetPrice(rule),
       serviceTaxPercentage: toNonNegative(rule.service_tax),
       zone: zoneInfo,
@@ -116,10 +121,11 @@ export const resolveDeliveryPricing = async ({ vehicle, pickupCoords, deps = {} 
   }
 
   return {
-    source: DELIVERY_PRICING_SOURCE.VEHICLE,
+    source: DELIVERY_PRICING_SOURCE.NONE,
     setPriceId: null,
-    pricing: buildPricingFromVehicle(vehicle),
-    serviceTaxPercentage: toNonNegative(vehicle?.service_tax),
+    rule: null,
+    pricing: { ...NOT_PRICED },
+    serviceTaxPercentage: 0,
     zone: zoneInfo,
   };
 };
@@ -168,7 +174,13 @@ export const overlayCatalogWithDeliverySetPrices = async (vehicles = [], deps = 
 
     const rule = newestByVehicle.get(String(vehicle._id));
     if (!rule) {
-      return { ...vehicle, delivery_pricing_source: DELIVERY_PRICING_SOURCE.VEHICLE };
+      // No "All Zones" delivery Set Price: the card shows no rate (a zone price, if any, comes with the quote).
+      return {
+        ...vehicle,
+        delivery_pricing_source: DELIVERY_PRICING_SOURCE.NONE,
+        delivery_distance_pricing: { ...(vehicle.delivery_distance_pricing || {}), ...NOT_PRICED },
+        service_tax: 0,
+      };
     }
 
     return {

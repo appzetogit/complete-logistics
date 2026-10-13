@@ -66,20 +66,34 @@ const book = async (rider, vehicle, pickup = PICKUP, extra = {}) => {
   return res.body.data;
 };
 
-// The factory vehicle: legacy delivery pricing (base 100 for 1 km, 10/km) + a shared 'both' Set Price.
-const newVehicle = (overrides) => t.factories.vehicle({ commission: 20, ...overrides });
+// The factory vehicle: old prices saved on the vehicle type (base 100 for 1 km, 10/km, never used for goods any
+// more) + a shared 'both' Set Price, and NO delivery Set Price (each test creates the one it needs).
+const newVehicle = (overrides) => t.factories.vehicle({ commission: 20, deliverySetPrice: false, ...overrides });
 
-test('before any delivery Set Price exists, the vehicle type values still price the booking (fallback)', async () => {
+// A goods booking without asserting success (for the "not priced" cases).
+const tryBook = (rider, vehicle, pickup = PICKUP) => t.api('POST', '/deliveries', {
+  token: rider.token,
+  body: {
+    pickup, drop: DROP, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash',
+    parcel: { category: 'Documents', senderName: 'S', receiverName: 'R' },
+  },
+});
+
+test('no delivery Set Price: "price not set" and the booking is refused (the vehicle type prices are never used)', async () => {
   const vehicle = await newVehicle();
   const rider = await t.factories.user();
 
   const q = await quote(rider, vehicle);
-  assert.equal(q.pricingSource, 'vehicle');
+  assert.equal(q.pricingSource, 'none');
   assert.equal(q.setPriceId, null);
-  nearTotal(q.total, { base: 100, baseDistance: 1, perKm: 10, tax: 0 }, q.distanceKm);
+  assert.equal(q.priceNotSet, true);
+  assert.equal(q.priced, false);
+  assert.equal(q.total, 0, 'not the 100 + 10/km saved on the vehicle type');
 
-  const delivery = await book(rider, vehicle);
-  assert.equal(delivery.fare, q.total, 'booking charges exactly what was quoted');
+  const refused = await tryBook(rider, vehicle);
+  assert.equal(refused.status, 409, refused.text);
+  assert.equal(refused.body.code, 'PRICE_NOT_SET');
+  assert.equal(await t.m.Ride.countDocuments({ userId: rider.user._id }), 0, 'nothing booked');
 });
 
 test("a shared 'both'/taxi Set Price is never used for goods fares", async () => {
@@ -89,8 +103,9 @@ test("a shared 'both'/taxi Set Price is never used for goods fares", async () =>
   await t.m.SetPrice.updateOne({ _id: bothRows[0]._id }, { $set: { base_price: 5000, price_per_distance: 999 } });
 
   const q = await quote(await t.factories.user(), vehicle);
-  assert.equal(q.pricingSource, 'vehicle');
-  assert.ok(q.total < 1000, `goods fare must not use the taxi row (got ${q.total})`);
+  assert.equal(q.pricingSource, 'none');
+  assert.equal(q.priceNotSet, true);
+  assert.equal(q.total, 0, `goods fare must not use the taxi row (got ${q.total})`);
 });
 
 test('creating a delivery Set Price from the admin API switches the fare to it, for quote and booking', async () => {
@@ -171,16 +186,21 @@ test('a zone that has no rule of its own is not priced from another zone', async
   await createSetPrice(vehicle, { zone_id: String(zoneB._id), base_price: 999 });
 
   const q = await quote(rider, vehicle, PICKUP); // Indore, rule exists only for the Delhi zone
-  assert.equal(q.pricingSource, 'vehicle', "the Delhi zone's rate must not leak into Indore");
+  assert.equal(q.pricingSource, 'none', "the Delhi zone's rate must not leak into Indore");
+  assert.equal(q.priceNotSet, true);
+  assert.equal((await tryBook(rider, vehicle, PICKUP)).body.code, 'PRICE_NOT_SET');
 });
 
 test('a delivery Set Price with no charges is "not priced", it does not silently use the vehicle values', async () => {
   const vehicle = await newVehicle();
   await createSetPrice(vehicle, { base_price: 0, price_per_distance: 0, service_tax: 0 });
-  const q = await quote(await t.factories.user(), vehicle);
+  const rider = await t.factories.user();
+  const q = await quote(rider, vehicle);
   assert.equal(q.pricingSource, 'set_price');
   assert.equal(q.priced, false);
+  assert.equal(q.priceNotSet, true);
   assert.equal(q.total, 0);
+  assert.equal((await tryBook(rider, vehicle)).body.code, 'PRICE_NOT_SET', 'and it cannot be booked');
 });
 
 test('delivery rows do not leak into taxi: a taxi ride on the same vehicle still uses the taxi/both row', async () => {
@@ -226,9 +246,10 @@ test('public vehicle catalog shows the All Zones Set Price rate and refreshes wh
     return res.body.data.results.find((item) => String(item._id) === String(vehicle._id));
   };
 
-  const legacy = await find();
-  assert.equal(legacy.delivery_pricing_source, 'vehicle');
-  assert.equal(legacy.delivery_distance_pricing.base_price, 100);
+  const unpriced = await find();
+  assert.equal(unpriced.delivery_pricing_source, 'none', 'no All Zones delivery Set Price yet');
+  assert.equal(unpriced.delivery_distance_pricing.base_price, 0, 'the vehicle type price is not shown');
+  assert.equal(unpriced.delivery_distance_pricing.enabled, false);
 
   const created = await createSetPrice(vehicle, { base_price: 250, base_distance: 3, price_per_distance: 40, service_tax: 12 });
   const overlaid = await find(); // catalog is cached 5 min: the create must have invalidated it
@@ -243,8 +264,8 @@ test('public vehicle catalog shows the All Zones Set Price rate and refreshes wh
 
   await t.api('DELETE', `/admin/types/set-prices/${created.body.data._id}`, { token: admin.token });
   const afterDelete = await find();
-  assert.equal(afterDelete.delivery_pricing_source, 'vehicle', 'deleting the rule falls back to the vehicle values again');
-  assert.equal(afterDelete.delivery_distance_pricing.base_price, 100);
+  assert.equal(afterDelete.delivery_pricing_source, 'none', 'deleting the rule leaves the vehicle unpriced');
+  assert.equal(afterDelete.delivery_distance_pricing.base_price, 0);
 });
 
 test('Vehicle Type page saves (without any price fields) leave the legacy values and options intact', async () => {
@@ -285,14 +306,14 @@ test('load height and extras (vehicle options) are still added on top of the Set
   assert.equal(res.body.data.pricingSource, 'set_price');
 });
 
-test('MIGRATION: copying vehicle prices into Set Price leaves the fare and booking terms unchanged', async () => {
+test('MIGRATION: copying the vehicle type prices into a Delivery Set Price makes the vehicle bookable at those prices', async () => {
   const { planDeliveryPricingMigration } = await import('../../src/modules/taxi/services/deliveryPricingMigration.js');
   const vehicle = await newVehicle({ service_tax: 5, commission: 15 });
   const rider = await t.factories.user();
 
   const beforeQuote = await quote(rider, vehicle);
-  const beforeBooking = await book(rider, vehicle);
-  assert.equal(beforeQuote.pricingSource, 'vehicle');
+  assert.equal(beforeQuote.pricingSource, 'none', 'not bookable before the migration');
+  assert.equal((await tryBook(rider, vehicle)).body.code, 'PRICE_NOT_SET');
 
   const vehicles = await t.m.Vehicle.find({ _id: vehicle._id }).lean();
   const setPrices = await t.m.SetPrice.find({ vehicle_type: vehicle._id }).lean();
@@ -303,12 +324,13 @@ test('MIGRATION: copying vehicle prices into Set Price leaves the fare and booki
 
   const afterQuote = await quote(rider, vehicle);
   assert.equal(afterQuote.pricingSource, 'set_price', 'now served from Set Price');
-  assert.equal(afterQuote.total, beforeQuote.total, 'same fare as before the migration');
+  nearTotal(afterQuote.total, { base: 100, baseDistance: 1, perKm: 10, tax: 5 }, afterQuote.distanceKm);
 
   const afterBooking = await book(rider, vehicle);
-  assert.equal(afterBooking.fare, beforeBooking.fare);
-  assert.equal(afterBooking.pricingSnapshot.admin_commission_from_driver, beforeBooking.pricingSnapshot.admin_commission_from_driver, 'commission unchanged');
-  assert.deepEqual(afterBooking.pricingSnapshot.allowed_payment_methods, beforeBooking.pricingSnapshot.allowed_payment_methods, 'payment methods unchanged');
+  assert.equal(afterBooking.fare, afterQuote.total);
+  const stored = await t.m.Ride.findById(afterBooking.rideId).lean();
+  assert.equal(stored.pricingSnapshot.admin_commission_from_driver, 15, "commission copied from the vehicle's Set Price");
+  assert.deepEqual(stored.pricingSnapshot.allowed_payment_methods, ['cash', 'online']);
 
   // running it again finds nothing left to do
   const again = planDeliveryPricingMigration({
@@ -343,11 +365,11 @@ test('lifecycle: commission at completion follows the Delivery Set Price, not th
   near(Math.abs(commissionRow.amount), round2(fare * 0.15), 0.02);
 });
 
-test('deleting the Delivery Set Price falls back to the vehicle values, and the catalog follows', async () => {
+test('deleting the Delivery Set Price makes the vehicle unpriced again (no fallback to the vehicle type)', async () => {
   const vehicle = await newVehicle();
   const rider = await t.factories.user();
   const legacy = await quote(rider, vehicle);
-  assert.equal(legacy.pricingSource, 'vehicle');
+  assert.equal(legacy.pricingSource, 'none');
 
   const created = await createSetPrice(vehicle);
   const priced = await quote(rider, vehicle);
@@ -357,6 +379,7 @@ test('deleting the Delivery Set Price falls back to the vehicle values, and the 
   assert.equal(removed.status, 200, removed.text);
 
   const after = await quote(rider, vehicle);
-  assert.equal(after.pricingSource, 'vehicle');
-  near(after.total, legacy.total, 0.01);
+  assert.equal(after.pricingSource, 'none');
+  assert.equal(after.total, 0);
+  assert.equal((await tryBook(rider, vehicle)).body.code, 'PRICE_NOT_SET');
 });

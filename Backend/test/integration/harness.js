@@ -218,8 +218,10 @@ export const bootstrap = async ({ smtpPort = 1 } = {}) => {
       });
       return { admin, token: tokenFor(admin._id, 'admin') };
     },
-    // A vehicle type plus the SetPrice that drives commission and payment methods.
-    vehicle: async ({ commission = 20, setPrice = {}, ...overrides } = {}) => {
+    // A vehicle type plus the SetPrice that drives commission and payment methods. Goods are priced only from a
+    // Delivery Set Price, so a goods-capable vehicle also gets one (base 100 for 1 km, then 10/km) unless
+    // `deliverySetPrice: false`; `deliverySetPrice: {...}` overrides its fields.
+    vehicle: async ({ commission = 20, setPrice = {}, deliverySetPrice = {}, ...overrides } = {}) => {
       const vehicle = await m.Vehicle.create({
         name: 'Test Sedan',
         transport_type: 'both',
@@ -235,6 +237,23 @@ export const bootstrap = async ({ smtpPort = 1 } = {}) => {
         admin_commission_from_driver: commission,
         ...setPrice,
       });
+      if (deliverySetPrice !== false && ['both', 'delivery'].includes(String(vehicle.transport_type))) {
+        await m.SetPrice.create({
+          vehicle_type: vehicle._id,
+          transport_type: 'delivery',
+          zone_id: null,
+          service_location_id: null,
+          payment_type: ['cash', 'online'],
+          admin_commission_type_from_driver: 1,
+          admin_commission_from_driver: commission,
+          base_price: 100,
+          base_distance: 1,
+          price_per_distance: 10,
+          service_tax: 0,
+          ...setPrice,
+          ...deliverySetPrice,
+        });
+      }
       return vehicle;
     },
     wallet: async (userId, balance) =>

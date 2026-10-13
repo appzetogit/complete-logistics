@@ -7,9 +7,13 @@
  * delivery Set Price yet, this creates one delivery Set Price row with those
  * values. Payment methods, commissions and cancellation fees are copied from
  * the vehicle's existing 'both' Set Price when there is one, so the migration
- * changes the fare and nothing else. Nothing is deleted or modified; the old
- * vehicle values stay as the fallback. Safe to run again (it skips vehicles
- * that already have the row).
+ * changes the fare and nothing else. Nothing is deleted or modified. Safe to
+ * run again (it skips vehicles that already have the row).
+ *
+ * Goods are priced ONLY from a delivery Set Price now: a goods vehicle without
+ * one shows "Price not set" and cannot be booked. Run this once after deploying
+ * so vehicles that only had prices on the Vehicle Type page stay bookable at
+ * the same prices.
  *
  * Usage (dry run: prints the plan, writes nothing):
  *   node scripts/migrateDeliveryPricingToSetPrice.js

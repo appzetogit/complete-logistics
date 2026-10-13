@@ -1044,8 +1044,9 @@ const VehicleType = ({ mode: propMode }) => {
               <label className={labelClass}>Goods Pricing</label>
               <p className="text-sm font-medium text-slate-700">
                 Base price, base distance, price per km, service tax and admin commission for goods deliveries are
-                now set in <span className="font-black">Pricing &rarr; Set Price</span>, per zone. Pick this vehicle
-                type there and choose <span className="font-black">Pricing for: Delivery</span>.
+                set <span className="font-black">only</span> in <span className="font-black">Pricing &rarr; Set Price</span>, per zone.
+                Pick this vehicle type there and choose <span className="font-black">Pricing for: Delivery</span>
+                (use <span className="font-black">All Zones</span> so the price also shows on the vehicle card).
               </p>
               <p className="mt-2 text-xs text-slate-500">
                 Load height options, extras and the other details on this page are still managed here.
@@ -1054,8 +1055,8 @@ const VehicleType = ({ mode: propMode }) => {
                 || Number(formData.delivery_distance_pricing?.distance_price || 0) > 0 ? (
                 <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-800">
                   This vehicle still has older prices saved here (base &#8377;{Number(formData.delivery_distance_pricing?.base_price || 0)},
-                  {' '}&#8377;{Number(formData.delivery_distance_pricing?.distance_price || 0)}/km). They are only used until a
-                  Delivery Set Price exists for it; once you create one, that takes over.
+                  {' '}&#8377;{Number(formData.delivery_distance_pricing?.distance_price || 0)}/km). They are <span className="font-black">not used</span> any
+                  more. Without a Delivery Set Price this vehicle shows &quot;Price not set&quot; and cannot be booked for goods.
                 </div>
               ) : null}
               <Link

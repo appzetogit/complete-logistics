@@ -974,6 +974,7 @@ export const createRideRecord = async ({
   userMaxBidFare,
   bidStepAmount,
   advancePercent,
+  setPriceRule = null,
 }) => {
   const user = await User.findById(userId);
 
@@ -1022,12 +1023,16 @@ export const createRideRecord = async ({
     service_location_id && mongoose.Types.ObjectId.isValid(service_location_id)
       ? new mongoose.Types.ObjectId(service_location_id)
       : null;
-  const { pricingRule, allowedPaymentMethods } = await getAllowedRidePaymentMethodsForPricing({
-    zoneId: resolvedZoneId,
-    serviceLocationId: resolvedServiceLocationId,
-    transportType: normalizedTransportType,
-    vehicleTypeId: primaryVehicleTypeId,
-  });
+  // A goods booking passes the delivery Set Price that priced it, so commission and payment methods come from
+  // the same rule as the fare (never a 'both' row or the vehicle type).
+  const { pricingRule, allowedPaymentMethods } = setPriceRule
+    ? { pricingRule: setPriceRule, allowedPaymentMethods: normalizeAllowedRidePaymentMethods(setPriceRule.payment_type) }
+    : await getAllowedRidePaymentMethodsForPricing({
+      zoneId: resolvedZoneId,
+      serviceLocationId: resolvedServiceLocationId,
+      transportType: normalizedTransportType,
+      vehicleTypeId: primaryVehicleTypeId,
+    });
   const normalizedPaymentMethod = normalizeRidePaymentMethod(paymentMethod);
   const resolvedRequestedPaymentMethod = allowedPaymentMethods.includes(normalizedPaymentMethod)
     ? normalizedPaymentMethod
@@ -1094,15 +1099,9 @@ export const createRideRecord = async ({
   const nextFareIncreaseAt = pricingNegotiationMode === 'user_increment_only'
     ? new Date(Date.now() + fareIncreaseWaitMinutes * 60 * 1000)
     : null;
-  const parcelCommissionFallback =
-    normalizedServiceType === 'parcel'
-      ? {
-          admin_commission_type_from_driver: Number(primaryVehicle?.admin_commission_type_from_driver ?? 1),
-          admin_commission_from_driver: Number(primaryVehicle?.admin_commission_from_driver ?? 0),
-          admin_commission_type_for_owner: Number(primaryVehicle?.admin_commission_type_for_owner ?? 1),
-          admin_commission_for_owner: Number(primaryVehicle?.admin_commission_for_owner ?? 0),
-        }
-      : null;
+  // Goods commission comes only from the delivery Set Price (pricingRule); the vehicle type's own commission
+  // fields are no longer used.
+  const parcelCommissionFallback = null;
   const pricingSnapshot = {
     setPriceId: pricingRule?._id || null,
     admin_commission_type_from_driver: Number(pricingRule?.admin_commission_type_from_driver ?? parcelCommissionFallback?.admin_commission_type_from_driver ?? 1),

@@ -130,17 +130,19 @@ test('Set Price wins over the vehicle type, and brings its own service tax', asy
   assert.deepEqual(result.zone, { id: 'zoneA', serviceLocationId: 'locA' });
 });
 
-test('no delivery Set Price yet: falls back to the vehicle type values', async () => {
+test('no delivery Set Price: not priced (the vehicle type values are never used)', async () => {
   const result = await resolveDeliveryPricing({
     vehicle: VEHICLE,
     pickupCoords: [75.85, 22.71],
     deps: { SetPrice: makeSetPriceModel([row({ transport_type: 'both' })]), findZone: async () => ZONE },
   });
 
-  assert.equal(result.source, 'vehicle');
+  assert.equal(result.source, 'none');
   assert.equal(result.setPriceId, null);
-  assert.equal(result.pricing.base_price, 45);
-  assert.equal(result.serviceTaxPercentage, 5);
+  assert.equal(result.rule, null);
+  assert.equal(result.pricing.enabled, false);
+  assert.equal(result.pricing.base_price, 0, 'not the 45 saved on the vehicle');
+  assert.equal(result.serviceTaxPercentage, 0);
 });
 
 test('a Set Price that exists but has no charges means "not priced", not a silent fallback', async () => {
@@ -167,7 +169,7 @@ test('a pickup outside every zone (or a failing zone lookup) still resolves', as
     pickupCoords: [0, 0],
     deps: { SetPrice: makeSetPriceModel([]), findZone: async () => { throw new Error('zone db down'); } },
   });
-  assert.equal(failing.source, 'vehicle');
+  assert.equal(failing.source, 'none', 'no rule found: not priced');
 });
 
 // ---- public catalog ----------------------------------------------------------------------
@@ -193,8 +195,10 @@ test('catalog: goods vehicles show the All Zones Set Price rate; taxi-only vehic
   assert.equal(v1.delivery_distance_pricing.free_time, 10, 'detention terms stay from the vehicle');
   assert.equal(v1.service_tax, 18);
 
-  assert.equal(v2.delivery_pricing_source, 'vehicle');
-  assert.equal(v2.delivery_distance_pricing.base_price, 10);
+  assert.equal(v2.delivery_pricing_source, 'none', 'only a zone price: the card shows no rate');
+  assert.equal(v2.delivery_distance_pricing.base_price, 0);
+  assert.equal(v2.delivery_distance_pricing.enabled, false);
+  assert.equal(v2.service_tax, 0);
 
   assert.equal(v3.delivery_pricing_source, undefined);
   assert.equal(v3.delivery_distance_pricing.enabled, false);
