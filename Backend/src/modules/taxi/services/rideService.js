@@ -1391,7 +1391,14 @@ export const createRideRecord = async ({
     createdRide = await createRideDocuments();
   } catch (error) {
     if (walletHold) {
-      await releaseUncommittedHold({ userId, rideId: rideObjectId, amount: walletHold.amount }).catch(() => null);
+      // If the ride document was saved after all, release through its claim (so a later cancel cannot release it
+      // again); otherwise give the bare hold back.
+      const saved = await Ride.exists({ _id: rideObjectId }).catch(() => null);
+      if (saved) {
+        await releaseRideWalletHold({ rideId: rideObjectId, reason: 'booking failed' }).catch(() => null);
+      } else {
+        await releaseUncommittedHold({ userId, rideId: rideObjectId, amount: walletHold.amount }).catch(() => null);
+      }
     }
     throw error;
   }
@@ -1526,13 +1533,10 @@ export const serializeRidePaymentState = (ride) => {
   const remaining = getRemainingFare(ride);
   return {
     isPaid: collectionPaid || (method === 'wallet' && Boolean(ride?.walletPayment?.at) && shortfall <= 0),
-    amountToCollect: collectionPaid
-      ? 0
-      : method === 'cash'
-        ? remaining
-        : method === 'wallet'
-          ? shortfall
-          : 0,
+    // What the DRIVER collects in hand: only on cash rides. A wallet shortfall is paid by the rider in the app
+    // (the driver was already credited at completion).
+    amountToCollect: collectionPaid || method !== 'cash' ? 0 : remaining,
+    riderPaysInApp: method === 'wallet' && !collectionPaid ? shortfall : 0,
     walletHold: ride?.walletHold?.status
       ? { amount: Number(ride.walletHold.amount || 0), status: ride.walletHold.status }
       : null,
@@ -2420,6 +2424,8 @@ export const updateRideLifecycle = async ({
     }
   }
 
+  const previousLiveStatus = ride.liveStatus;
+  const previousStatus = ride.status;
   ride.liveStatus = nextStatus;
   ride.status = config.persistedStatus;
 
@@ -2444,14 +2450,27 @@ export const updateRideLifecycle = async ({
 
   // The driver's app may report how it was paid (cash/online), but a wallet ride stays a wallet ride: the rider
   // chose it and the money is already held.
+  // Nor can the driver make a ride a wallet ride: only the rider chooses wallet, at booking (with a hold).
   if (paymentMethod !== undefined && paymentMethod !== null && String(paymentMethod).trim() && ride.paymentMethod !== 'wallet') {
-    ride.paymentMethod = normalizeRidePaymentMethod(paymentMethod);
+    const driverReportedMethod = normalizeRidePaymentMethod(paymentMethod);
+    ride.paymentMethod = driverReportedMethod === 'wallet' ? 'online' : driverReportedMethod;
   }
 
   if (nextStatus === RIDE_LIVE_STATUS.COMPLETED) {
     ride.completedAt = new Date();
   }
 
+  // Claim the step atomically: if the ride was cancelled (or moved on) since it was loaded, a cancel and this
+  // step cannot both win (otherwise a cancelled wallet ride could still be completed and charged).
+  const claimed = await Ride.updateOne(
+    { _id: ride._id, driverId, status: previousStatus, liveStatus: previousLiveStatus },
+    { $set: { status: config.persistedStatus, liveStatus: nextStatus } },
+  );
+  if (!claimed.matchedCount) {
+    throw new ApiError(409, 'This ride changed in the meantime (for example it was cancelled). Refresh and try again.', {
+      code: 'RIDE_STATE_CHANGED',
+    });
+  }
   await ride.save();
   await syncDeliveryWithRide(ride);
 
@@ -2463,12 +2482,16 @@ export const updateRideLifecycle = async ({
       Driver.findByIdAndUpdate(driverId, { isOnRide: false }),
     ]);
 
-    walletUpdate = await settleCompletedRideWallet({ rideId: ride._id });
-    // Wallet ride: debit the rider's wallet now (hold first), no payment sheet. Once per ride.
-    if (ride.paymentMethod === 'wallet') {
-      await captureRideWalletPayment({ rideId: ride._id }).catch((error) => {
-        console.error('Wallet capture failed; the ride stays payable', String(ride._id), error?.message || error);
-      });
+    try {
+      walletUpdate = await settleCompletedRideWallet({ rideId: ride._id });
+    } finally {
+      // Wallet ride: debit the rider's wallet now (hold first), no payment sheet. Once per ride; runs even if
+      // the driver settlement failed, and the recovery sweep retries it if this fails.
+      if (ride.paymentMethod === 'wallet') {
+        await captureRideWalletPayment({ rideId: ride._id }).catch((error) => {
+          console.error('Wallet capture failed; the sweep will retry', String(ride._id), error?.message || error);
+        });
+      }
     }
     await consumeUserSubscriptionRide({ ride });
     // Counting a free ride is best-effort: the ride is already completed and

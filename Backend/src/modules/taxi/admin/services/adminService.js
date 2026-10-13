@@ -4402,23 +4402,25 @@ export const adjustUserWallet = async (id, payload = {}) => {
     throw new ApiError(404, 'User not found');
   }
 
-  let wallet = await UserWallet.findOne({ userId: id });
-  if (!wallet) {
-    wallet = new UserWallet({ userId: id, balance: 0, refundWallet: 0, transactions: [] });
+  // Atomic ($inc with the balance check in the same write), so a concurrent ride hold or payment is never lost.
+  await UserWallet.updateOne(
+    { userId: id },
+    { $setOnInsert: { userId: id, balance: 0, refundWallet: 0, heldBalance: 0, transactions: [] } },
+    { upsert: true },
+  );
+  const tx = { kind: operation, amount, title: payload.description || `Admin adjustment (${operation})` };
+  const updated = await UserWallet.findOneAndUpdate(
+    operation === 'debit' ? { userId: id, balance: { $gte: amount } } : { userId: id },
+    {
+      $inc: { balance: operation === 'credit' ? amount : -amount },
+      $push: { transactions: { $each: [tx], $slice: -50 } },
+    },
+    { returnDocument: 'after' },
+  ).select('balance').lean();
+  if (!updated) {
+    throw new ApiError(400, 'Insufficient wallet balance for this debit');
   }
-
-  const currentBalance = wallet.balance || 0;
-  const nextBalance = operation === 'credit' ? currentBalance + amount : currentBalance - amount;
-
-  wallet.balance = nextBalance;
-  wallet.transactions.push({
-    kind: operation,
-    amount,
-    title: payload.description || `Admin adjustment (${operation})`,
-  });
-
-  await wallet.save();
-  return { balance: Number(nextBalance.toFixed(2)) };
+  return { balance: Number(Number(updated.balance || 0).toFixed(2)) };
 };
 
 export const listDrivers = async ({ page = 1, limit = 50, status, search, approve, isOnline } = {}, currentAdmin = null) => {
@@ -5555,7 +5557,9 @@ export const getDriverProfile = async (id) => {
     return total + Number(explicitCommission ?? fallbackCommission);
   }, 0);
   const byCash = sum(completedRides.filter((r) => r.paymentMethod === 'cash'), 'fare');
-  const byCard = sum(completedRides.filter((r) => r.paymentMethod === 'online'), 'fare');
+  // "card" = paid in the app (online or wallet), so cash + card still add up to the total; wallet also on its own
+  const byCard = sum(completedRides.filter((r) => ['online', 'wallet'].includes(r.paymentMethod)), 'fare');
+  const byWallet = sum(completedRides.filter((r) => r.paymentMethod === 'wallet'), 'fare');
   const spendAmount = walletTransactions.reduce((total, item) => {
     const amount = Number(item?.amount || 0);
     return amount < 0 ? total + Math.abs(amount) : total;
@@ -5604,6 +5608,7 @@ export const getDriverProfile = async (id) => {
       by_cash: Number(byCash.toFixed(2)),
       by_wallet: 0,
       by_card: Number(byCard.toFixed(2)),
+      by_wallet: Number(byWallet.toFixed(2)),
       spend_amount: Number(spendAmount.toFixed(2)),
       balance_amount: Number(balanceAmount.toFixed(2)),
     },
@@ -8486,7 +8491,7 @@ export const getAdminEarnings = async (query = {}) => {
       acc.adminCommission += row.adminCommission;
       acc.driverEarnings += row.driverEarnings;
       if (row.paymentMethod === 'cash') acc.byCash += row.adminCommission;
-      if (row.paymentMethod === 'online') acc.byOnline += row.adminCommission;
+      if (row.paymentMethod === 'online' || row.paymentMethod === 'wallet') acc.byOnline += row.adminCommission;
       return acc;
     },
     { totalTrips: 0, grossFare: 0, adminCommission: 0, driverEarnings: 0, byCash: 0, byOnline: 0 },
@@ -8605,9 +8610,12 @@ export const getDashboardData = async () => {
   const totalTodayDriverEarnings = sumDriverEarnings(todayCompletedRides);
 
   const overallByCash = sumFare(completedRides.filter((ride) => String(ride?.paymentMethod || 'cash').toLowerCase() === 'cash'));
-  const overallByCard = sumFare(completedRides.filter((ride) => String(ride?.paymentMethod || '').toLowerCase() === 'online'));
+  // paid in the app: online or wallet (wallet also reported on its own)
+  const overallByCard = sumFare(completedRides.filter((ride) => ['online', 'wallet'].includes(String(ride?.paymentMethod || '').toLowerCase())));
+  const overallByWallet = sumFare(completedRides.filter((ride) => String(ride?.paymentMethod || '').toLowerCase() === 'wallet'));
   const todayByCash = sumFare(todayCompletedRides.filter((ride) => String(ride?.paymentMethod || 'cash').toLowerCase() === 'cash'));
-  const todayByCard = sumFare(todayCompletedRides.filter((ride) => String(ride?.paymentMethod || '').toLowerCase() === 'online'));
+  const todayByCard = sumFare(todayCompletedRides.filter((ride) => ['online', 'wallet'].includes(String(ride?.paymentMethod || '').toLowerCase())));
+  const todayByWallet = sumFare(todayCompletedRides.filter((ride) => String(ride?.paymentMethod || '').toLowerCase() === 'wallet'));
 
   const buildRecentMonthKeys = (monthCount = 4) => {
     const months = [];
@@ -8725,6 +8733,7 @@ export const getDashboardData = async () => {
       by_cash: Number(todayByCash.toFixed(2)),
       by_wallet: 0,
       by_card: Number(todayByCard.toFixed(2)),
+      by_wallet: Number(todayByWallet.toFixed(2)),
       admin_commission: Number(totalTodayCommission.toFixed(2)),
       driver_earnings: Number(totalTodayDriverEarnings.toFixed(2)),
     },
@@ -8733,6 +8742,7 @@ export const getDashboardData = async () => {
       by_cash: Number(overallByCash.toFixed(2)),
       by_wallet: 0,
       by_card: Number(overallByCard.toFixed(2)),
+      by_wallet: Number(overallByWallet.toFixed(2)),
       admin_commission: Number(totalOverallCommission.toFixed(2)),
       driver_earnings: Number(totalOverallDriverEarnings.toFixed(2)),
       chart: overallChart,

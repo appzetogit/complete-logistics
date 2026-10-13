@@ -117,7 +117,8 @@ test('the wallet cannot cover the extra: a shortfall is left payable, never a ne
   });
   assert.equal(done.walletShortfall, 10);
   assert.equal(done.isPaid, false);
-  assert.equal(done.amountToCollect, 10);
+  assert.equal(done.amountToCollect, 0, 'the driver collects nothing in cash (already credited)');
+  assert.equal(done.riderPaysInApp, 10, 'the rider pays the rest in the app');
   const w = await wallet(rider);
   assert.equal(w.balance, 0);
   assert.equal(w.heldBalance, 0);
@@ -255,4 +256,72 @@ test('the driver sees a wallet ride on the offer and has nothing to collect', as
   const active = (await t.api('GET', '/rides/active/me', { token: driver.token })).body.data;
   assert.equal(active.paymentMethod, 'wallet');
   assert.equal(active.amountToCollect, 0);
+});
+
+test('the drivers summary tells the app which payment methods (incl. wallet) each vehicle allows', async () => {
+  const withWallet = await t.factories.vehicle({ setPrice: WALLET_PRICE });
+  const withoutWallet = await t.factories.vehicle({ setPrice: { payment_type: ['cash'] } });
+  const rider = await t.factories.user();
+  const [lng, lat] = t.locations.pickup;
+  const res = await t.api('GET', `/rides/available-drivers/summary?lat=${lat}&lng=${lng}&vehicleTypeIds=${withWallet._id},${withoutWallet._id}`, { token: rider.token });
+  assert.equal(res.status, 200, res.text);
+  assert.deepEqual(res.body.data.byVehicleType[String(withWallet._id)].allowedPaymentMethods, ['cash', 'online', 'wallet']);
+  assert.deepEqual(res.body.data.byVehicleType[String(withoutWallet._id)].allowedPaymentMethods, ['cash']);
+});
+
+
+test('a driver cannot turn a cash ride into a wallet ride (no surprise wallet debit)', async () => {
+  const { vehicle, driver, rider } = await setup({ balance: 500 });
+  const rideId = String((await book(rider, vehicle, { paymentMethod: 'cash' })).body.data.ride._id);
+  await t.acceptRide(rideId, driver.driver._id);
+  await step(rideId, driver, 'arriving');
+  await step(rideId, driver, 'started');
+  await step(rideId, driver, 'arrived');
+  const done = await step(rideId, driver, 'completed', { paymentMethod: 'wallet' });
+  assert.equal(done.status, 200, done.text);
+  const stored = await t.m.Ride.findById(rideId).lean();
+  assert.notEqual(stored.paymentMethod, 'wallet');
+  assert.equal(stored.walletPayment, undefined);
+  assert.equal((await wallet(rider)).balance, 500, 'the wallet was not touched');
+});
+
+test('a wallet payment that did not run at completion is retried by the sweep (hold not stuck)', async () => {
+  const { vehicle, driver, rider } = await setup({ balance: 500 });
+  const rideId = String((await book(rider, vehicle)).body.data.ride._id);
+  await driveToCompletion(rideId, driver);
+  // put the ride and wallet back to "completed but never captured", as after a failed capture
+  await t.m.Ride.updateOne({ _id: rideId }, {
+    $unset: { walletPayment: 1, driverPaymentCollection: 1 },
+    $set: { 'walletHold.status': 'held', walletShortfall: 0, completedAt: new Date(Date.now() - 5 * 60 * 1000) },
+  });
+  await t.m.UserWallet.updateOne({ userId: rider.user._id }, { $set: { balance: 320, heldBalance: 180 } });
+
+  const { releaseStaleRideWalletHolds } = await import('../../src/modules/taxi/services/rideWalletService.js');
+  await releaseStaleRideWalletHolds();
+  const stored = await t.m.Ride.findById(rideId).lean();
+  assert.equal(stored.walletHold.status, 'captured');
+  assert.equal(stored.walletPayment.amount, 180);
+  const w = await wallet(rider);
+  assert.equal(w.balance, 320);
+  assert.equal(w.heldBalance, 0, 'nothing left locked');
+});
+
+test('a release never gives back more than is held (no money created)', async () => {
+  const { vehicle, rider } = await setup({ balance: 500 });
+  const rideId = String((await book(rider, vehicle)).body.data.ride._id);
+  const { releaseRideWalletHold } = await import('../../src/modules/taxi/services/rideWalletService.js');
+  await Promise.all([releaseRideWalletHold({ rideId }), releaseRideWalletHold({ rideId }), releaseRideWalletHold({ rideId })]);
+  const w = await wallet(rider);
+  assert.equal(w.balance, 500);
+  assert.equal(w.heldBalance, 0);
+});
+
+test('admin wallet debit is atomic and refuses to go below zero', async () => {
+  const rider = await t.factories.user();
+  await t.factories.wallet(rider.user._id, 100);
+  const debit = (amount) => t.api('POST', `/admin/wallet/users/${rider.user._id}/adjust`, { token: admin.token, body: { amount, operation: 'debit' } });
+  assert.equal((await debit(150)).status, 400);
+  const results = await Promise.all([debit(60), debit(60)]);
+  assert.equal(results.filter((r) => r.status === 200).length, 1, 'only one of two parallel debits fits');
+  assert.equal((await wallet(rider)).balance, 40);
 });

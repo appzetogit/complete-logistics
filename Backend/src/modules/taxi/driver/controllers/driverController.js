@@ -8665,7 +8665,7 @@ export const getOwnerFleetDashboard = async (req, res) => {
               },
               onlineTrips: {
                 $sum: {
-                  $cond: [{ $eq: ["$paymentMethod", "online"] }, 1, 0],
+                  $cond: [{ $in: ["$paymentMethod", ["online", "wallet"]] }, 1, 0],
                 },
               },
             },
@@ -8731,7 +8731,7 @@ export const getOwnerFleetDashboard = async (req, res) => {
               },
               onlineTrips: {
                 $sum: {
-                  $cond: [{ $eq: ["$paymentMethod", "online"] }, 1, 0],
+                  $cond: [{ $in: ["$paymentMethod", ["online", "wallet"]] }, 1, 0],
                 },
               },
             },

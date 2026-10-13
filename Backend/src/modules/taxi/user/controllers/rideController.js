@@ -1233,7 +1233,14 @@ export const listAvailableDriversSummary = async (req, res) => {
     });
     const markers = drivers.map((driver) => toPublicDriverMarker(driver, origin))
       .sort((a, b) => a.distanceMeters - b.distanceMeters);
+    // cash / online / wallet the admin allows for this vehicle here (the app shows only these options)
+    const { allowedPaymentMethods } = await getAllowedRidePaymentMethodsForPricing({
+      serviceLocationId,
+      transportType: transportType || 'taxi',
+      vehicleTypeId: String(vehicle._id),
+    }).catch(() => ({ allowedPaymentMethods: ['cash', 'online'] }));
     return [String(vehicle._id), {
+      allowedPaymentMethods,
       totalDrivers: markers.length,
       closestDriverDistanceMeters: markers[0]?.distanceMeters ?? null,
       closestDriverEtaMinutes: markers[0]?.etaMinutes ?? null,

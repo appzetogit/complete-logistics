@@ -2753,25 +2753,35 @@ export const payRentalAdvanceWithWallet = async (req, res) => {
     : null;
 
   if (!existingTransaction) {
-    if (Number(wallet.balance || 0) < amount) {
-      throw new ApiError(400, 'Insufficient wallet balance');
+    // Atomic: balance check, debit and the reference in one write (no lost update, no double charge).
+    const updated = await UserWallet.findOneAndUpdate(
+      { userId, balance: { $gte: amount }, 'transactions.referenceKey': { $ne: referenceKey } },
+      {
+        $inc: { balance: -amount },
+        $push: {
+          transactions: {
+            $each: [{
+              kind: 'debit',
+              amount,
+              title: 'Rental Advance Payment',
+              provider: 'wallet',
+              providerPaymentId: bookingReference,
+              referenceKey,
+            }],
+            $slice: -50,
+          },
+        },
+      },
+      { returnDocument: 'after' },
+    );
+    if (!updated) {
+      const again = await UserWallet.findOne({ userId, 'transactions.referenceKey': referenceKey }).select('_id').lean();
+      if (!again) {
+        throw new ApiError(400, 'Insufficient wallet balance');
+      }
+    } else {
+      wallet.balance = updated.balance;
     }
-
-    wallet.balance = Math.round((Number(wallet.balance || 0) - amount) * 100) / 100;
-    wallet.transactions.push({
-      kind: 'debit',
-      amount,
-      title: 'Rental Advance Payment',
-      provider: 'wallet',
-      providerPaymentId: bookingReference,
-      referenceKey,
-    });
-
-    if (wallet.transactions.length > 50) {
-      wallet.transactions = wallet.transactions.slice(-50);
-    }
-
-    await wallet.save();
   }
 
   res.status(201).json({

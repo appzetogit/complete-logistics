@@ -91,16 +91,18 @@ const returnHeldToBalance = async ({ userId, rideId, amount, title, session = nu
   const safeAmount = roundMoney(amount);
   if (!(safeAmount > 0)) return;
   const wallet = await UserWallet.findOne({ userId }).select('heldBalance').session(session).lean();
+  // Only what is really held goes back: a release can never create money.
   const fromHeld = Math.min(safeAmount, roundMoney(wallet?.heldBalance || 0));
+  if (!(fromHeld > 0)) return;
   await UserWallet.updateOne(
     { userId },
     {
-      $inc: { balance: safeAmount, heldBalance: -fromHeld },
+      $inc: { balance: fromHeld, heldBalance: -fromHeld },
       $push: {
         transactions: {
           $each: [walletTx({
             kind: 'release',
-            amount: safeAmount,
+            amount: fromHeld,
             title,
             provider: 'ride_wallet_release',
             referenceKey: `ride-wallet:${rideId}:release`,
@@ -127,6 +129,19 @@ export const releaseUncommittedHold = ({ userId, rideId, amount }) => returnHeld
  */
 export const releaseRideWalletHold = async ({ rideId, reason = 'Ride cancelled', session = null }) => {
   if (!rideId) return { released: 0 };
+  if (!session) {
+    // claim and money move commit together, so a crash between them cannot lose the hold
+    const own = await mongoose.startSession();
+    try {
+      let result = { released: 0 };
+      await own.withTransaction(async () => {
+        result = await releaseRideWalletHold({ rideId, reason, session: own });
+      });
+      return result;
+    } finally {
+      await own.endSession();
+    }
+  }
   const ride = await Ride.findOneAndUpdate(
     { _id: rideId, 'walletHold.status': 'held' },
     { $set: { 'walletHold.status': 'released', 'walletHold.releasedAt': new Date() } },
@@ -262,6 +277,23 @@ export const releaseStaleRideWalletHolds = async ({ limit = 50 } = {}) => {
   for (const ride of rides) {
     const result = await releaseRideWalletHold({ rideId: ride._id, reason: 'Ride cancelled' }).catch(() => ({ released: 0 }));
     if (result.released > 0) released += 1;
+  }
+
+  // A completed wallet ride whose payment did not run (error, crash): run it now. If the rider already paid
+  // another way, the capture sees that and only gives the hold back.
+  const uncaptured = await Ride.find({
+    paymentMethod: 'wallet',
+    status: RIDE_STATUS.COMPLETED,
+    'walletPayment.at': null,
+    completedAt: { $lt: new Date(Date.now() - 60 * 1000) },
+  })
+    .select('_id')
+    .limit(limit)
+    .lean();
+  for (const ride of uncaptured) {
+    await captureRideWalletPayment({ rideId: ride._id }).catch((error) => {
+      console.error('Wallet capture retry failed', String(ride._id), error?.message || error);
+    });
   }
   return released;
 };
