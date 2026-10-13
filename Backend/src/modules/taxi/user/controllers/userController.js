@@ -108,10 +108,21 @@ const ensureUserWallet = async (userId) => {
   );
 };
 
+// Entries saved before `walletField` existed: refund credits are recognised by their title (they went to the
+// refund wallet by default then).
+const inferWalletField = (entry = {}) => {
+  if (entry.walletField) return entry.walletField;
+  const title = String(entry.title || '');
+  return entry.kind === 'credit' && /^(Goods advance refund|Driver cancellation compensation)/i.test(title)
+    ? 'refundWallet'
+    : 'balance';
+};
+
 const serializeUserWalletTransaction = (entry = {}) => ({
   id: entry._id,
   kind: entry.kind,
   amount: Number(entry.amount || 0),
+  walletField: inferWalletField(entry),
   title: entry.title || '',
   counterpartyPhone: entry.counterpartyPhone || '',
   createdAt: entry.createdAt || null,
@@ -120,13 +131,19 @@ const serializeUserWalletTransaction = (entry = {}) => ({
 const buildUserWalletPayload = (wallet) => {
   const transactions = Array.isArray(wallet?.transactions) ? wallet.transactions : [];
 
+  // rupees with paise (no 99.53999999 from floating point)
+  const money = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
   return {
     // `balance` is what can be spent: money held for a wallet ride in progress is already taken out of it.
-    balance: Number(wallet?.balance || 0),
-    availableBalance: Number(wallet?.balance || 0),
-    heldBalance: Number(wallet?.heldBalance || 0),
-    totalBalance: Math.round((Number(wallet?.balance || 0) + Number(wallet?.heldBalance || 0)) * 100) / 100,
-    refundWallet: Number(wallet?.refundWallet || 0),
+    balance: money(wallet?.balance),
+    availableBalance: money(wallet?.balance),
+    heldBalance: money(wallet?.heldBalance),
+    totalBalance: money(Number(wallet?.balance || 0) + Number(wallet?.heldBalance || 0)),
+    refundWallet: money(wallet?.refundWallet),
+    // The app shows "Move to wallet" (POST /users/wallet/refund/move) when movable; refund credits are not spent
+    // automatically (spendable false).
+    refundWalletMovable: true,
+    refundWalletSpendable: false,
     currency: 'INR',
     recentTransactions: transactions
       .slice()
@@ -2138,6 +2155,74 @@ export const getUserWallet = async (req, res) => {
     success: true,
     data: buildUserWalletPayload({ ...wallet, transactions }),
   });
+};
+
+const roundTwo = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+
+/**
+ * POST /users/wallet/refund/move { amount? }: move refund credits into the spendable balance (all of them when no
+ * amount). Atomic: the move only applies if the refund wallet still holds the amount, so two moves at once can never
+ * move more than was there.
+ */
+export const moveRefundWalletToBalance = async (req, res) => {
+  const userId = req.auth?.sub;
+  await ensureUserWallet(userId);
+  const current = await UserWallet.findOne({ userId }).select('refundWallet').lean();
+  const available = roundTwo(current?.refundWallet || 0);
+
+  if (!(available > 0)) {
+    throw new ApiError(400, 'There is nothing in your refund wallet to move.', { code: 'REFUND_WALLET_EMPTY', available: 0 });
+  }
+
+  let amount = available;
+  if (req.body?.amount !== undefined && req.body?.amount !== null && req.body?.amount !== '') {
+    const requested = Number(req.body.amount);
+    if (!Number.isFinite(requested) || requested <= 0) {
+      throw new ApiError(400, 'Enter an amount greater than 0.', { code: 'INVALID_AMOUNT' });
+    }
+    amount = roundTwo(requested);
+    if (amount > available) {
+      throw new ApiError(400, `Only ₹${available} is available in your refund wallet.`, {
+        code: 'AMOUNT_EXCEEDS_REFUND_WALLET',
+        available,
+      });
+    }
+  }
+
+  const moved = await UserWallet.findOneAndUpdate(
+    { userId, refundWallet: { $gte: amount } },
+    {
+      $inc: { refundWallet: -amount, balance: amount },
+      $push: {
+        transactions: {
+          $each: [{
+            kind: 'credit',
+            amount,
+            title: 'Moved from refund wallet',
+            provider: 'refund_wallet_move',
+            walletField: 'balance',
+          }],
+          $slice: -50,
+        },
+      },
+    },
+    { returnDocument: 'after' },
+  );
+
+  if (!moved) {
+    // Another move (or a debit) got there first.
+    const now = await UserWallet.findOne({ userId }).select('refundWallet').lean();
+    const left = roundTwo(now?.refundWallet || 0);
+    throw left > 0
+      ? new ApiError(400, `Only ₹${left} is available in your refund wallet.`, { code: 'AMOUNT_EXCEEDS_REFUND_WALLET', available: left })
+      : new ApiError(400, 'There is nothing in your refund wallet to move.', { code: 'REFUND_WALLET_EMPTY', available: 0 });
+  }
+
+  const wallet = await UserWallet.findOne({ userId })
+    .select('balance refundWallet heldBalance transactions')
+    .slice('transactions', -10)
+    .lean();
+  res.json({ success: true, data: buildUserWalletPayload(wallet) });
 };
 
 export const topupUserWallet = async (req, res) => {

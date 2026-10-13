@@ -507,7 +507,7 @@ const creditUserWallet = async ({ userId, amount, field, title, provider, Wallet
       $inc: { [field]: amount },
       $push: {
         transactions: {
-          $each: [{ kind: 'credit', amount, title, provider }],
+          $each: [{ kind: 'credit', amount, title, provider, walletField: field }],
           $slice: -50,
         },
       },

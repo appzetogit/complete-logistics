@@ -44,6 +44,7 @@ import {
   startUserOtpRequest,
   submitMyBusBookingReview,
   topupUserWallet,
+  moveRefundWalletToBalance,
   transferUserWalletToDriver,
   transferUserWallet,
   updateMyActiveRentalLocation,
@@ -141,6 +142,8 @@ userRouter.delete('/notifications', authenticate(['user']), asyncHandler(clearAl
 userRouter.post('/sos', authenticate(['user']), asyncHandler(triggerUserSosAlert));
 userRouter.get('/wallet', authenticate(['user']), asyncHandler(getUserWallet));
 userRouter.post('/wallet/topup', authenticate(['user']), asyncHandler(topupUserWallet));
+// Refund credits -> spendable balance (all, or { amount }).
+userRouter.post('/wallet/refund/move', authenticate(['user']), asyncHandler(moveRefundWalletToBalance));
 userRouter.post('/wallet/transfer', authenticate(['user']), asyncHandler(transferUserWallet));
 userRouter.post('/wallet/transfer/driver', authenticate(['user']), asyncHandler(transferUserWalletToDriver));
 userRouter.post('/wallet/razorpay/order', authenticate(['user']), paymentOrderRateLimit, asyncHandler(createRazorpayWalletTopupOrder));

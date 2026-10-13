@@ -13,6 +13,12 @@ const walletTransactionSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    // Which amount the entry moved: the spendable `balance` (default) or `refundWallet` (refund credits).
+    walletField: {
+      type: String,
+      enum: ['balance', 'refundWallet'],
+      default: 'balance',
+    },
     title: {
       type: String,
       default: '',

@@ -290,6 +290,7 @@ const applyUserWalletAdjustment = async ({
     title: String(title || '').trim(),
     provider,
     referenceKey: normalizedReferenceKey,
+    walletField: normalizedField,
   };
 
   const updateFilter = { userId };
@@ -473,13 +474,16 @@ const settleDriverCancellationFee = async (ride, session) => {
 
   let userCredit = { status: 'skipped' };
   if (['applied', 'existing'].includes(driverDebit.status) && ride.userId) {
+    // Where the rider's compensation goes: the spendable wallet (default) or the refund wallet (admin setting).
+    const transportSettings = await getTransportRideSettings().catch(() => ({}));
+    const compensationTo = String(transportSettings.driver_cancel_compensation_to || 'wallet').trim().toLowerCase();
     userCredit = await applyUserWalletAdjustment({
       userId: ride.userId,
       amount: feeAmount,
       kind: 'credit',
       title: `Driver cancellation compensation for booking ${String(ride._id).slice(-6)}`,
       referenceKey: `${feeReferenceBase}:user-credit`,
-      walletField: 'refundWallet',
+      walletField: compensationTo === 'refund_wallet' ? 'refundWallet' : 'balance',
       provider: 'ride_cancellation_refund',
       session,
     });

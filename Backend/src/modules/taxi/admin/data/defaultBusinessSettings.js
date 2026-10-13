@@ -72,6 +72,8 @@ export const createDefaultBusinessSettings = () => ({
     goods_advance_percent: '20',
     // Where a refunded advance goes: refund_wallet | wallet (spendable balance) | source (original Razorpay payment).
     goods_advance_refund_to: 'refund_wallet',
+    // Where a rider's compensation goes when a driver cancels with a fine: wallet (spendable) | refund_wallet.
+    driver_cancel_compensation_to: 'wallet',
     // Riders may choose to pay the full fare up front instead of the default advance share.
     goods_advance_allow_full: 'true',
     // 1 = the driver must also take a face selfie at goods pickup and delivery (turn on once the driver app ships it).

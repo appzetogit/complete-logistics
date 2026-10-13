@@ -261,6 +261,7 @@ test('admin cancels: advance is refunded to refundWallet once, and the rider is 
   assert.equal(ride.goodsAdvance.refundDestination, 'refund_wallet');
   const wallet = await walletOf(rider.user._id);
   assert.equal(wallet.refundWallet, delivery.goodsAdvance.amount, 'refunded exactly once');
+  assert.equal(wallet.transactions.at(-1).walletField, 'refundWallet', 'the entry says it went to the refund wallet');
 
   const event = await waitFor(() => riderSocket.of('goodsAdvance:refunded')[0], { message: 'refund event' });
   assert.equal(event.payload.amount, delivery.goodsAdvance.amount);
@@ -279,6 +280,7 @@ test('refund destination can be the spendable wallet balance', async () => {
   const wallet = await walletOf(rider.user._id);
   assert.equal(round2(wallet.balance), round2(debited + delivery.goodsAdvance.amount));
   assert.equal(wallet.refundWallet, 0);
+  assert.equal(wallet.transactions.at(-1).walletField, 'balance', 'the entry says it went to the balance');
   await t.setSettings('transport_ride', { goods_advance_refund_to: 'refund_wallet' });
 });
 
