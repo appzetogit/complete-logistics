@@ -182,7 +182,7 @@ test('completion with a cash remainder: driver wallet = advance - commission, ri
 
   await t.acceptRide(delivery.rideId, driver.driver._id);
   for (const status of ['arriving', 'goods_loaded', 'started', 'arrived', 'goods_delivered', 'completed']) {
-    const res = await t.api('PATCH', `/rides/${delivery.rideId}/status`, {
+    const res = await t.patchRideStatus(delivery.rideId, {
       token: driver.token,
       body: { status, proofImageUrl: 'https://example.com/p.jpg' },
     });

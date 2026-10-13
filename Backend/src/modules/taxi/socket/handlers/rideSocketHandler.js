@@ -1,6 +1,6 @@
 import { normalizePoint } from '../../../../utils/geo.js';
 import { RIDE_LIVE_STATUS } from '../../constants/index.js';
-import { getDriverRoom } from '../../services/dispatchService.js';
+import { emitRideStateToParticipants, getDriverRoom } from '../../services/dispatchService.js';
 import {
   appendRideMessage,
   getActiveRideForIdentity,
@@ -57,8 +57,7 @@ const getDistanceMeters = (first = [], second = []) => {
 
 export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
   const emitRideState = (ride) => {
-    const payload = serializeRideRealtime(ride);
-    io.to(getRideRoom(ride._id)).emit(SOCKET_EVENTS.RIDE_STATE, payload);
+    const payload = emitRideStateToParticipants(ride);
     setImmediate(() => {
       mirrorRideRealtimeState(payload).catch(() => {});
     });
@@ -187,7 +186,7 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
 
   socket.on(
     SOCKET_EVENTS.RIDE_STATUS_UPDATE,
-    onAsync(socket, async ({ rideId, status, paymentMethod, proofImageUrl, proofNote, receivedBy, selfieImageUrl }) => {
+    onAsync(socket, async ({ rideId, status, paymentMethod, proofImageUrl, proofNote, receivedBy, selfieImageUrl, coordinates, otp }) => {
       if (socket.auth.role !== 'driver') {
         throw new Error('Only drivers can update ride status');
       }
@@ -207,6 +206,9 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
         proofNote,
         receivedBy,
         selfieImageUrl,
+        // [lng, lat] of the driver now (checked against the pickup / drop radius), and the start-trip OTP.
+        coordinates,
+        otp,
       });
       const populatedRide = await getRideDetails(rideId);
 

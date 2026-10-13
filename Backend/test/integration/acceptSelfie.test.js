@@ -55,10 +55,10 @@ test('rider never sees the selfie, over REST or sockets; driver and admin do', a
   assert.equal(stored.acceptSelfie.imageUrl, SELFIE);
 
   // trigger room broadcasts: REST status update and a socket status update
-  assert.equal((await t.api('PATCH', `/rides/${rideId}/status`, { token: driver.token, body: { status: 'arriving' } })).status, 200);
+  assert.equal((await t.patchRideStatus(rideId, { token: driver.token, body: { status: 'arriving' } })).status, 200);
   driverSocket.socket.emit('ride:join', { rideId });
   await waitFor(() => driverSocket.of('ride:joined')[0], { message: 'driver joined ride room' });
-  driverSocket.socket.emit('ride:status:update', { rideId, status: 'started' });
+  driverSocket.socket.emit('ride:status:update', { rideId, status: 'started', otp: stored.otp });
   await waitFor(() => riderSocket.of('ride:state').length >= 2, { message: 'room ride:state broadcasts' });
   riderSocket.socket.emit('ride:rejoin-current');
   await sleep(500);
@@ -127,7 +127,7 @@ test('late selfie upload (PATCH /accept-selfie): driver sees it, rider does not,
   assert.equal((await t.api('PATCH', `/rides/${rideId}/accept-selfie`, { token: rider.token, body: { selfieUrl: LATE_SELFIE } })).status, 403);
 
   // driver status update response keeps carrying it; the room broadcast does not
-  const status = await t.api('PATCH', `/rides/${rideId}/status`, { token: driver.token, body: { status: 'arriving' } });
+  const status = await t.patchRideStatus(rideId, { token: driver.token, body: { status: 'arriving' } });
   assert.equal(status.body.data.acceptSelfie.imageUrl, LATE_SELFIE);
 
   await sleep(500);

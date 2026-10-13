@@ -25,12 +25,14 @@ import {
   submitRideFeedback,
   submitRiderRatingByDriver,
   withoutAcceptSelfie,
+  rawRideForAudience,
   serializeRideCancellation,
   updateRideLifecycle,
 } from '../../services/rideService.js';
 import {
   cancelActiveRideByDriver,
   cancelRideByUser,
+  emitRideStateToParticipants,
   emitToDriver,
   getSocketServer,
   notifyRideAccepted,
@@ -378,9 +380,8 @@ export const getRideById = async (req, res) => {
     ? await getFreeRidesSummaryForUser(req.auth.sub).catch(() => null)
     : null;
 
-  // The accept selfie is admin-only; the driver keeps seeing their own.
-  const payload = req.auth.role === 'driver' ? ride : withoutAcceptSelfie(ride);
-  const plain = typeof payload.toObject === 'function' ? payload.toObject() : payload;
+  // Each side gets its own cut: no OTP for the driver; no earnings, commission or accept selfie for the rider.
+  const plain = rawRideForAudience(ride, audienceForRole(req.auth.role));
   // Same shape as every other ride payload: null until the ride is cancelled.
   plain.cancellation = serializeRideCancellation(ride);
 
@@ -479,6 +480,9 @@ export const updateRideStatus = async (req, res) => {
     proofNote: req.body.proofNote,
     receivedBy: req.body.receivedBy,
     selfieImageUrl: req.body.selfieImageUrl,
+    // [lng, lat] of the driver now (checked against the pickup / drop radius), and the start-trip OTP.
+    coordinates: req.body.coordinates,
+    otp: req.body.otp,
   });
 
   try {
@@ -499,9 +503,8 @@ export const updateRideStatus = async (req, res) => {
       // Emit ride:status:updated
       io.to(room).emit('ride:status:updated', payload);
       
-      // Emit ride:state
-      const statePayload = serializeRideRealtime(populatedRide);
-      io.to(room).emit('ride:state', statePayload);
+      // ride:state to the rider and the driver, each in their own view
+      const statePayload = emitRideStateToParticipants(populatedRide);
       
       // Sync to Firebase/Realtime DB
       const { mirrorRideRealtimeState } = await import('../../services/rideRealtimeSyncService.js');

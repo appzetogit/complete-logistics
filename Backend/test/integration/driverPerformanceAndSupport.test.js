@@ -14,11 +14,16 @@ after(async () => { await t.stop(); });
 
 const IST = 5.5 * 60 * 60 * 1000;
 const DAY = 24 * 60 * 60 * 1000;
-// Noon IST, `daysAgo` IST days before today.
+// A time on the IST day `daysAgo` days before today: noon, or for today a moment already past
+// (early in the morning today's noon is still in the future).
 const istNoon = (daysAgo) => {
   const shifted = new Date(Date.now() + IST);
-  shifted.setUTCHours(12, 0, 0, 0);
-  return new Date(shifted.getTime() - IST - daysAgo * DAY);
+  shifted.setUTCHours(0, 0, 0, 0);
+  const dayStart = shifted.getTime() - IST - daysAgo * DAY;
+  if (daysAgo === 0) {
+    return new Date(dayStart + Math.floor((Date.now() - dayStart) / 2));
+  }
+  return new Date(dayStart + 12 * 60 * 60 * 1000);
 };
 // IST day index (0 = Monday) of a date.
 const istWeekday = (date) => (new Date(date.getTime() + IST).getUTCDay() + 6) % 7;

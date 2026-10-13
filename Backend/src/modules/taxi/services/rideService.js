@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { isDataUrl } from '../../../utils/localImageStore.js';
 import { ApiError } from '../../../utils/ApiError.js';
 import { getOrLoadCachedValue } from '../../../utils/cache.js';
-import { normalizePoint, toPoint } from '../../../utils/geo.js';
+import { distanceMeters, normalizePoint, toPoint } from '../../../utils/geo.js';
 import { RIDE_LIVE_STATUS, RIDE_STATUS } from '../constants/index.js';
 import { AdminBusinessSetting } from '../admin/models/AdminBusinessSetting.js';
 import { SetPrice } from '../admin/models/SetPrice.js';
@@ -1423,6 +1423,29 @@ export const RIDE_AUDIENCE = Object.freeze({ USER: 'user', DRIVER: 'driver', ADM
 
 export const audienceForRole = (role) => (role === 'driver' ? RIDE_AUDIENCE.DRIVER : RIDE_AUDIENCE.USER);
 
+/**
+ * A raw ride document cut down for one participant: the rider never gets the driver's earnings, the platform
+ * commission or the accept selfie; the driver never gets the start-trip OTP. Neither sees the OTP attempt counter.
+ */
+export const rawRideForAudience = (ride, audience) => {
+  const plain = audience === RIDE_AUDIENCE.USER
+    ? withoutAcceptSelfie(ride)
+    : (typeof ride?.toObject === 'function' ? ride.toObject() : { ...(ride || {}) });
+  delete plain.otpCheck;
+  if (audience === RIDE_AUDIENCE.USER) {
+    delete plain.commissionAmount;
+    delete plain.driverEarnings;
+    delete plain.walletSettledAt;
+    if (plain.pricingSnapshot) {
+      const { waiting_charge, free_waiting_before, free_waiting_after } = plain.pricingSnapshot;
+      plain.pricingSnapshot = { waiting_charge, free_waiting_before, free_waiting_after };
+    }
+  } else if (audience === RIDE_AUDIENCE.DRIVER) {
+    delete plain.otp;
+  }
+  return plain;
+};
+
 // For callers that return a raw ride document instead of the serializer.
 export const withoutAcceptSelfie = (ride) => {
   const plain = typeof ride?.toObject === 'function' ? ride.toObject() : { ...(ride || {}) };
@@ -1498,7 +1521,11 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
   cancellation: serializeRideCancellation(ride),
   goodsAdvance: serializeGoodsAdvance(ride),
   remainingFare: getRemainingFare(ride),
-  otp: ride.otp || '',
+  // The start-trip OTP is the rider's to read out: the driver must ask for it, never receive it.
+  ...(audience === RIDE_AUDIENCE.USER ? { otp: ride.otp || '' } : {}),
+  waitingMinutes: Number(ride.waitingMinutes || 0),
+  waitingCharge: Number(ride.waitingCharge || 0),
+  actualDistanceMeters: Math.round(Number(ride.actualDistanceMeters || 0)),
   // The ride carries the authoritative parcel record — the fare engine writes
   // the paid add-ons and the driver's proof photos onto it. The Delivery
   // mirror holds only the booking basics, so it fills gaps rather than
@@ -1507,16 +1534,22 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
     ? withoutParcelSelfies(mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel))
     : mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel),
   intercity: ride.intercity || null,
-  commissionAmount: ride.commissionAmount,
-  driverEarnings: ride.driverEarnings,
+  // The platform's cut and the driver's take are not the rider's business.
+  ...(audience !== RIDE_AUDIENCE.USER
+    ? { commissionAmount: ride.commissionAmount, driverEarnings: ride.driverEarnings }
+    : {}),
   promo: ride.promo?.code ? ride.promo : null,
   pricingSnapshot: ride.pricingSnapshot
     ? {
         setPriceId: ride.pricingSnapshot.setPriceId || null,
-        admin_commission_type_from_driver: Number(ride.pricingSnapshot.admin_commission_type_from_driver ?? 1),
-        admin_commission_from_driver: Number(ride.pricingSnapshot.admin_commission_from_driver ?? 0),
-        admin_commission_type_for_owner: Number(ride.pricingSnapshot.admin_commission_type_for_owner ?? 1),
-        admin_commission_for_owner: Number(ride.pricingSnapshot.admin_commission_for_owner ?? 0),
+        ...(audience !== RIDE_AUDIENCE.USER
+          ? {
+              admin_commission_type_from_driver: Number(ride.pricingSnapshot.admin_commission_type_from_driver ?? 1),
+              admin_commission_from_driver: Number(ride.pricingSnapshot.admin_commission_from_driver ?? 0),
+              admin_commission_type_for_owner: Number(ride.pricingSnapshot.admin_commission_type_for_owner ?? 1),
+              admin_commission_for_owner: Number(ride.pricingSnapshot.admin_commission_for_owner ?? 0),
+            }
+          : {}),
         waiting_charge: Number(ride.pricingSnapshot.waiting_charge ?? 0),
         free_waiting_before: Number(ride.pricingSnapshot.free_waiting_before ?? 0),
         free_waiting_after: Number(ride.pricingSnapshot.free_waiting_after ?? 0),
@@ -1680,6 +1713,9 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
       'paymentMethod',
       'freeRide',
       'subscriptionUsage',
+      'waitingMinutes',
+      'waitingCharge',
+      'actualDistanceMeters',
       'cancellation',
       'goodsAdvance',
       'otp',
@@ -1750,7 +1786,10 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
     cancellation: serializeRideCancellation(ride),
     goodsAdvance: serializeGoodsAdvance(ride),
     remainingFare: getRemainingFare(ride),
-    otp: ride.otp || '',
+    ...(role === 'user' ? { otp: ride.otp || '' } : {}),
+    waitingMinutes: Number(ride.waitingMinutes || 0),
+    waitingCharge: Number(ride.waitingCharge || 0),
+    actualDistanceMeters: Math.round(Number(ride.actualDistanceMeters || 0)),
     // The ride carries the authoritative parcel record — the fare engine writes
     // the paid add-ons and the driver's proof photos onto it. The Delivery
     // mirror holds only the booking basics, so it fills gaps rather than
@@ -1760,9 +1799,21 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
       ? withoutParcelSelfies(mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel))
       : mergeParcelRecords(ride.deliveryId?.parcel, ride.parcel),
     intercity: ride.intercity || null,
-    pricingSnapshot: ride.pricingSnapshot || null,
-    commissionAmount: ride.commissionAmount,
-    driverEarnings: ride.driverEarnings,
+    ...(role === 'driver'
+      ? {
+          pricingSnapshot: ride.pricingSnapshot || null,
+          commissionAmount: ride.commissionAmount,
+          driverEarnings: ride.driverEarnings,
+        }
+      : {
+          pricingSnapshot: ride.pricingSnapshot
+            ? {
+                waiting_charge: Number(ride.pricingSnapshot.waiting_charge ?? 0),
+                free_waiting_before: Number(ride.pricingSnapshot.free_waiting_before ?? 0),
+                free_waiting_after: Number(ride.pricingSnapshot.free_waiting_after ?? 0),
+              }
+            : null,
+        }),
     vehicleIconType: ride.vehicleIconType,
     // Keep history responses light; giant data URLs can stall the activity screen.
     vehicleIconUrl: String(ride.vehicleIconUrl || '').startsWith('data:') ? '' : (ride.vehicleIconUrl || ''),
@@ -1920,6 +1971,15 @@ export const attachAcceptSelfie = async ({ rideId, driverId, selfieUrl }) => {
   return populateRideRealtime(ride._id);
 };
 
+const isParcelRide = (ride) =>
+  String(ride?.serviceType || ride?.type || 'ride').toLowerCase() === 'parcel';
+
+// Strict order, no skipping:
+//   ride:   accepted -> arriving (at pickup) -> started -> arrived (at drop) -> completed
+//   parcel: accepted -> arriving -> goods_loaded -> started -> arrived -> goods_delivered -> completed
+// Repeating the current step is a no-op, and arriving -> accepted undoes a mistaken "at pickup".
+// `allowedCurrent` may be a function of the ride when parcels and rides differ.
+// `atTarget` names the point the driver must be near (`pickup` / `drop`) for the step.
 const rideStatusConfig = {
   [RIDE_LIVE_STATUS.ACCEPTED]: {
     persistedStatus: RIDE_STATUS.ACCEPTED,
@@ -1928,49 +1988,190 @@ const rideStatusConfig = {
   [RIDE_LIVE_STATUS.ARRIVING]: {
     persistedStatus: RIDE_STATUS.ACCEPTED,
     allowedCurrent: [RIDE_LIVE_STATUS.ACCEPTED, RIDE_LIVE_STATUS.ARRIVING],
+    atTarget: 'pickup',
   },
   // Parcel only: the consignment is loaded and photographed at the pickup
   // before the trip may start.
   [RIDE_LIVE_STATUS.GOODS_LOADED]: {
     persistedStatus: RIDE_STATUS.ONGOING,
-    allowedCurrent: [RIDE_LIVE_STATUS.ARRIVING, RIDE_LIVE_STATUS.ACCEPTED, RIDE_LIVE_STATUS.GOODS_LOADED],
+    allowedCurrent: [RIDE_LIVE_STATUS.ARRIVING, RIDE_LIVE_STATUS.GOODS_LOADED],
     parcelOnly: true,
     requiresProof: 'pickupProof',
+    atTarget: 'pickup',
   },
   [RIDE_LIVE_STATUS.STARTED]: {
     persistedStatus: RIDE_STATUS.ONGOING,
-    allowedCurrent: [
-      RIDE_LIVE_STATUS.ACCEPTED,
-      RIDE_LIVE_STATUS.ARRIVING,
-      RIDE_LIVE_STATUS.GOODS_LOADED,
-      RIDE_LIVE_STATUS.STARTED,
-    ],
+    allowedCurrent: (ride) => (isParcelRide(ride)
+      ? [RIDE_LIVE_STATUS.GOODS_LOADED, RIDE_LIVE_STATUS.STARTED]
+      : [RIDE_LIVE_STATUS.ARRIVING, RIDE_LIVE_STATUS.STARTED]),
+    requiresOtp: true,
   },
   [RIDE_LIVE_STATUS.ARRIVED]: {
     persistedStatus: RIDE_STATUS.ONGOING,
     allowedCurrent: [RIDE_LIVE_STATUS.STARTED, RIDE_LIVE_STATUS.ARRIVED],
+    atTarget: 'drop',
   },
   // Parcel only: handover is photographed at the drop before completion.
   [RIDE_LIVE_STATUS.GOODS_DELIVERED]: {
     persistedStatus: RIDE_STATUS.ONGOING,
-    allowedCurrent: [RIDE_LIVE_STATUS.ARRIVED, RIDE_LIVE_STATUS.STARTED, RIDE_LIVE_STATUS.GOODS_DELIVERED],
+    allowedCurrent: [RIDE_LIVE_STATUS.ARRIVED, RIDE_LIVE_STATUS.GOODS_DELIVERED],
     parcelOnly: true,
     requiresProof: 'dropProof',
+    atTarget: 'drop',
   },
   [RIDE_LIVE_STATUS.COMPLETED]: {
     persistedStatus: RIDE_STATUS.COMPLETED,
-    allowedCurrent: [
-      RIDE_LIVE_STATUS.STARTED,
-      RIDE_LIVE_STATUS.ARRIVED,
-      RIDE_LIVE_STATUS.GOODS_DELIVERED,
-      RIDE_LIVE_STATUS.ARRIVING,
-      RIDE_LIVE_STATUS.ACCEPTED,
-    ],
+    allowedCurrent: (ride) => (isParcelRide(ride)
+      ? [RIDE_LIVE_STATUS.GOODS_DELIVERED]
+      : [RIDE_LIVE_STATUS.ARRIVED]),
+    atTarget: 'drop',
   },
 };
 
-const isParcelRide = (ride) =>
-  String(ride?.serviceType || ride?.type || 'ride').toLowerCase() === 'parcel';
+const OTP_MAX_FAILED_ATTEMPTS = 5;
+const OTP_LOCK_MS = 10 * 60 * 1000;
+// A saved GPS point older than this cannot prove where the driver is now.
+const DRIVER_LOCATION_MAX_AGE_MS = 2 * 60 * 1000;
+
+const readRadiusSetting = (value, fallback) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
+
+/**
+ * The driver must be within the admin radius of the pickup (`arriving`, `goods_loaded`) or the drop (`arrived`,
+ * `goods_delivered`, `completed`). Position: the coordinates sent with the request, else the last GPS point saved on
+ * the ride if it is fresh. A radius of 0 turns the check off.
+ */
+const assertDriverAtTarget = async ({ ride, target, coordinates }) => {
+  const settings = await getTransportRideSettings();
+  const radiusMeters = target === 'pickup'
+    ? readRadiusSetting(settings.arrival_radius_meters, 200)
+    : readRadiusSetting(settings.drop_radius_meters, 300);
+  if (!radiusMeters) {
+    return;
+  }
+
+  const targetPoint = target === 'pickup' ? ride.pickupLocation?.coordinates : ride.dropLocation?.coordinates;
+  if (!Array.isArray(targetPoint) || targetPoint.length !== 2) {
+    return; // nothing to compare against (e.g. a ride without a drop point)
+  }
+
+  let driverPoint = null;
+  if (coordinates !== undefined && coordinates !== null) {
+    driverPoint = normalizePoint(coordinates, 'coordinates');
+  } else {
+    const saved = ride.lastDriverLocation;
+    const savedAt = saved?.updatedAt ? new Date(saved.updatedAt).getTime() : 0;
+    if (Array.isArray(saved?.coordinates) && saved.coordinates.length === 2 && Date.now() - savedAt <= DRIVER_LOCATION_MAX_AGE_MS) {
+      driverPoint = saved.coordinates;
+    }
+  }
+
+  if (!driverPoint) {
+    throw new ApiError(409, 'Your current location is needed for this step. Turn on GPS and try again.', {
+      code: 'LOCATION_REQUIRED',
+    });
+  }
+
+  const meters = Math.round(distanceMeters(driverPoint, targetPoint));
+  if (meters > radiusMeters) {
+    throw new ApiError(409, `You are ${meters} m from the ${target}. Move within ${radiusMeters} m to continue.`, {
+      code: 'OUT_OF_ARRIVAL_RADIUS',
+      target,
+      distanceMeters: meters,
+      radiusMeters,
+    });
+  }
+};
+
+/** The start-trip OTP the rider reads out. Wrong guesses are counted; too many lock the start for a while. */
+const assertStartOtp = async ({ ride, otp }) => {
+  const expected = String(ride.otp || '').trim();
+  if (!expected) {
+    return; // rides created before OTPs existed
+  }
+
+  const lockedUntil = ride.otpCheck?.lockedUntil ? new Date(ride.otpCheck.lockedUntil) : null;
+  if (lockedUntil && lockedUntil.getTime() > Date.now()) {
+    const minutes = Math.max(1, Math.ceil((lockedUntil.getTime() - Date.now()) / 60000));
+    throw new ApiError(429, `Too many wrong OTPs. Try again in ${minutes} min.`, {
+      code: 'OTP_LOCKED',
+      retryAfterSeconds: Math.ceil((lockedUntil.getTime() - Date.now()) / 1000),
+    });
+  }
+
+  const given = String(otp ?? '').trim();
+  if (!given) {
+    throw new ApiError(400, 'Enter the OTP the rider shares to start the trip', { code: 'OTP_REQUIRED' });
+  }
+  if (given === expected) {
+    return;
+  }
+
+  // Count atomically so parallel guesses cannot slip past the limit. An expired lock starts a new round; a lock
+  // that is still active (set by a guess running in parallel) is kept as it is.
+  const lockedUntilField = { $ifNull: ['$otpCheck.lockedUntil', null] };
+  const lockExpired = { $and: [{ $ne: [lockedUntilField, null] }, { $lte: [lockedUntilField, '$$NOW'] }] };
+  const lockActive = { $and: [{ $ne: [lockedUntilField, null] }, { $gt: [lockedUntilField, '$$NOW'] }] };
+  const counted = await Ride.findOneAndUpdate(
+    { _id: ride._id },
+    [
+      {
+        $set: {
+          'otpCheck.failedAttempts': {
+            $cond: [lockExpired, 1, { $add: [{ $ifNull: ['$otpCheck.failedAttempts', 0] }, 1] }],
+          },
+          'otpCheck.lockedUntil': { $cond: [lockExpired, null, lockedUntilField] },
+        },
+      },
+      {
+        $set: {
+          'otpCheck.lockedUntil': {
+            $cond: [
+              lockActive,
+              lockedUntilField,
+              {
+                $cond: [
+                  { $gte: ['$otpCheck.failedAttempts', OTP_MAX_FAILED_ATTEMPTS] },
+                  { $add: ['$$NOW', OTP_LOCK_MS] },
+                  null,
+                ],
+              },
+            ],
+          },
+        },
+      },
+    ],
+    { returnDocument: 'after', updatePipeline: true },
+  ).select('otpCheck').lean();
+
+  const failed = Number(counted?.otpCheck?.failedAttempts || 0);
+  const attemptsLeft = Math.max(0, OTP_MAX_FAILED_ATTEMPTS - failed);
+  throw new ApiError(attemptsLeft ? 400 : 429, attemptsLeft
+    ? `Wrong OTP. ${attemptsLeft} attempt${attemptsLeft === 1 ? '' : 's'} left.`
+    : 'Too many wrong OTPs. Try again in 10 min.', {
+    code: attemptsLeft ? 'INVALID_OTP' : 'OTP_LOCKED',
+    attemptsLeft,
+  });
+};
+
+/** Waiting at the pickup beyond the free minutes, billed per minute (rides the rider pays for only). */
+const computeWaitingCharge = (ride, startedAt) => {
+  const covered = Boolean(ride.freeRide?.covered || ride.subscriptionUsage?.covered);
+  const perMinute = Number(ride.pricingSnapshot?.waiting_charge || 0);
+  const arrivedAt = ride.arrivedAt ? new Date(ride.arrivedAt).getTime() : 0;
+  if (covered || !(perMinute > 0) || !arrivedAt) {
+    return { waitingMinutes: 0, waitingCharge: 0 };
+  }
+  const freeMinutes = Math.max(0, Number(ride.pricingSnapshot?.free_waiting_before || 0));
+  const waitedMinutes = Math.max(0, Math.floor((startedAt.getTime() - arrivedAt) / 60000));
+  const waitingMinutes = Math.max(0, waitedMinutes - freeMinutes);
+  return {
+    waitingMinutes,
+    waitingCharge: Math.round(waitingMinutes * perMinute * 100) / 100,
+  };
+};
 
 export const updateRideLifecycle = async ({
   rideId,
@@ -1981,6 +2182,8 @@ export const updateRideLifecycle = async ({
   proofNote,
   receivedBy,
   selfieImageUrl,
+  coordinates,
+  otp,
 }) => {
   const config = rideStatusConfig[nextStatus];
 
@@ -1998,8 +2201,22 @@ export const updateRideLifecycle = async ({
     throw new ApiError(400, `${nextStatus} applies to delivery jobs only`);
   }
 
-  if (!config.allowedCurrent.includes(ride.liveStatus)) {
-    throw new ApiError(409, `Ride cannot move from ${ride.liveStatus} to ${nextStatus}`);
+  const allowedCurrent = typeof config.allowedCurrent === 'function' ? config.allowedCurrent(ride) : config.allowedCurrent;
+  if (!allowedCurrent.includes(ride.liveStatus)) {
+    throw new ApiError(409, `Ride cannot move from ${ride.liveStatus} to ${nextStatus}`, {
+      code: 'INVALID_STATUS_TRANSITION',
+      currentStatus: ride.liveStatus,
+      allowedFrom: allowedCurrent,
+    });
+  }
+
+  // Repeating the current step changes nothing, so it needs neither the location nor the OTP again.
+  const isRepeat = ride.liveStatus === nextStatus;
+  if (!isRepeat && config.atTarget) {
+    await assertDriverAtTarget({ ride, target: config.atTarget, coordinates });
+  }
+  if (!isRepeat && config.requiresOtp) {
+    await assertStartOtp({ ride, otp });
   }
 
   // The loading and handover steps exist to capture evidence, so the photo is
@@ -2056,6 +2273,13 @@ export const updateRideLifecycle = async ({
 
   if (nextStatus === RIDE_LIVE_STATUS.STARTED && !ride.startedAt) {
     ride.startedAt = new Date();
+    const { waitingMinutes, waitingCharge } = computeWaitingCharge(ride, ride.startedAt);
+    if (waitingCharge > 0) {
+      ride.waitingMinutes = waitingMinutes;
+      ride.waitingCharge = waitingCharge;
+      // Billed with the fare, so payment, settlement and receipts all include it.
+      ride.fare = Math.round((Number(ride.fare || 0) + waitingCharge) * 100) / 100;
+    }
   }
 
   if (paymentMethod !== undefined && paymentMethod !== null && String(paymentMethod).trim()) {

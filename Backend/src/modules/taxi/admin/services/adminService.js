@@ -11415,11 +11415,10 @@ export const updateGeneralSettings = async (category, payload) => {
   bizSettings[bizKey] = { ...(bizSettings[bizKey] || {}), ...newValues };
   bizSettings.markModified(bizKey);
   await bizSettings.save();
-  if (category === 'support') {
-    // the public /app-settings/support answer is cached: drop it so the apps see the change right away
-    await invalidateCachedValue('cache:settings:support').catch(() => null);
-    await invalidateCachedValue('cache:public:general_settings:support').catch(() => null);
-  }
+  // Settings are cached for the services (cache:settings:<section>) and the public endpoint: drop both so a
+  // change applies right away.
+  await invalidateCachedValue(`cache:settings:${bizKey}`).catch(() => null);
+  await invalidateCachedValue(`cache:public:general_settings:${category}`).catch(() => null);
   return { settings: bizSettings[bizKey] };
 };
 

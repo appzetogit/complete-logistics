@@ -143,6 +143,22 @@ const TransportRideSettings = () => {
                       type="number" 
                    />
 
+                   <InputField 
+                      label="Arrival Radius at Pickup in Meters (0 = off)" 
+                      name="arrival_radius_meters" 
+                      value={settings.arrival_radius_meters ?? '200'} 
+                      onChange={handleChange} 
+                      type="number" 
+                   />
+
+                   <InputField 
+                      label="Arrival Radius at Drop in Meters (0 = off)" 
+                      name="drop_radius_meters" 
+                      value={settings.drop_radius_meters ?? '300'} 
+                      onChange={handleChange} 
+                      type="number" 
+                   />
+
                    <div className="space-y-1.5">
                       <label className="text-sm font-medium text-gray-700 block ml-0.5">Require Admin Approval to End Rental</label>
                       <select 

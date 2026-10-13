@@ -87,8 +87,16 @@ export const mirrorRideRealtimeState = async (ridePayload = {}) => {
     arrivedAt: ridePayload.arrivedAt || null,
     startedAt: ridePayload.startedAt || null,
     completedAt: ridePayload.completedAt || null,
-    otp: ridePayload.otp || '',
-    pricingSnapshot: ridePayload.pricingSnapshot || null,
+    // Both apps can read this node: no OTP (rider-only) and no commission terms (driver/admin-only).
+    // `null` deletes an OTP an older server version wrote here (update() keeps keys it is not given).
+    otp: null,
+    pricingSnapshot: ridePayload.pricingSnapshot
+      ? {
+          waiting_charge: Number(ridePayload.pricingSnapshot.waiting_charge ?? 0),
+          free_waiting_before: Number(ridePayload.pricingSnapshot.free_waiting_before ?? 0),
+          free_waiting_after: Number(ridePayload.pricingSnapshot.free_waiting_after ?? 0),
+        }
+      : null,
     driverPaymentCollection: ridePayload.driverPaymentCollection || null,
     feedback: ridePayload.feedback || null,
     pickup: pointSnapshot(ridePayload.pickupLocation, ridePayload.pickupAddress || ''),

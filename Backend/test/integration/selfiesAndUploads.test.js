@@ -48,7 +48,7 @@ const bookGoods = async ({ vehicle, rider }) => {
 
 const payAdvance = (rider, rideId) => t.api('POST', '/deliveries/advance/wallet', { token: rider.token, body: { rideId } });
 const loadRide = (rideId) => t.m.Ride.findById(rideId).lean();
-const patchStatus = (driver, rideId, body) => t.api('PATCH', `/rides/${rideId}/status`, { token: driver.token, body });
+const patchStatus = (driver, rideId, body) => t.patchRideStatus(rideId, { token: driver.token, body });
 
 // ------------------------------------------------------------------ C3
 test('C3: a pickup close to the zone edge still searches the full radius', async () => {

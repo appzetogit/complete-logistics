@@ -106,7 +106,7 @@ test('fully prepaid ride: pay -> dispatch -> completes with nothing due; driver 
 
   await t.acceptRide(delivery.rideId, ctx.driver.driver._id);
   for (const status of ['arriving', 'goods_loaded', 'started', 'arrived', 'goods_delivered', 'completed']) {
-    const res = await t.api('PATCH', `/rides/${delivery.rideId}/status`, {
+    const res = await t.patchRideStatus(delivery.rideId, {
       token: ctx.driver.token, body: { status, proofImageUrl: 'https://example.com/p.jpg' },
     });
     assert.equal(res.status, 200, `${status}: ${res.text}`);

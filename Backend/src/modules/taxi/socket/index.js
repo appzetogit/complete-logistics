@@ -76,6 +76,8 @@ const onAsync = (socket, handler) => async (payload = {}) => {
   } catch (error) {
     socket.emit('errorMessage', {
       message: error.message || 'Socket operation failed',
+      // Same machine-readable reason as the REST error body (e.g. OUT_OF_ARRIVAL_RADIUS, INVALID_OTP).
+      ...(error?.details?.code ? { code: error.details.code, details: error.details } : {}),
     });
   }
 };

@@ -78,6 +78,10 @@ export const createDefaultBusinessSettings = () => ({
     goods_selfie_required: '0',
     // 1 = the driver ride-request push is data-only on Android (app shows its own full-screen alert); 0 = normal notification.
     ride_request_push_data_only: '1',
+    // The driver must be this close (meters) to the pickup to mark "arrived at pickup", and to the drop to mark
+    // "arrived at drop" / complete. 0 turns the check off.
+    arrival_radius_meters: '200',
+    drop_radius_meters: '300',
     trip_dispatch_type: '1',
     maximum_time_for_accept_reject_bidding_ride: '60',
     maximum_time_for_find_drivers_for_bitting_ride: '300',

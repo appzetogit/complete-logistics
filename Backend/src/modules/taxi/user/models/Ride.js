@@ -393,6 +393,28 @@ const rideSchema = new mongoose.Schema(
       minlength: 4,
       maxlength: 4,
     },
+    // Wrong start-trip OTPs entered by the driver; after too many the start is locked for a while.
+    otpCheck: {
+      failedAttempts: { type: Number, default: 0 },
+      lockedUntil: { type: Date, default: null },
+    },
+    // Waiting at the pickup beyond the free minutes, billed on top of the fare (set when the trip starts).
+    waitingMinutes: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    waitingCharge: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Distance actually driven between trip start and drop, summed from the driver's GPS points.
+    actualDistanceMeters: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     driverPaymentCollection: {
       provider: {
         type: String,

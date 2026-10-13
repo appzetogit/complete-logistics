@@ -98,7 +98,7 @@ test('cancel puts the ride back to searching, excludes the cancelling driver and
   // B takes it and drives it; A must receive none of that ride's live updates
   await t.acceptRide(rideId, driverB.driver._id);
   const eventsBefore = sockA.events.length;
-  assert.equal((await t.api('PATCH', `/rides/${rideId}/status`, { token: driverB.token, body: { status: 'arriving' } })).status, 200);
+  assert.equal((await t.patchRideStatus(rideId, { token: driverB.token, body: { status: 'arriving' } })).status, 200);
   await sleep(600);
   const leaked = sockA.events.slice(eventsBefore).filter((e) => JSON.stringify(e.payload ?? {}).includes(rideId));
   assert.equal(leaked.length, 0, `old driver still receives ride updates: ${JSON.stringify(leaked.map((e) => e.name))}`);
@@ -121,7 +121,7 @@ test('cancel rules: only own, accepted, not-started, not-future-scheduled rides'
 
   // once the trip has started the driver can no longer cancel
   for (const status of ['arriving', 'started']) {
-    await t.api('PATCH', `/rides/${rideId}/status`, { token: driver.token, body: { status } });
+    await t.patchRideStatus(rideId, { token: driver.token, body: { status } });
   }
   const started = await cancel(driver, rideId);
   assert.equal(started.status, 409);

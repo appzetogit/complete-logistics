@@ -212,7 +212,10 @@ test('the goods booking takes commission from the delivery Set Price', async () 
   const created = await createSetPrice(vehicle, { admin_commission_from_driver: 25, payment_type: ['cash', 'online'] });
   const delivery = await book(await t.factories.user(), vehicle);
   assert.equal(delivery.pricingSnapshot.setPriceId, String(created.body.data._id));
-  assert.equal(delivery.pricingSnapshot.admin_commission_from_driver, 25);
+  // the commission terms are stored on the ride, but the rider's booking response does not show them
+  assert.equal(delivery.pricingSnapshot.admin_commission_from_driver, undefined);
+  const stored = await t.m.Ride.findById(delivery.rideId).lean();
+  assert.equal(stored.pricingSnapshot.admin_commission_from_driver, 25);
 });
 
 test('public vehicle catalog shows the All Zones Set Price rate and refreshes when it changes', async () => {
@@ -327,7 +330,7 @@ test('lifecycle: commission at completion follows the Delivery Set Price, not th
 
   await t.acceptRide(delivery.rideId, driver.driver._id);
   for (const status of ['arriving', 'goods_loaded', 'started', 'arrived', 'goods_delivered', 'completed']) {
-    const res = await t.api('PATCH', `/rides/${delivery.rideId}/status`, {
+    const res = await t.patchRideStatus(delivery.rideId, {
       token: driver.token,
       body: { status, proofImageUrl: 'https://example.com/p.jpg' },
     });

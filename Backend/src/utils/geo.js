@@ -18,6 +18,22 @@ export const normalizePoint = (coordinates, fieldName = 'coordinates') => {
   return [longitude, latitude];
 };
 
+const toRadians = (value) => Number(value) * (Math.PI / 180);
+
+/** Great-circle distance in meters between two [longitude, latitude] points; Infinity when either is invalid. */
+export const distanceMeters = (first, second) => {
+  const [firstLng, firstLat] = Array.isArray(first) ? first.map(Number) : [];
+  const [secondLng, secondLat] = Array.isArray(second) ? second.map(Number) : [];
+  if (![firstLng, firstLat, secondLng, secondLat].every(Number.isFinite)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const deltaLat = toRadians(secondLat - firstLat);
+  const deltaLng = toRadians(secondLng - firstLng);
+  const haversine = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(toRadians(firstLat)) * Math.cos(toRadians(secondLat)) * Math.sin(deltaLng / 2) ** 2;
+  return 2 * 6371000 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+};
+
 export const toPoint = (coordinates, fieldName) => ({
   type: 'Point',
   coordinates: normalizePoint(coordinates, fieldName),

@@ -23,9 +23,12 @@ export const errorHandler = (error, _req, res, _next) => {
     });
   }
 
+  const details = error instanceof ApiError ? error.details : undefined;
   return res.status(statusCode).json({
     success: false,
     message: error.message || 'Internal server error',
-    details: error instanceof ApiError ? error.details : undefined,
+    // Machine-readable reason (e.g. OUT_OF_ARRIVAL_RADIUS, INVALID_OTP) for apps to branch on.
+    ...(details?.code ? { code: details.code } : {}),
+    details,
   });
 };

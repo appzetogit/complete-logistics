@@ -258,6 +258,24 @@ export const bootstrap = async ({ smtpPort = 1 } = {}) => {
     return ride;
   };
 
+  // PATCH /rides/:id/status the way the driver app does it: the driver's position at the pickup or the drop
+  // (the server checks the radius) and, on `started`, the OTP the rider reads out. Pass `coordinates` / `otp` in
+  // the body to override (e.g. to test a far-away driver or a wrong OTP).
+  const PICKUP_STEPS = new Set(['arriving', 'goods_loaded']);
+  const DROP_STEPS = new Set(['arrived', 'goods_delivered', 'completed']);
+  const patchRideStatus = async (rideId, { token, body = {} } = {}) => {
+    const ride = await m.Ride.findById(rideId).select('pickupLocation dropLocation otp').lean();
+    const next = { ...body };
+    if (next.coordinates === undefined && ride) {
+      if (PICKUP_STEPS.has(next.status)) next.coordinates = ride.pickupLocation?.coordinates;
+      if (DROP_STEPS.has(next.status)) next.coordinates = ride.dropLocation?.coordinates;
+    }
+    if (next.status === 'started' && next.otp === undefined && ride?.otp) {
+      next.otp = ride.otp;
+    }
+    return api('PATCH', `/rides/${rideId}/status`, { token, body: next });
+  };
+
   const connectSocket = async (token) => {
     const socket = socketClient(baseUrl, { auth: { token }, transports: ['websocket'], forceNew: true });
     const events = [];
@@ -284,7 +302,7 @@ export const bootstrap = async ({ smtpPort = 1 } = {}) => {
   };
 
   return {
-    api, baseUrl, m, mongoose, tokenFor, factories, setSettings, acceptRide,
+    api, baseUrl, m, mongoose, tokenFor, factories, setSettings, acceptRide, patchRideStatus,
     connectSocket: trackedSocket, rideService, dispatchService, stop,
     locations: { pickup: [75.8577, 22.7196], drop: [75.8777, 22.7396] },
   };

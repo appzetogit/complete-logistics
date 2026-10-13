@@ -23,7 +23,7 @@ const rideBody = (overrides = {}) => ({
 const driveRideToCompletion = async (rideId, driver) => {
   await t.acceptRide(rideId, driver.driver._id);
   for (const status of ['arriving', 'started', 'arrived', 'completed']) {
-    const res = await t.api('PATCH', `/rides/${rideId}/status`, { token: driver.token, body: { status } });
+    const res = await t.patchRideStatus(rideId, { token: driver.token, body: { status } });
     assert.equal(res.status, 200, `status ${status}: ${res.text}`);
   }
 };
@@ -98,7 +98,7 @@ test('free rides: completing the same ride twice counts once (idempotent)', asyn
   const rideId = created.body.data.ride._id;
   await driveRideToCompletion(rideId, driver);
 
-  const again = await t.api('PATCH', `/rides/${rideId}/status`, { token: driver.token, body: { status: 'completed' } });
+  const again = await t.patchRideStatus(rideId, { token: driver.token, body: { status: 'completed' } });
   assert.equal(again.status, 409, 'cannot complete a completed ride');
   const ride = await t.m.Ride.findById(rideId).lean();
   await t.rideService.updateRideLifecycle; // exported, sanity
@@ -158,7 +158,7 @@ test('free rides: goods (parcel) bookings count too and need no advance', async 
 
   await t.acceptRide(delivery.rideId, driver.driver._id);
   for (const status of ['arriving', 'goods_loaded', 'started', 'arrived', 'goods_delivered', 'completed']) {
-    const res = await t.api('PATCH', `/rides/${delivery.rideId}/status`, {
+    const res = await t.patchRideStatus(delivery.rideId, {
       token: driver.token,
       body: { status, proofImageUrl: 'https://example.com/proof.jpg' },
     });

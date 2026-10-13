@@ -14,7 +14,14 @@ import {
 } from '../constants/index.js';
 import { Delivery } from '../user/models/Delivery.js';
 import { Vehicle } from '../admin/models/Vehicle.js';
-import { buildRideCancellation, getRideRoom, resolveSetPriceForRide, withoutParcelSelfies } from './rideService.js';
+import {
+  buildRideCancellation,
+  getRideRoom,
+  resolveSetPriceForRide,
+  RIDE_AUDIENCE,
+  serializeRideRealtime,
+  withoutParcelSelfies,
+} from './rideService.js';
 import { SOCKET_EVENTS } from '../socket/events.js';
 import { getTransportRideSettings, resolveTransportDispatchConfig } from './transportSettingsService.js';
 import { sendPushNotificationToEntities } from './pushNotificationService.js';
@@ -529,6 +536,24 @@ const forfeitGoodsAdvanceForRide = async (ride) => {
 
 export const getUserRoom = (userId) => `user:${userId}`;
 export const getDriverRoom = (driverId) => `driver:${driverId}`;
+
+/**
+ * `ride:state` to each participant in their own view: the rider's has the OTP but no earnings, the driver's has
+ * the earnings but no OTP. (One payload to the shared ride room leaked each side's fields to the other.)
+ * Returns the rider's view.
+ */
+export const emitRideStateToParticipants = (ride) => {
+  const userView = serializeRideRealtime(ride, { audience: RIDE_AUDIENCE.USER });
+  const userId = ride?.userId?._id || ride?.userId;
+  const driverId = ride?.driverId?._id || ride?.driverId;
+  if (userId) {
+    emitToRoom(getUserRoom(userId), SOCKET_EVENTS.RIDE_STATE, userView);
+  }
+  if (driverId) {
+    emitToRoom(getDriverRoom(driverId), SOCKET_EVENTS.RIDE_STATE, serializeRideRealtime(ride, { audience: RIDE_AUDIENCE.DRIVER }));
+  }
+  return userView;
+};
 export const getAdminRoom = () => 'admin:broadcast';
 
 export const setSocketServer = (io) => {
@@ -2104,7 +2129,7 @@ export const notifyRideAccepted = async (ride) => {
     status: populatedRide.status,
     liveStatus: populatedRide.liveStatus,
     acceptedAt: populatedRide.acceptedAt,
-    otp: populatedRide.otp || '',
+    // No OTP here: the driver gets it from the rider at the pickup.
     // Normal, scheduled and bid accepts all end here: tells the driver app to open the selfie screen.
     acceptSelfieRequired: !populatedRide.acceptSelfie?.imageUrl,
   });
