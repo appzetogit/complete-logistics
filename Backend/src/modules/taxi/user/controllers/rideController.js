@@ -43,6 +43,8 @@ import {
 } from '../../services/dispatchService.js';
 import { getTipSettings } from '../../services/appSettingsService.js';
 import { matchDrivers } from '../../services/matchingService.js';
+import { env } from '../../../../config/env.js';
+import { Vehicle } from '../../admin/models/Vehicle.js';
 import { Ride } from '../models/Ride.js';
 import { UserWallet } from '../models/UserWallet.js';
 import { getFreeRidesSummaryForUser } from '../services/freeRideService.js';
@@ -1136,6 +1138,101 @@ export const cancelRide = async (req, res) => {
   });
 };
 
+// A stable, opaque id for a map marker: the same driver keeps the same marker between refreshes, but the
+// real driver id is never exposed.
+const driverMarkerId = (driverId) => crypto
+  .createHmac('sha256', String(env.jwtSecret || 'marker'))
+  .update(`driver-marker:${String(driverId)}`)
+  .digest('hex')
+  .slice(0, 16);
+
+/// What a rider may know about a nearby driver: enough to draw the car on the map and estimate the pickup,
+/// nothing that identifies the person (no name, plate, vehicle details, rating or phone).
+const toPublicDriverMarker = (driver, origin) => {
+  const distanceMeters = calculateDistanceMeters(origin, driver.location?.coordinates || []);
+  const markerId = driverMarkerId(driver._id);
+  return {
+    id: markerId,
+    markerId,
+    vehicleTypeId: driver.vehicleTypeId ? String(driver.vehicleTypeId) : '',
+    vehicleIconType: driver.vehicleIconType || '',
+    location: driver.location?.coordinates ? { type: 'Point', coordinates: driver.location.coordinates } : null,
+    heading: Number.isFinite(Number(driver.heading)) ? Number(driver.heading) : null,
+    distanceMeters,
+    etaMinutes: estimateEtaMinutes(distanceMeters),
+  };
+};
+
+const AVAILABLE_DRIVERS_MAX_DISTANCE = 25000;
+
+const parseAvailabilityQuery = (query) => {
+  const latitude = Number(query.lat);
+  const longitude = Number(query.lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+    throw new ApiError(400, 'lat and lng are required');
+  }
+  const distance = Number(query.maxDistance);
+  return {
+    origin: [longitude, latitude],
+    maxDistance: Number.isFinite(distance) && distance > 0 ? Math.min(distance, AVAILABLE_DRIVERS_MAX_DISTANCE) : AVAILABLE_DRIVERS_MAX_DISTANCE,
+    serviceLocationId: query.service_location_id && mongoose.Types.ObjectId.isValid(query.service_location_id)
+      ? new mongoose.Types.ObjectId(query.service_location_id)
+      : null,
+  };
+};
+
+// Drivers for one vehicle type; when the service location has none, any zone (as the booking flow does).
+const matchAvailableDrivers = async ({ origin, maxDistance, serviceLocationId, vehicleTypeId, limit }) => {
+  const options = { maxDistance, limit, vehicleTypeId };
+  let result = await matchDrivers(origin, { ...options, serviceLocationId });
+  if (!result.drivers.length && serviceLocationId) {
+    result = await matchDrivers(origin, { ...options, serviceLocationId: null });
+  }
+  return result.drivers;
+};
+
+/**
+ * GET /rides/available-drivers/summary?lat=&lng=[&vehicleTypeIds=a,b][&service_location_id=][&transport_type=]
+ * Every vehicle type in one call (the app used to make one call per type): the count, the closest driver's
+ * distance/ETA and the map markers. Markers only: no names, plates or phone numbers.
+ */
+export const listAvailableDriversSummary = async (req, res) => {
+  const { origin, maxDistance, serviceLocationId } = parseAvailabilityQuery(req.query);
+  const requested = String(req.query.vehicleTypeIds || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => mongoose.Types.ObjectId.isValid(id));
+  const transportType = String(req.query.transport_type || '').trim().toLowerCase();
+
+  const vehicleFilter = requested.length
+    ? { _id: { $in: requested.slice(0, 30) } }
+    : { status: 1, ...(transportType ? { transport_type: { $in: [transportType, 'both'] } } : {}) };
+  const vehicles = await Vehicle.find(vehicleFilter).select('_id').limit(30).lean();
+
+  const perType = await Promise.all(vehicles.map(async (vehicle) => {
+    const drivers = await matchAvailableDrivers({
+      origin,
+      maxDistance,
+      serviceLocationId,
+      vehicleTypeId: String(vehicle._id),
+      limit: 20,
+    });
+    const markers = drivers.map((driver) => toPublicDriverMarker(driver, origin))
+      .sort((a, b) => a.distanceMeters - b.distanceMeters);
+    return [String(vehicle._id), {
+      totalDrivers: markers.length,
+      closestDriverDistanceMeters: markers[0]?.distanceMeters ?? null,
+      closestDriverEtaMinutes: markers[0]?.etaMinutes ?? null,
+      drivers: markers,
+    }];
+  }));
+
+  res.json({
+    success: true,
+    data: { byVehicleType: Object.fromEntries(perType) },
+  });
+};
+
 export const listAvailableDrivers = async (req, res) => {
   const { vehicleTypeId, lat, lng, maxDistance, limit = 30, service_location_id, transport_type } = req.query;
   const latitude = Number(lat);
@@ -1179,26 +1276,10 @@ export const listAvailableDrivers = async (req, res) => {
 
   const { drivers } = matchResult;
 
-  const enrichedDrivers = drivers.map((driver) => {
-    const distanceMeters = calculateDistanceMeters([longitude, latitude], driver.location?.coordinates || []);
-    const etaMinutes = estimateEtaMinutes(distanceMeters);
-
-    return {
-      id: driver._id,
-      name: driver.name,
-      vehicleTypeId: driver.vehicleTypeId,
-      vehicleType: driver.vehicleType,
-      vehicleIconType: driver.vehicleIconType,
-      vehicleNumber: driver.vehicleNumber,
-      vehicleColor: driver.vehicleColor,
-      vehicleMake: driver.vehicleMake,
-      vehicleModel: driver.vehicleModel,
-      rating: driver.rating,
-      location: driver.location,
-      distanceMeters,
-      etaMinutes,
-    };
-  });
+  // Map markers only: who the drivers are (name, plate, vehicle, rating) is not the rider's business.
+  const enrichedDrivers = drivers
+    .map((driver) => toPublicDriverMarker(driver, [longitude, latitude]))
+    .sort((a, b) => a.distanceMeters - b.distanceMeters);
 
   const closestDriver = enrichedDrivers[0] || null;
   const { allowedPaymentMethods } = await getAllowedRidePaymentMethodsForPricing({

@@ -97,6 +97,7 @@ import {
 } from "../services/onboardingService.js";
 import {
   buildDriverTodaySummaryFromDocument,
+  clampOnlineSessionEnd,
   syncDriverTodaySummaryDocument,
 } from "../services/driverTodaySummaryService.js";
 import {
@@ -1194,7 +1195,8 @@ const appendDailyActivityMinutes = (dailyActivity = [], dateKey, minutes) => {
 
 const mergeOnlineSessionIntoTracking = (tracking = {}, sessionStart, sessionEnd = new Date()) => {
   const start = sessionStart ? new Date(sessionStart) : null;
-  const end = sessionEnd ? new Date(sessionEnd) : null;
+  // a session whose app went silent ends shortly after its last location update
+  const end = sessionEnd ? clampOnlineSessionEnd(tracking, sessionStart, sessionEnd) : null;
 
   if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
     return {
@@ -2923,6 +2925,7 @@ export const goOnline = async (req, res) => {
       incentiveTracking: {
         ...trackingBeforeOnline,
         currentOnlineStartedAt: new Date(),
+        lastSeenAt: new Date(),
         claimedRewards: pruneClaimedRewards(trackingBeforeOnline?.claimedRewards),
       },
       todaySummary: nextTodaySummary,

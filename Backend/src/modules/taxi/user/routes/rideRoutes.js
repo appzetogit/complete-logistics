@@ -20,6 +20,7 @@ import {
   getRideById,
   listMyRides,
   listAvailableDrivers,
+  listAvailableDriversSummary,
   payRideCompletionWithWallet,
   submitAcceptSelfie,
   submitRiderRating,
@@ -41,6 +42,8 @@ rideRouter.get('/app-settings/support', asyncHandler(async (_req, res) => {
   res.json({ success: true, data: await getSupportSettings() });
 }));
 rideRouter.get('/available-drivers', availableDriversRateLimit, asyncHandler(listAvailableDrivers));
+// All vehicle types in one call (markers, counts, closest ETA). Logged-in riders only.
+rideRouter.get('/available-drivers/summary', authenticate(['user']), availableDriversRateLimit, asyncHandler(listAvailableDriversSummary));
 rideRouter.get('/active/me', authenticate(['user', 'driver']), asyncHandler(getMyActiveRide));
 rideRouter.get('/:rideId/cancel-preview', authenticate(['user']), asyncHandler(getRideCancelPreview));
 rideRouter.patch('/:rideId/cancel', authenticate(['user']), asyncHandler(cancelRide));

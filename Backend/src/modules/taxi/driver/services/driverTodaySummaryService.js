@@ -11,12 +11,29 @@ const normalizeNumber = (value) => {
   return Number.isFinite(next) ? next : 0;
 };
 
+// Minutes since IST midnight (independent of the server's own time zone).
 const getElapsedIstDayMinutes = (value = new Date()) => {
-  const istNow = toIstDate(value);
-  return Math.max(0, Math.round(
-    (istNow.getTime() - new Date(istNow.getFullYear(), istNow.getMonth(), istNow.getDate()).getTime()) /
-      (60 * 1000),
-  ));
+  const istMs = toIstDate(value).getTime();
+  return Math.max(0, Math.round((istMs % (24 * 60 * 60 * 1000)) / (60 * 1000)));
+};
+
+// An online session counts as active only while the app is alive: once it goes silent (killed, no network, phone
+// off) the session ends this long after the last location update, even if the driver never pressed "offline".
+export const ONLINE_SESSION_SILENCE_GRACE_MS = 10 * 60 * 1000;
+
+/** The end of an online session: `end`, or shortly after the app's last sign of life if it went silent before. */
+export const clampOnlineSessionEnd = (tracking = {}, sessionStart, end = new Date()) => {
+  const endDate = end ? new Date(end) : new Date();
+  const lastSeen = tracking?.lastSeenAt ? new Date(tracking.lastSeenAt) : null;
+  if (!lastSeen || Number.isNaN(lastSeen.getTime())) {
+    return endDate; // no heartbeat recorded yet (older app builds): as before
+  }
+  const silentFrom = new Date(lastSeen.getTime() + ONLINE_SESSION_SILENCE_GRACE_MS);
+  const start = sessionStart ? new Date(sessionStart) : null;
+  if (silentFrom >= endDate) {
+    return endDate;
+  }
+  return start && silentFrom < start ? start : silentFrom;
 };
 
 const mergeSummary = (summary = {}, dateKey) => {
@@ -75,7 +92,7 @@ const appendDailyActivityMinutes = (dailyActivity = [], dateKey, minutes) => {
 
 export const mergeOnlineSessionIntoTracking = (tracking = {}, sessionStart, sessionEnd = new Date()) => {
   const start = sessionStart ? new Date(sessionStart) : null;
-  const end = sessionEnd ? new Date(sessionEnd) : null;
+  const end = sessionEnd ? clampOnlineSessionEnd(tracking, sessionStart, sessionEnd) : null;
 
   if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
     return {

@@ -97,7 +97,8 @@ const serializeSingleVehicle = (vehicle) => (
     ? {
         id: String(vehicle._id),
         name: String(vehicle.name || '').trim(),
-        image: String(vehicle.image || '').trim(),
+        // URL only: a base64 vehicle image here made /users/me several MB
+        image: String(vehicle.image || '').trim().startsWith('data:') ? '' : String(vehicle.image || '').trim(),
         icon_types: String(vehicle.icon_types || '').trim(),
       }
     : null

@@ -5251,6 +5251,9 @@ export const createDriver = async (payload = {}, currentAdmin = null) => {
     vehicleTypeId && mongoose.isValidObjectId(vehicleTypeId)
       ? await Vehicle.findById(vehicleTypeId).lean()
       : null;
+  if (vehicleTypeId && !vehicleRecord) {
+    throw new ApiError(400, 'Vehicle type not found in the catalog');
+  }
   const normalizedVehicleInput = String(
     vehicleRecord?.name ||
     payload.vehicle_type ||
@@ -5264,7 +5267,8 @@ export const createDriver = async (payload = {}, currentAdmin = null) => {
     normalizedVehicleInput,
     vehicleRecord,
   );
-  const vehicleIconType = vehicleType;
+  // The map icon follows the catalog vehicle (a "car" driver must not get the truck icon).
+  const vehicleIconType = vehicleRecord?.icon_types || vehicleType;
   const profilePicture = String(payload.profile_picture || payload.profilePicture || '').trim();
   const status = String(
     payload.status || (payload.approve === false ? 'pending' : 'approved'),
@@ -5368,6 +5372,15 @@ export const updateDriver = async (id, payload, currentAdmin = null) => {
   if (vehicleTypeId !== undefined) {
     update.vehicleTypeId =
       vehicleTypeId && mongoose.isValidObjectId(vehicleTypeId) ? toObjectId(vehicleTypeId) : null;
+    if (vehicleTypeId) {
+      // Type and icon come from the catalog vehicle, so they can never disagree with it.
+      const catalogVehicle = update.vehicleTypeId ? await Vehicle.findById(update.vehicleTypeId).lean() : null;
+      if (!catalogVehicle) {
+        throw new ApiError(400, 'Vehicle type not found in the catalog');
+      }
+      update.vehicleType = normalizeImportVehicleType(String(catalogVehicle.name || '').trim(), catalogVehicle);
+      update.vehicleIconType = catalogVehicle.icon_types || update.vehicleType;
+    }
   }
 
   if (payload.vehicle_make !== undefined || payload.vehicleMake !== undefined || payload.car_make !== undefined) {
@@ -6847,6 +6860,37 @@ export const getVehicleTypeById = async (id) => {
   };
 };
 
+const VEHICLE_IMAGE_FIELDS = ['image', 'icon', 'map_icon'];
+
+/**
+ * Vehicle types saved before uploads became files still hold base64 `data:` images (megabytes each, sent to every
+ * app on every catalog load). Move each one to the uploads folder and keep only its URL, once; later reads get
+ * the URL. A value that cannot be converted is dropped rather than sent.
+ */
+const healInlineVehicleImages = async (items = []) => {
+  for (const item of items) {
+    const $set = {};
+    for (const field of VEHICLE_IMAGE_FIELDS) {
+      if (typeof item[field] === 'string' && item[field].trim().startsWith('data:')) {
+        const url = await storeDataUrlImage(item[field], 'vehicles').catch(() => '');
+        $set[field] = url;
+        item[field] = url;
+      }
+    }
+    if (Object.keys($set).length) {
+      await Vehicle.updateOne({ _id: item._id }, { $set }).catch((error) => {
+        console.error('Failed to save converted vehicle image', String(item._id), error?.message || error);
+      });
+    }
+  }
+  return items;
+};
+
+const withoutInlineImage = (value) => {
+  const text = String(value || '').trim();
+  return text.startsWith('data:') ? '' : text;
+};
+
 export const listPublicVehicleCatalog = async () => {
   if (publicVehicleCatalogCache.value && publicVehicleCatalogCache.expiresAt > Date.now()) {
     return publicVehicleCatalogCache.value;
@@ -6856,6 +6900,7 @@ export const listPublicVehicleCatalog = async () => {
     .select('name short_description description transport_type dispatch_type icon_types category delivery_category delivery_distance_pricing service_tax admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner capacity load_capacity_ton capacity_label load_height_options extra_options price_per_km taxi_eta_minutes taxi_sequence delivery_eta_minutes delivery_sequence image icon map_icon status active')
     .sort({ createdAt: -1 })
     .lean();
+  await healInlineVehicleImages(items);
 
   const catalogRows = items.map((item) => ({
     id: String(item._id),
@@ -6873,8 +6918,9 @@ export const listPublicVehicleCatalog = async () => {
     ...normalizeVehicleCommissionConfig(item),
     ...normalizeVehicleDisplayFields(item),
     capacity: Number(item.capacity || 0),
-    image: item.image || '',
-    map_icon: item.map_icon || item.icon || item.image || '',
+    // URLs only: a base64 image here made the catalog ~41 MB
+    image: withoutInlineImage(item.image),
+    map_icon: withoutInlineImage(item.map_icon) || withoutInlineImage(item.icon) || withoutInlineImage(item.image),
     status: item.status ?? 1,
     active: item.active !== false && Number(item.status ?? 1) !== 0,
   }));

@@ -46,7 +46,13 @@ const attachResolvedAuth = (req, payload) => {
 // building a full document per request is pure overhead on every endpoint.
 // Mirrors what socket/middleware/socketAuth.js already does.
 const AUTH_ENTITY_FIELDS =
-  '_id active admin_type approve deletedAt email isActive name permissions poolingEnabled role service_location_ids status zone_ids';
+  '_id active admin_type approve deletedAt email isActive name permissions poolingEnabled role service_location_ids status tokensRevokedAt zone_ids';
+
+/** True when the token was issued before the account logged out (JWT `iat` is in whole seconds). */
+export const isTokenRevoked = (payload, entity) => {
+  const revokedAt = entity?.tokensRevokedAt ? new Date(entity.tokensRevokedAt).getTime() : 0;
+  return Boolean(revokedAt) && Number(payload?.iat || 0) < Math.floor(revokedAt / 1000);
+};
 
 export const authenticate = (allowedRoles = [], options = {}) => async (req, _res, next) => {
   try {
@@ -84,6 +90,10 @@ export const authenticate = (allowedRoles = [], options = {}) => async (req, _re
       (entity.deletedAt || entity.isActive === false || entity.active === false)
     ) {
       throw new ApiError(401, 'User account is not active');
+    }
+
+    if (normalizedRole === 'user' && isTokenRevoked(payload, entity)) {
+      throw new ApiError(401, 'You have logged out. Please log in again.', { code: 'SESSION_ENDED' });
     }
 
     if (

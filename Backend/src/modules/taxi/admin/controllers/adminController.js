@@ -692,9 +692,11 @@ export const getVehicleTypeCatalog = asyncHandler(async (_req, res) =>
 export const getVehicleTypeById = asyncHandler(async (req, res) =>
   ok(res, await adminService.getVehicleTypeById(req.params.id)),
 );
-export const getPublicVehicleTypeCatalog = asyncHandler(async (_req, res) =>
-  ok(res, await adminService.listPublicVehicleCatalog()),
-);
+export const getPublicVehicleTypeCatalog = asyncHandler(async (_req, res) => {
+  // Changes rarely; let the apps and any proxy reuse it for a minute.
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  return ok(res, await adminService.listPublicVehicleCatalog());
+});
 export const getPublicRentalVehicleCatalog = asyncHandler(async (_req, res) =>
   ok(res, { results: await adminService.listPublicRentalVehicleCatalog() }),
 );

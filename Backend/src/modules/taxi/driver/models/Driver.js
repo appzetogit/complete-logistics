@@ -490,6 +490,12 @@ const driverSchema = new mongoose.Schema(
         type: Date,
         default: null,
       },
+      // Last sign of life from the driver app (location updates over the socket). An online session whose app
+      // went silent stops counting as active time shortly after this.
+      lastSeenAt: {
+        type: Date,
+        default: null,
+      },
       dailyActivity: {
         type: [
           {

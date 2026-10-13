@@ -38,6 +38,7 @@ import {
   registerUser,
   requestAccountDeletion,
   saveUserFcmToken,
+  logoutUser,
   searchBuses,
   signupUser,
   startUserOtpRequest,
@@ -82,6 +83,30 @@ userRouter.get('/settings/:category', asyncHandler(getGeneralSettingsCategory));
 userRouter.get('/intercity-packages', asyncHandler(getIntercityPackageCatalog));
 userRouter.get('/goods-types', asyncHandler(getGoodsTypes));
 userRouter.get('/vehicle-types', asyncHandler(getPublicVehicleTypeCatalog));
+// Home-screen banners (active, newest first) and the map marker icon per vehicle type.
+userRouter.get('/banners', asyncHandler(async (_req, res) => {
+  const { listPublicBanners } = await import('../../admin/promotions/services/promotionsService.js');
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.json({ success: true, data: { results: await listPublicBanners() } });
+}));
+userRouter.get('/vehicle-map-icons', asyncHandler(async (_req, res) => {
+  const { listPublicVehicleCatalog } = await import('../../admin/services/adminService.js');
+  const catalog = await listPublicVehicleCatalog();
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.json({
+    success: true,
+    data: {
+      results: (catalog.results || []).map((vehicle) => ({
+        vehicleTypeId: String(vehicle.id || vehicle._id),
+        name: vehicle.name || '',
+        transportType: vehicle.transport_type || 'taxi',
+        iconType: vehicle.icon_types || 'car',
+        mapIconUrl: vehicle.map_icon || '',
+        imageUrl: vehicle.image || '',
+      })),
+    },
+  });
+}));
 userRouter.get('/set-prices', asyncHandler(getSetPrices));
 userRouter.get('/zones', asyncHandler(getZones));
 userRouter.get('/rental-vehicles', asyncHandler(getPublicRentalVehicleCatalog));
@@ -101,6 +126,7 @@ userRouter.post('/auth/send-otp', otpSendRateLimit, asyncHandler(startUserOtpReq
 userRouter.post('/auth/verify-otp', otpVerifyRateLimit, asyncHandler(verifyUserOtpRequest));
 userRouter.post('/otp-login', otpVerifyRateLimit, asyncHandler(verifyUserPhoneForOtpLogin));
 userRouter.post('/fcm-token', authenticate(['user']), asyncHandler(saveUserFcmToken));
+userRouter.post('/logout', authenticate(['user']), asyncHandler(logoutUser));
 userRouter.get('/me', authenticate(['user']), asyncHandler(getCurrentUser));
 userRouter.patch('/me', authenticate(['user']), asyncHandler(updateCurrentUser));
 userRouter.get('/subscriptions/plans', authenticate(['user']), asyncHandler(getAvailableSubscriptionPlans));

@@ -1892,6 +1892,16 @@ export const verifyUserPhoneForOtpLogin = async (req, res) => {
   });
 };
 
+/// POST /users/logout: this phone stops getting pushes and the login token stops working (every token issued
+/// before now, on any device, is refused from here on).
+export const logoutUser = async (req, res) => {
+  await User.updateOne(
+    { _id: req.auth.sub },
+    { $set: { fcmTokenMobile: '', fcmTokenWeb: '', tokensRevokedAt: new Date() } },
+  );
+  res.json({ success: true, data: { loggedOut: true } });
+};
+
 export const saveUserFcmToken = async (req, res) => {
   const user = await User.findById(req.auth?.sub);
 

@@ -589,6 +589,28 @@ export const listBanners = async ({ page = 1, limit = 50, active }) => {
   };
 };
 
+/// Home-screen banners for the user app: active ones only, newest first, URLs only.
+export const listPublicBanners = async () => {
+  const items = await Banner.find({ active: { $ne: false } })
+    .select('title image link_type external_link deep_link redirect_url createdAt')
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .lean();
+  return items
+    .filter((item) => item.image && !String(item.image).startsWith('data:'))
+    .map((item, index) => ({
+      id: String(item._id),
+      title: item.title || '',
+      imageUrl: item.image,
+      linkType: item.link_type || 'external_link',
+      deepLink: item.deep_link || '',
+      externalLink: item.external_link || '',
+      url: item.redirect_url || item.external_link || item.deep_link || '',
+      order: index + 1,
+      active: true,
+    }));
+};
+
 export const createBanner = async (payload) => {
   const normalizedPayload = await normalizeBannerPayload(payload);
   const banner = await Banner.create(normalizedPayload);

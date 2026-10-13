@@ -29,6 +29,9 @@ export const createDelivery = async (req, res) => {
     loadHeightKey,
     extraKeys,
     advancePercent,
+    // road distance / time from the app's maps route (checked for plausibility on the server)
+    estimatedDistanceMeters: req.body.estimatedDistanceMeters,
+    estimatedDurationMinutes: req.body.estimatedDurationMinutes,
   });
 
   res.status(201).json({
@@ -49,6 +52,8 @@ export const quoteDelivery = async (req, res) => {
     extraKeys,
     parcel,
     userId: req.auth.sub,
+    estimatedDistanceMeters: req.body.estimatedDistanceMeters,
+    estimatedDurationMinutes: req.body.estimatedDurationMinutes,
   });
 
   res.json({

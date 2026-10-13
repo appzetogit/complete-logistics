@@ -152,6 +152,11 @@ const userSchema = new mongoose.Schema(
         default: null,
       },
     },
+    // Tokens issued before this moment are no longer accepted (set by logout).
+    tokensRevokedAt: {
+      type: Date,
+      default: null,
+    },
     fcmTokenWeb: {
       type: String,
       default: '',

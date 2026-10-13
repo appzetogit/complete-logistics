@@ -111,7 +111,11 @@ export const configureTaxiSocketServer = async (httpServer) => {
     socket.join(getSupportRoleRoom(identity.role));
 
     if (identity.role === 'driver') {
-      await Driver.updateOne({ _id: identity.sub }, { socketId: socket.id });
+      // Not awaited: every handler below must be registered in this same tick. Awaiting a DB write here
+      // dropped whatever the app sent right after connecting (e.g. acceptRide from a tapped push).
+      Driver.updateOne({ _id: identity.sub }, { socketId: socket.id }).catch((error) => {
+        console.error('Failed to save driver socket id', identity.sub, error?.message || error);
+      });
       const previousDriverState = driverLocationState.get(identity.sub) || {};
       driverLocationState.set(identity.sub, {
         ...previousDriverState,
@@ -231,6 +235,8 @@ export const configureTaxiSocketServer = async (httpServer) => {
             socketId: socket.id,
             location: toPoint(normalizedCoords, 'coordinates'),
             zoneId: zone?._id || null,
+            // heartbeat: an online session only counts as active time while the app keeps reporting
+            'incentiveTracking.lastSeenAt': new Date(),
           });
         }
 
@@ -299,42 +305,64 @@ export const configureTaxiSocketServer = async (httpServer) => {
       }),
     );
 
-    socket.on(
-      'acceptRide',
-      onAsync(socket, async ({ rideId, selfieUrl }) => {
-        if (identity.role !== 'driver' || !rideId) {
-          return;
-        }
+    // Accept: the driver hears back as soon as the accept is committed (`rideAccepted`, and the optional ack
+    // callback); the rider and the other drivers are told in the background. A failed accept answers with
+    // `rideAcceptFailed { rideId, reason, code }` (plus the generic `errorMessage` older builds listen to).
+    socket.on('acceptRide', async (payload = {}, ack) => {
+      const reply = typeof ack === 'function' ? ack : () => {};
+      const { rideId, selfieUrl } = payload || {};
+      if (identity.role !== 'driver' || !rideId) {
+        reply({ ok: false, code: 'NOT_ALLOWED' });
+        return;
+      }
 
+      let ride;
+      try {
         // Selfie is optional during rollout so drivers on the old app build can still
         // accept rides. Once all drivers are on the new build, reject a missing/invalid
         // URL instead of passing an empty string through.
         const safeSelfieUrl = String(selfieUrl || '').trim();
         if (safeSelfieUrl && !/^https:\/\//i.test(safeSelfieUrl)) {
-          throw new ApiError(400, 'Selfie image URL is invalid');
+          throw new ApiError(400, 'Selfie image URL is invalid', { code: 'INVALID_SELFIE_URL' });
         }
 
         // First successful transaction wins; later accepts are rejected by the service layer.
-        const ride = await acceptRideAssignment({ rideId, driverId: identity.sub, selfieUrl: safeSelfieUrl });
-        joinRideRoom(socket, ride._id);
-        await notifyRideAccepted(ride);
+        ride = await acceptRideAssignment({ rideId, driverId: identity.sub, selfieUrl: safeSelfieUrl });
+      } catch (error) {
+        const statusCode = Number(error?.statusCode || 500);
+        const code = error?.details?.code
+          || (statusCode === 409 || statusCode === 404 ? 'RIDE_NOT_AVAILABLE'
+            : statusCode === 403 ? 'NOT_ALLOWED'
+              : statusCode === 400 ? 'INVALID_REQUEST'
+                : 'ACCEPT_FAILED');
+        const failure = { rideId: String(rideId), reason: error?.message || 'Could not accept the ride', code };
+        socket.emit('rideAcceptFailed', failure);
+        socket.emit('errorMessage', { message: failure.reason, code });
+        reply({ ok: false, ...failure });
+        return;
+      }
 
-        const acceptedPayload = {
-          rideId: String(ride._id),
-          room: getRideRoom(ride._id),
-          status: ride.status,
-          liveStatus: ride.liveStatus,
-          acceptedAt: ride.acceptedAt,
-        };
+      joinRideRoom(socket, ride._id);
+      const acceptedPayload = {
+        rideId: String(ride._id),
+        room: getRideRoom(ride._id),
+        status: ride.status,
+        liveStatus: ride.liveStatus,
+        acceptedAt: ride.acceptedAt,
+        acceptSelfieRequired: !ride.acceptSelfie?.imageUrl,
+      };
+      reply({ ok: true, ...acceptedPayload });
+      socket.emit('rideAccepted', acceptedPayload);
+      socket.emit(SOCKET_EVENTS.RIDE_STATE, acceptedPayload);
+      socket.emit(SOCKET_EVENTS.RIDE_JOINED, {
+        rideId: String(ride._id),
+        room: getRideRoom(ride._id),
+      });
 
-        socket.emit('rideAccepted', acceptedPayload);
-        socket.emit(SOCKET_EVENTS.RIDE_STATE, acceptedPayload);
-        socket.emit(SOCKET_EVENTS.RIDE_JOINED, {
-          rideId: String(ride._id),
-          room: getRideRoom(ride._id),
-        });
-      }),
-    );
+      notifyRideAccepted(ride).catch((error) => {
+        console.error('Failed to notify the rider about an accepted ride', String(ride._id), error?.message || error);
+      });
+    });
 
     socket.on(
       'submitRideBid',

@@ -1558,7 +1558,8 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
       }
     : null,
   vehicleIconType: ride.vehicleIconType || '',
-  vehicleIconUrl: ride.vehicleIconUrl || '',
+  // URL only (older rides copied a base64 icon from the vehicle)
+  vehicleIconUrl: isDataUrl(ride.vehicleIconUrl) ? '' : (ride.vehicleIconUrl || ''),
   pickupLocation: ride.pickupLocation,
   pickupAddress: ride.pickupAddress || '',
   dropLocation: ride.dropLocation,
@@ -2308,13 +2309,16 @@ export const updateRideLifecycle = async ({
     await consumeFreeRide({ ride }).catch((error) => {
       console.error('Failed to count free ride', String(ride._id), error?.message || error);
     });
-    const settledRide = await Ride.findById(ride._id).select('completedAt driverEarnings estimatedDistanceMeters');
+    const settledRide = await Ride.findById(ride._id).select('completedAt driverEarnings estimatedDistanceMeters actualDistanceMeters');
 
     await incrementDriverTodaySummaryForCompletedRide({
       driverId,
       completedAt: settledRide?.completedAt || ride.completedAt,
       driverEarnings: settledRide?.driverEarnings,
-      distanceMeters: settledRide?.estimatedDistanceMeters,
+      // what was really driven when the GPS trail has it, else the planned route
+      distanceMeters: Number(settledRide?.actualDistanceMeters) > 0
+        ? settledRide.actualDistanceMeters
+        : settledRide?.estimatedDistanceMeters,
     });
 
     await processCompletedRideReferralReward(ride);
@@ -2370,21 +2374,45 @@ export const appendRideMessage = async ({ rideId, role, senderId, message }) => 
   };
 };
 
+// GPS points closer than this are jitter, and a jump faster than this is a bad fix: neither adds distance.
+const TRAVEL_MIN_STEP_METERS = 3;
+const TRAVEL_MAX_SPEED_MPS = 100;
+
+/**
+ * Meters to add to the ride's driven distance for a move from the last saved point to `nextCoords`. Only while
+ * the trip is running (started), and never for jitter or impossible jumps.
+ */
+const travelledStepMeters = (previous, nextCoords, now) => {
+  if (previous?.liveStatus !== RIDE_LIVE_STATUS.STARTED) return 0;
+  const last = previous.lastDriverLocation;
+  if (!Array.isArray(last?.coordinates) || last.coordinates.length !== 2 || !last.updatedAt) return 0;
+  const meters = distanceMeters(last.coordinates, nextCoords);
+  if (!Number.isFinite(meters) || meters < TRAVEL_MIN_STEP_METERS) return 0;
+  const seconds = Math.max(0.5, (now.getTime() - new Date(last.updatedAt).getTime()) / 1000);
+  return meters / seconds > TRAVEL_MAX_SPEED_MPS ? 0 : meters;
+};
+
 export const updateRideDriverLocation = async ({ rideId, driverId, coordinates, heading = null, speed = null }) => {
   const normalizedCoords = normalizePoint(coordinates, 'coordinates');
+  const now = new Date();
   const nextDriverLocation = {
     type: 'Point',
     coordinates: normalizedCoords,
     heading: Number.isFinite(Number(heading)) ? Number(heading) : null,
     speed: Number.isFinite(Number(speed)) ? Number(speed) : null,
-    updatedAt: new Date(),
+    updatedAt: now,
   };
+  const previous = await Ride.findOne({ _id: rideId, driverId })
+    .select('liveStatus lastDriverLocation')
+    .lean();
+  const stepMeters = travelledStepMeters(previous, normalizedCoords, now);
   const ride = await Ride.findOneAndUpdate(
     { _id: rideId, driverId },
     {
       $set: {
         lastDriverLocation: nextDriverLocation,
       },
+      ...(stepMeters > 0 ? { $inc: { actualDistanceMeters: Math.round(stepMeters * 10) / 10 } } : {}),
     },
     {
       returnDocument: 'after',

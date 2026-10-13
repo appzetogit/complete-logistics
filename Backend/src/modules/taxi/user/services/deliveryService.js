@@ -162,6 +162,36 @@ const resolveDetentionTerms = (pricing = {}) => ({
 // `pricing` (base price / base distance / distance price) and `serviceTaxPercentage`
 // come from resolveDeliveryPricing, i.e. Set Price first. The vehicle type still
 // supplies the rider-selectable load heights, extras and the detention terms.
+// A road route is never shorter than the straight line, and rarely more than a few times longer: outside these
+// bounds the distance the app sent is not trusted and the straight line is used instead.
+const ROUTE_MIN_FACTOR = 0.95;
+const ROUTE_MAX_FACTOR = 4;
+const ROUTE_MAX_SLACK_METERS = 2000; // short trips can detour a lot relative to their length
+const AVERAGE_GOODS_SPEED_KMPH = 22;
+
+/**
+ * The trip distance for a goods booking: the road distance the app sent (from its maps route) when it is
+ * plausible for these two points, else the straight line. Duration: the app's if sent, else from the distance.
+ * The quote and the booking both use this, so the rider is charged what they were quoted.
+ */
+export const resolveGoodsTripEstimate = ({ pickupCoords, dropCoords, estimatedDistanceMeters, estimatedDurationMinutes }) => {
+  const straightMeters = Math.max(0, calculateDistanceKm(pickupCoords, dropCoords) * 1000);
+  const routeMeters = Number(estimatedDistanceMeters);
+  const routeIsPlausible = Number.isFinite(routeMeters) && routeMeters > 0
+    && routeMeters >= straightMeters * ROUTE_MIN_FACTOR
+    && routeMeters <= straightMeters * ROUTE_MAX_FACTOR + ROUTE_MAX_SLACK_METERS;
+  const distanceMeters = Math.round(routeIsPlausible ? routeMeters : straightMeters);
+  const minutes = Number(estimatedDurationMinutes);
+  const durationMinutes = Number.isFinite(minutes) && minutes > 0 && minutes < 24 * 60
+    ? Math.round(minutes)
+    : Math.max(1, Math.round((distanceMeters / 1000 / AVERAGE_GOODS_SPEED_KMPH) * 60));
+  return {
+    distanceMeters,
+    durationMinutes,
+    distanceSource: routeIsPlausible ? 'route' : 'straight_line',
+  };
+};
+
 const computeDeliveryFareBreakdown = ({
   vehicle = {},
   pricing: pricingOverride = null,
@@ -170,6 +200,7 @@ const computeDeliveryFareBreakdown = ({
   dropCoords = [],
   loadHeightKey = '',
   extraKeys = [],
+  tripDistanceMeters = null,
 }) => {
   const vehiclePricing = vehicle?.delivery_distance_pricing || {};
   const pricing = pricingOverride || vehiclePricing;
@@ -183,7 +214,9 @@ const computeDeliveryFareBreakdown = ({
   const loadHeight = resolveLoadHeight(vehicle, loadHeightKey);
   const extras = resolveExtras(vehicle, extraKeys);
   const detention = resolveDetentionTerms(vehiclePricing);
-  const distanceKm = Math.max(0, calculateDistanceKm(pickupCoords, dropCoords));
+  const distanceKm = Number.isFinite(Number(tripDistanceMeters)) && Number(tripDistanceMeters) > 0
+    ? Number(tripDistanceMeters) / 1000
+    : Math.max(0, calculateDistanceKm(pickupCoords, dropCoords));
   const baseDistance = Math.max(0, Number(pricing?.base_distance ?? pricing?.free_distance ?? 0));
 
   // With distance pricing unconfigured there is no fare to quote. The rider's
@@ -251,6 +284,8 @@ export const quoteDeliveryFare = async ({
   extraKeys,
   parcel,
   userId,
+  estimatedDistanceMeters,
+  estimatedDurationMinutes,
 }) => {
   if (!vehicleTypeId) {
     throw new ApiError(400, 'vehicleTypeId is required');
@@ -264,16 +299,24 @@ export const quoteDeliveryFare = async ({
   }
 
   const pickupCoords = normalizePoint(pickup, 'pickup');
+  const dropCoords = normalizePoint(drop, 'drop');
+  const trip = resolveGoodsTripEstimate({ pickupCoords, dropCoords, estimatedDistanceMeters, estimatedDurationMinutes });
   const resolvedPricing = await resolveDeliveryPricing({ vehicle, pickupCoords });
-  const breakdown = computeDeliveryFareBreakdown({
-    vehicle,
-    pricing: resolvedPricing.pricing,
-    serviceTaxPercentage: resolvedPricing.serviceTaxPercentage,
-    pickupCoords,
-    dropCoords: normalizePoint(drop, 'drop'),
-    loadHeightKey,
-    extraKeys,
-  });
+  const breakdown = {
+    ...computeDeliveryFareBreakdown({
+      vehicle,
+      pricing: resolvedPricing.pricing,
+      serviceTaxPercentage: resolvedPricing.serviceTaxPercentage,
+      pickupCoords,
+      dropCoords,
+      loadHeightKey,
+      extraKeys,
+      tripDistanceMeters: trip.distanceMeters,
+    }),
+    estimatedDistanceMeters: trip.distanceMeters,
+    estimatedDurationMinutes: trip.durationMinutes,
+    distanceSource: trip.distanceSource,
+  };
 
   // Goods need an advance paid online before dispatch; the rest is paid at completion.
   const advanceConfig = await getGoodsAdvanceConfig();
@@ -339,10 +382,13 @@ export const createDeliveryRecord = async ({
   loadHeightKey,
   extraKeys,
   advancePercent,
+  estimatedDistanceMeters,
+  estimatedDurationMinutes,
 }) => {
   await ensureDeliveryVehicleAllowed({ vehicleTypeId, parcel });
   const pickupCoords = normalizePoint(pickup, 'pickup');
   const dropCoords = normalizePoint(drop, 'drop');
+  const trip = resolveGoodsTripEstimate({ pickupCoords, dropCoords, estimatedDistanceMeters, estimatedDurationMinutes });
   const vehicle = vehicleTypeId
     ? await Vehicle.findById(vehicleTypeId).select(DELIVERY_FARE_VEHICLE_FIELDS).lean()
     : null;
@@ -356,6 +402,7 @@ export const createDeliveryRecord = async ({
     dropCoords,
     loadHeightKey,
     extraKeys,
+    tripDistanceMeters: trip.distanceMeters,
   });
   const resolvedFare = fareBreakdown.total > 0 ? fareBreakdown.total : Number(fare || 0);
 
@@ -366,6 +413,9 @@ export const createDeliveryRecord = async ({
     pickupAddress,
     dropAddress,
     fare: resolvedFare,
+    // saved on the ride (it was 0 before): the driver's trip card, today's distance and the receipts use it
+    estimatedDistanceMeters: trip.distanceMeters,
+    estimatedDurationMinutes: trip.durationMinutes,
     vehicleTypeId,
     vehicleTypeIds,
     vehicleIconType,
