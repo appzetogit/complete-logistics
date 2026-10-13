@@ -485,6 +485,7 @@ export const updateRideStatus = async (req, res) => {
     // [lng, lat] of the driver now (checked against the pickup / drop radius), and the start-trip OTP.
     coordinates: req.body.coordinates,
     otp: req.body.otp,
+    endTripEarly: req.body.endTripEarly, // "arrived" short of the drop: the rider got off early (passenger rides)
   });
 
   try {

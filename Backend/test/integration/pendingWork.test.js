@@ -94,7 +94,7 @@ test('#9 driven distance: summed from GPS while started, jitter and impossible j
   const rideId = await createRide(rider, vehicle);
   await t.acceptRide(rideId, driver.driver._id);
   const move = (coordinates) => t.rideService.updateRideDriverLocation({ rideId, driverId: driver.driver._id, coordinates });
-  const ageLastPoint = (seconds) => t.m.Ride.updateOne({ _id: rideId }, { $set: { 'lastDriverLocation.updatedAt': new Date(Date.now() - seconds * 1000) } });
+  const ageLastPoint = (seconds) => t.m.Ride.updateOne({ _id: rideId }, { $set: { 'travelAnchor.at': new Date(Date.now() - seconds * 1000) } });
   const driven = async () => Math.round((await t.m.Ride.findById(rideId).lean()).actualDistanceMeters);
 
   await move(t.locations.pickup);
@@ -112,16 +112,23 @@ test('#9 driven distance: summed from GPS while started, jitter and impossible j
 
   await move([t.locations.pickup[0] + 0.005, t.locations.pickup[1] + 0.00001]); // ~1 m: jitter
   assert.equal(await driven(), afterFirstLeg);
+  // crawling: 2 m steps are each below the jitter floor, but they add up from the anchor
+  await ageLastPoint(60);
+  for (let i = 1; i <= 5; i += 1) {
+    await move([t.locations.pickup[0] + 0.005 + i * 0.00002, t.locations.pickup[1]]);
+  }
+  const afterCrawl = await driven();
+  assert.ok(afterCrawl - afterFirstLeg >= 6 && afterCrawl - afterFirstLeg <= 12, `crawl ${afterCrawl - afterFirstLeg}`);
   await move([t.locations.pickup[0] + 0.3, t.locations.pickup[1]]); // ~30 km instantly: a bad fix
-  assert.equal(await driven(), afterFirstLeg);
+  assert.equal(await driven(), afterCrawl);
 
   await t.patchRideStatus(rideId, { token: driver.token, body: { status: 'arrived' } });
   await t.patchRideStatus(rideId, { token: driver.token, body: { status: 'completed' } });
   const ride = (await t.api('GET', `/rides/${rideId}`, { token: rider.token })).body.data;
-  assert.equal(Math.round(ride.actualDistanceMeters), afterFirstLeg);
+  assert.equal(Math.round(ride.actualDistanceMeters), afterCrawl);
   const me = (await t.api('GET', '/drivers/me', { token: driver.token })).body.data;
   const today = me.todaySummary || me.driver?.todaySummary;
-  assert.equal(Math.round(today.distanceMeters), afterFirstLeg, "today's distance uses what was driven");
+  assert.equal(Math.round(today.distanceMeters), afterCrawl, "today's distance uses what was driven");
 });
 
 // ------------------------------------------------------------------ #11 accept
@@ -279,4 +286,19 @@ test('#7 the heading from the driver app reaches the map marker', async () => {
   const [lng, lat] = t.locations.pickup;
   const res = await t.api('GET', `/rides/available-drivers/summary?lat=${lat}&lng=${lng}&vehicleTypeIds=${vehicle._id}`, { token: rider.token });
   assert.equal(res.body.data.byVehicleType[String(vehicle._id)].drivers[0].heading, 90);
+});
+
+test('#4 an image that cannot be converted stays in the database (not erased) and is left out of the response', async () => {
+  const vehicle = await t.factories.vehicle({ name: 'Broken Image Van' });
+  const broken = 'data:text/plain;base64,aGVsbG8=';
+  // an admin edit clears the 1-minute catalog cache, so the next read really loads (and tries to convert) it
+  const touched = await t.api('PATCH', `/admin/types/vehicle-types/${vehicle._id}`, { token: admin.token, body: { description: 'cache bust' } });
+  assert.equal(touched.status, 200, touched.text);
+  await t.m.Vehicle.collection.updateOne({ _id: vehicle._id }, { $set: { image: broken } });
+  const res = await fetch(`${t.baseUrl}/api/v1/users/vehicle-types`).then((r) => r.text());
+  const row = JSON.parse(res).data.results.find((item) => item.id === String(vehicle._id));
+  assert.ok(row, 'the vehicle is in this (uncached) catalog');
+  assert.equal(row.image, '', 'never sent');
+  assert.ok(!res.includes('data:text/plain'));
+  assert.equal((await t.m.Vehicle.collection.findOne({ _id: vehicle._id })).image, broken, 'kept for a later retry');
 });

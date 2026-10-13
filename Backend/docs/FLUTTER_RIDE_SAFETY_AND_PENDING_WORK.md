@@ -47,6 +47,15 @@ The server now refuses these steps when the driver is too far away:
 `completed` is not checked again, because the driver was already verified at the drop one step earlier. Moving off while
 collecting cash doesn't block completion.
 
+**The rider gets off early (passenger rides only):** add an "End trip here" button. It sends `arrived` with
+`endTripEarly: true` (plus `coordinates`). The radius is skipped, and the ride gets
+`earlyDrop: { at, distanceFromDropMeters }`, which both apps can show on the receipt ("Ended 2.1 km before the drop").
+Goods must still reach the drop.
+
+```dart
+socket.emit('ride:status:update', { 'rideId': id, 'status': 'arrived', 'endTripEarly': true, 'coordinates': [lng, lat] });
+```
+
 The admin can change both under **Transport Ride Settings**; `0` turns a check off. Keep the app's own button lock,
 but the server decides.
 
@@ -103,7 +112,7 @@ await dio.patch('/rides/$rideId/status', data: { 'status': 'started', 'otp': otp
 | 429 | `OTP_LOCKED` | 5 wrong tries: locked for 10 min | `retryAfterSeconds` |
 
 Show "Wrong OTP, N attempts left". On `OTP_LOCKED`, disable the button and show the wait time. The right OTP works
-again after the lock ends.
+again after the lock ends. Every try counts, right or wrong, so sending many guesses at once still allows at most 5.
 
 ## 3. Strict step order (Driver app)
 
@@ -178,6 +187,8 @@ waitingMinutes = max(0, minutes from "arrived at pickup" to "start trip" − fre
 waitingCharge  = waitingMinutes × waiting_charge (₹ per minute, from Set Price)
 ```
 
+- Scheduled rides: waiting is counted from the scheduled pickup time, not from an early arrival.
+- Goods: waiting stops when loading starts (`goods_loaded`), because loading has its own detention terms.
 - It is **added to `fare`**, so payment, settlement and receipts all include it automatically.
 - New fields on every ride payload: `waitingMinutes`, `waitingCharge`. Show them as a line on the receipt and the driver's
   trip summary ("Waiting 7 min · ₹14").

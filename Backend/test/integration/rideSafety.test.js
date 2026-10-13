@@ -310,3 +310,77 @@ test('no waiting charge inside the free minutes, without a rate, or on a free ri
   const b = await step(covered.rideId, covered.driver, 'started');
   assert.equal(b.body.data.waitingCharge, 0, 'the rider pays nothing on a free ride');
 });
+
+test('OTP: once the 5 tries are used up, even the right OTP is refused (no parallel bypass)', async () => {
+  const { rideId, driver } = await acceptedRide();
+  await step(rideId, driver, 'arriving');
+  const { otp } = await t.m.Ride.findById(rideId).lean();
+  // the moment a racing request used the 5th try but before the lock was written
+  await t.m.Ride.updateOne({ _id: rideId }, { $set: { 'otpCheck.failedAttempts': 5, 'otpCheck.lockedUntil': null } });
+  const res = await raw(rideId, driver.token, { status: 'started', otp });
+  assert.equal(res.status, 429, res.text);
+  assert.equal(res.body.code, 'OTP_LOCKED');
+  assert.equal((await t.m.Ride.findById(rideId).lean()).liveStatus, 'arriving');
+
+  // one try left and ten guesses at once (one of them right): at most one is even compared
+  const second = await acceptedRide();
+  await step(second.rideId, second.driver, 'arriving');
+  const right = (await t.m.Ride.findById(second.rideId).lean()).otp;
+  const wrong = right === '0000' ? '1111' : '0000';
+  await t.m.Ride.updateOne({ _id: second.rideId }, { $set: { 'otpCheck.failedAttempts': 4 } });
+  const guesses = [...Array.from({ length: 9 }, () => wrong), right];
+  const results = await Promise.all(guesses.map((guess) => raw(second.rideId, second.driver.token, { status: 'started', otp: guess })));
+  const stored = await t.m.Ride.findById(second.rideId).lean();
+  assert.ok(results.filter((r) => r.status === 400).length <= 1, 'at most one guess compared');
+  if (stored.liveStatus !== 'started') {
+    assert.ok(stored.otpCheck.lockedUntil > new Date(), 'locked when the right one did not get the slot');
+  }
+});
+
+test('the rider gets off early: "arrived" with endTripEarly ends a passenger ride away from the drop', async () => {
+  const { rideId, driver, rider } = await acceptedRide();
+  await step(rideId, driver, 'arriving');
+  await step(rideId, driver, 'started');
+  const midway = [t.locations.pickup[0] + 0.01, t.locations.pickup[1] + 0.01];
+  assert.equal((await raw(rideId, driver.token, { status: 'arrived', coordinates: midway })).body.code, 'OUT_OF_ARRIVAL_RADIUS');
+  const early = await raw(rideId, driver.token, { status: 'arrived', coordinates: midway, endTripEarly: true });
+  assert.equal(early.status, 200, early.text);
+  assert.ok(early.body.data.earlyDrop.distanceFromDropMeters > 1000, JSON.stringify(early.body.data.earlyDrop));
+  assert.equal((await step(rideId, driver, 'completed')).status, 200);
+  const asRider = (await t.api('GET', `/rides/${rideId}`, { token: rider.token })).body.data;
+  assert.ok(asRider.earlyDrop?.at, 'recorded on the ride');
+});
+
+test('goods cannot end early: they must reach the drop', async () => {
+  const vehicle = await t.factories.vehicle();
+  const driver = await t.factories.driver({ vehicleTypeId: vehicle._id });
+  const ride = await t.m.Ride.create({
+    userId: (await t.factories.user()).user._id, driverId: driver.driver._id, serviceType: 'parcel',
+    status: 'ongoing', liveStatus: 'started', fare: 200, otp: '1234',
+    pickupLocation: { type: 'Point', coordinates: t.locations.pickup }, dropLocation: { type: 'Point', coordinates: t.locations.drop },
+  });
+  const res = await raw(String(ride._id), driver.token, { status: 'arrived', coordinates: t.locations.pickup, endTripEarly: true });
+  assert.equal(res.body.code, 'OUT_OF_ARRIVAL_RADIUS');
+});
+
+test('waiting on a scheduled ride counts only from the pickup time; settlement keeps the waiting terms', async () => {
+  const { rideId, driver } = await acceptedRide();
+  await step(rideId, driver, 'arriving');
+  // arrived 25 min early for a ride scheduled 6 min ago: 6 min waited, 3 free -> 3 billed
+  await t.m.Ride.updateOne({ _id: rideId }, {
+    $set: {
+      arrivedAt: new Date(Date.now() - 25 * 60 * 1000),
+      scheduledAt: new Date(Date.now() - 6 * 60 * 1000 - 5000),
+      'pricingSnapshot.waiting_charge': 2,
+      'pricingSnapshot.free_waiting_before': 3,
+    },
+  });
+  const started = await step(rideId, driver, 'started');
+  assert.equal(started.body.data.waitingMinutes, 3);
+  assert.equal(started.body.data.waitingCharge, 6);
+  await step(rideId, driver, 'arrived');
+  await step(rideId, driver, 'completed');
+  const settled = await t.m.Ride.findById(rideId).lean();
+  assert.equal(settled.pricingSnapshot.waiting_charge, 2, 'settlement no longer wipes the waiting terms');
+  assert.equal(settled.pricingSnapshot.free_waiting_before, 3);
+});

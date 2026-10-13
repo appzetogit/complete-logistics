@@ -2095,8 +2095,7 @@ export const notifyRideAccepted = async (ride) => {
     vehicleIconUrl: populatedRide.vehicleIconUrl || '',
     parcel: withoutParcelSelfies(populatedRide.parcel?.toObject ? populatedRide.parcel.toObject() : populatedRide.parcel) || null,
     intercity: populatedRide.intercity || null,
-    commissionAmount: populatedRide.commissionAmount,
-    driverEarnings: populatedRide.driverEarnings,
+    // no commissionAmount / driverEarnings: this goes to the rider
     pickupLocation: populatedRide.pickupLocation,
     pickupAddress: populatedRide.pickupAddress || '',
     dropLocation: populatedRide.dropLocation,

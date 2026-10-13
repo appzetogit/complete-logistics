@@ -6872,9 +6872,15 @@ const healInlineVehicleImages = async (items = []) => {
     const $set = {};
     for (const field of VEHICLE_IMAGE_FIELDS) {
       if (typeof item[field] === 'string' && item[field].trim().startsWith('data:')) {
-        const url = await storeDataUrlImage(item[field], 'vehicles').catch(() => '');
-        $set[field] = url;
-        item[field] = url;
+        const url = await storeDataUrlImage(item[field], 'vehicles').catch((error) => {
+          console.error('Could not store vehicle image', String(item._id), field, error?.message || error);
+          return '';
+        });
+        if (url) {
+          $set[field] = url;
+          item[field] = url;
+        }
+        // On failure the original stays in the database for the next try; this response just omits it.
       }
     }
     if (Object.keys($set).length) {

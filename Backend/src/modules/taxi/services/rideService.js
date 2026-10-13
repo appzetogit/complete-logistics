@@ -1526,6 +1526,10 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
   waitingMinutes: Number(ride.waitingMinutes || 0),
   waitingCharge: Number(ride.waitingCharge || 0),
   actualDistanceMeters: Math.round(Number(ride.actualDistanceMeters || 0)),
+  // Set when the trip ended before the booked drop (the rider got off early).
+  earlyDrop: ride.earlyDrop?.at
+    ? { at: ride.earlyDrop.at, distanceFromDropMeters: ride.earlyDrop.distanceFromDropMeters ?? null }
+    : null,
   // The ride carries the authoritative parcel record — the fare engine writes
   // the paid add-ons and the driver's proof photos onto it. The Delivery
   // mirror holds only the booking basics, so it fills gaps rather than
@@ -2117,71 +2121,85 @@ const assertStartOtp = async ({ ride, otp }) => {
     return;
   }
 
-  const lockedUntil = ride.otpCheck?.lockedUntil ? new Date(ride.otpCheck.lockedUntil) : null;
-  if (lockedUntil && lockedUntil.getTime() > Date.now()) {
-    const minutes = Math.max(1, Math.ceil((lockedUntil.getTime() - Date.now()) / 60000));
-    throw new ApiError(429, `Too many wrong OTPs. Try again in ${minutes} min.`, {
+  const lockedError = (lockedUntil) => {
+    const ms = Math.max(1000, new Date(lockedUntil || Date.now() + OTP_LOCK_MS).getTime() - Date.now());
+    return new ApiError(429, `Too many wrong OTPs. Try again in ${Math.max(1, Math.ceil(ms / 60000))} min.`, {
       code: 'OTP_LOCKED',
-      retryAfterSeconds: Math.ceil((lockedUntil.getTime() - Date.now()) / 1000),
+      attemptsLeft: 0,
+      retryAfterSeconds: Math.ceil(ms / 1000),
     });
-  }
+  };
 
   const given = String(otp ?? '').trim();
   if (!given) {
     throw new ApiError(400, 'Enter the OTP the rider shares to start the trip', { code: 'OTP_REQUIRED' });
   }
-  if (given === expected) {
-    return;
-  }
 
-  // Count atomically so parallel guesses cannot slip past the limit. An expired lock starts a new round; a lock
-  // that is still active (set by a guess running in parallel) is kept as it is.
+  // Every guess, right or wrong, first takes one of the attempts atomically, and only a guess that got a slot is
+  // compared. Thousands of parallel guesses therefore still get at most OTP_MAX_FAILED_ATTEMPTS comparisons per lock
+  // window. An expired lock starts a new round.
   const lockedUntilField = { $ifNull: ['$otpCheck.lockedUntil', null] };
-  const lockExpired = { $and: [{ $ne: [lockedUntilField, null] }, { $lte: [lockedUntilField, '$$NOW'] }] };
-  const lockActive = { $and: [{ $ne: [lockedUntilField, null] }, { $gt: [lockedUntilField, '$$NOW'] }] };
-  const counted = await Ride.findOneAndUpdate(
-    { _id: ride._id },
+  const claimed = await Ride.findOneAndUpdate(
+    {
+      _id: ride._id,
+      $or: [{ 'otpCheck.lockedUntil': null }, { 'otpCheck.lockedUntil': { $lte: new Date() } }],
+    },
     [
       {
         $set: {
           'otpCheck.failedAttempts': {
-            $cond: [lockExpired, 1, { $add: [{ $ifNull: ['$otpCheck.failedAttempts', 0] }, 1] }],
-          },
-          'otpCheck.lockedUntil': { $cond: [lockExpired, null, lockedUntilField] },
-        },
-      },
-      {
-        $set: {
-          'otpCheck.lockedUntil': {
             $cond: [
-              lockActive,
-              lockedUntilField,
-              {
-                $cond: [
-                  { $gte: ['$otpCheck.failedAttempts', OTP_MAX_FAILED_ATTEMPTS] },
-                  { $add: ['$$NOW', OTP_LOCK_MS] },
-                  null,
-                ],
-              },
+              { $ne: [lockedUntilField, null] }, // the lock that was there has expired
+              1,
+              { $add: [{ $ifNull: ['$otpCheck.failedAttempts', 0] }, 1] },
             ],
           },
+          'otpCheck.lockedUntil': null,
         },
       },
     ],
     { returnDocument: 'after', updatePipeline: true },
   ).select('otpCheck').lean();
 
-  const failed = Number(counted?.otpCheck?.failedAttempts || 0);
-  const attemptsLeft = Math.max(0, OTP_MAX_FAILED_ATTEMPTS - failed);
-  throw new ApiError(attemptsLeft ? 400 : 429, attemptsLeft
-    ? `Wrong OTP. ${attemptsLeft} attempt${attemptsLeft === 1 ? '' : 's'} left.`
-    : 'Too many wrong OTPs. Try again in 10 min.', {
-    code: attemptsLeft ? 'INVALID_OTP' : 'OTP_LOCKED',
+  const lockNow = () => Ride.findOneAndUpdate(
+    { _id: ride._id, 'otpCheck.lockedUntil': null },
+    { $set: { 'otpCheck.lockedUntil': new Date(Date.now() + OTP_LOCK_MS) } },
+    { returnDocument: 'after' },
+  ).select('otpCheck').lean();
+
+  if (!claimed) {
+    const current = await Ride.findById(ride._id).select('otpCheck').lean();
+    throw lockedError(current?.otpCheck?.lockedUntil);
+  }
+
+  const attempt = Number(claimed.otpCheck?.failedAttempts || 0);
+  if (attempt > OTP_MAX_FAILED_ATTEMPTS) {
+    const locked = await lockNow();
+    throw lockedError(locked?.otpCheck?.lockedUntil);
+  }
+
+  if (given === expected) {
+    await Ride.updateOne({ _id: ride._id }, { $set: { 'otpCheck.failedAttempts': 0, 'otpCheck.lockedUntil': null } });
+    return;
+  }
+
+  const attemptsLeft = Math.max(0, OTP_MAX_FAILED_ATTEMPTS - attempt);
+  if (!attemptsLeft) {
+    const locked = await lockNow();
+    throw lockedError(locked?.otpCheck?.lockedUntil);
+  }
+  throw new ApiError(400, `Wrong OTP. ${attemptsLeft} attempt${attemptsLeft === 1 ? '' : 's'} left.`, {
+    code: 'INVALID_OTP',
     attemptsLeft,
   });
 };
 
-/** Waiting at the pickup beyond the free minutes, billed per minute (rides the rider pays for only). */
+/**
+ * Waiting at the pickup beyond the free minutes, billed per minute (rides the rider pays for only).
+ * The clock starts when the driver is at the pickup, but never before a scheduled ride's pickup time (arriving early
+ * is the driver's choice). For goods it stops when loading starts (the goods_loaded step): loading has its own
+ * detention terms.
+ */
 const computeWaitingCharge = (ride, startedAt) => {
   const covered = Boolean(ride.freeRide?.covered || ride.subscriptionUsage?.covered);
   const perMinute = Number(ride.pricingSnapshot?.waiting_charge || 0);
@@ -2189,8 +2207,14 @@ const computeWaitingCharge = (ride, startedAt) => {
   if (covered || !(perMinute > 0) || !arrivedAt) {
     return { waitingMinutes: 0, waitingCharge: 0 };
   }
+  const scheduledAt = ride.scheduledAt ? new Date(ride.scheduledAt).getTime() : 0;
+  const waitFrom = Math.max(arrivedAt, Number.isFinite(scheduledAt) ? scheduledAt : 0);
+  const loadingAt = isParcelRide(ride) && ride.parcel?.pickupProof?.capturedAt
+    ? new Date(ride.parcel.pickupProof.capturedAt).getTime()
+    : 0;
+  const waitUntil = loadingAt && loadingAt < startedAt.getTime() ? loadingAt : startedAt.getTime();
   const freeMinutes = Math.max(0, Number(ride.pricingSnapshot?.free_waiting_before || 0));
-  const waitedMinutes = Math.max(0, Math.floor((startedAt.getTime() - arrivedAt) / 60000));
+  const waitedMinutes = Math.max(0, Math.floor((waitUntil - waitFrom) / 60000));
   const waitingMinutes = Math.max(0, waitedMinutes - freeMinutes);
   return {
     waitingMinutes,
@@ -2209,6 +2233,7 @@ export const updateRideLifecycle = async ({
   selfieImageUrl,
   coordinates,
   otp,
+  endTripEarly = false,
 }) => {
   const config = rideStatusConfig[nextStatus];
 
@@ -2237,7 +2262,24 @@ export const updateRideLifecycle = async ({
 
   // Repeating the current step changes nothing, so it needs neither the location nor the OTP again.
   const isRepeat = ride.liveStatus === nextStatus;
-  if (!isRepeat && config.atTarget) {
+  // The rider got off before the booked drop: a passenger ride may end where it is ("arrived" with endTripEarly).
+  // Recorded on the ride with the distance from the drop, for the admin and the receipts. Goods must reach the drop.
+  const earlyEnd = !isRepeat && nextStatus === RIDE_LIVE_STATUS.ARRIVED && !isParcelRide(ride)
+    && (endTripEarly === true || String(endTripEarly).toLowerCase() === 'true');
+  if (earlyEnd) {
+    let distanceFromDropMeters = 0;
+    try {
+      await assertDriverAtTarget({ ride, target: 'drop', coordinates });
+    } catch (error) {
+      if (!['OUT_OF_ARRIVAL_RADIUS', 'LOCATION_REQUIRED'].includes(error?.details?.code)) throw error;
+      distanceFromDropMeters = error.details.code === 'OUT_OF_ARRIVAL_RADIUS' ? error.details.distanceMeters : null;
+    }
+    ride.earlyDrop = {
+      at: new Date(),
+      distanceFromDropMeters,
+      coordinates: Array.isArray(coordinates) && coordinates.length === 2 ? normalizePoint(coordinates, 'coordinates') : undefined,
+    };
+  } else if (!isRepeat && config.atTarget) {
     await assertDriverAtTarget({ ride, target: config.atTarget, coordinates });
   }
   if (!isRepeat && config.requiresOtp) {
@@ -2403,17 +2445,21 @@ const TRAVEL_MIN_STEP_METERS = 3;
 const TRAVEL_MAX_SPEED_MPS = 100;
 
 /**
- * Meters to add to the ride's driven distance for a move from the last saved point to `nextCoords`. Only while
- * the trip is running (started), and never for jitter or impossible jumps.
+ * The driven distance is measured from an anchor point, not from the previous GPS fix: the anchor only moves once
+ * the driver is at least TRAVEL_MIN_STEP_METERS away from it, so slow crawling still adds up while jitter does not.
+ * Returns what to do for a new fix: `{ meters, moveAnchor }` (meters 0 for jitter, the first fix, or a bad jump).
  */
-const travelledStepMeters = (previous, nextCoords, now) => {
-  if (previous?.liveStatus !== RIDE_LIVE_STATUS.STARTED) return 0;
-  const last = previous.lastDriverLocation;
-  if (!Array.isArray(last?.coordinates) || last.coordinates.length !== 2 || !last.updatedAt) return 0;
-  const meters = distanceMeters(last.coordinates, nextCoords);
-  if (!Number.isFinite(meters) || meters < TRAVEL_MIN_STEP_METERS) return 0;
-  const seconds = Math.max(0.5, (now.getTime() - new Date(last.updatedAt).getTime()) / 1000);
-  return meters / seconds > TRAVEL_MAX_SPEED_MPS ? 0 : meters;
+const planTravelStep = (previous, nextCoords, now) => {
+  if (previous?.liveStatus !== RIDE_LIVE_STATUS.STARTED) return { meters: 0, moveAnchor: false };
+  const anchor = previous.travelAnchor;
+  if (!Array.isArray(anchor?.coordinates) || anchor.coordinates.length !== 2 || !anchor.at) {
+    return { meters: 0, moveAnchor: true }; // first fix of the trip
+  }
+  const meters = distanceMeters(anchor.coordinates, nextCoords);
+  if (!Number.isFinite(meters) || meters < TRAVEL_MIN_STEP_METERS) return { meters: 0, moveAnchor: false };
+  const seconds = Math.max(0.5, (now.getTime() - new Date(anchor.at).getTime()) / 1000);
+  if (meters / seconds > TRAVEL_MAX_SPEED_MPS) return { meters: 0, moveAnchor: true }; // a bad fix: skip it
+  return { meters, moveAnchor: true };
 };
 
 export const updateRideDriverLocation = async ({ rideId, driverId, coordinates, heading = null, speed = null }) => {
@@ -2427,16 +2473,26 @@ export const updateRideDriverLocation = async ({ rideId, driverId, coordinates, 
     updatedAt: now,
   };
   const previous = await Ride.findOne({ _id: rideId, driverId })
-    .select('liveStatus lastDriverLocation')
+    .select('liveStatus +travelAnchor')
     .lean();
-  const stepMeters = travelledStepMeters(previous, normalizedCoords, now);
+  const step = planTravelStep(previous, normalizedCoords, now);
+  if (previous && step.moveAnchor) {
+    // Only if the anchor is still the one this step was measured from: two fixes processed at once cannot both
+    // add the same stretch.
+    await Ride.updateOne(
+      { _id: rideId, driverId, 'travelAnchor.at': previous.travelAnchor?.at ?? null },
+      {
+        $set: { travelAnchor: { coordinates: normalizedCoords, at: now } },
+        ...(step.meters > 0 ? { $inc: { actualDistanceMeters: Math.round(step.meters * 10) / 10 } } : {}),
+      },
+    );
+  }
   const ride = await Ride.findOneAndUpdate(
     { _id: rideId, driverId },
     {
       $set: {
         lastDriverLocation: nextDriverLocation,
       },
-      ...(stepMeters > 0 ? { $inc: { actualDistanceMeters: Math.round(stepMeters * 10) / 10 } } : {}),
     },
     {
       returnDocument: 'after',
@@ -2461,7 +2517,8 @@ export const updateRideDriverLocation = async ({ rideId, driverId, coordinates, 
         { 'incentiveTracking.lastSeenAt': { $lt: new Date(now.getTime() - 60 * 1000) } },
       ],
     },
-    { $set: { 'incentiveTracking.lastSeenAt': now } },
+    // the position too, so the live-location fallback never pairs a fresh heartbeat with an old point
+    { $set: { 'incentiveTracking.lastSeenAt': now, location: { type: 'Point', coordinates: normalizedCoords } } },
   ).catch(() => null);
 
   return {

@@ -373,12 +373,11 @@ const settleCompletedRideWalletOnce = async ({ rideId }) => {
     ride.paymentMethod = paymentMethod;
     ride.commissionAmount = commissionAmount;
     ride.driverEarnings = driverEarnings;
-    ride.pricingSnapshot = {
-      setPriceId: ride.pricingSnapshot?.setPriceId || commissionConfig.setPriceId || null,
-      admin_commission_type_from_driver: Number(commissionConfig.type ?? ride.pricingSnapshot?.admin_commission_type_from_driver ?? 1),
-      admin_commission_from_driver: Number(commissionConfig.value ?? ride.pricingSnapshot?.admin_commission_from_driver ?? 0),
-      resolvedAt: ride.pricingSnapshot?.resolvedAt || new Date(),
-    };
+    // Only the commission paths: replacing the whole snapshot wiped the waiting terms and allowed payment methods.
+    ride.set('pricingSnapshot.setPriceId', ride.pricingSnapshot?.setPriceId || commissionConfig.setPriceId || null);
+    ride.set('pricingSnapshot.admin_commission_type_from_driver', Number(commissionConfig.type ?? ride.pricingSnapshot?.admin_commission_type_from_driver ?? 1));
+    ride.set('pricingSnapshot.admin_commission_from_driver', Number(commissionConfig.value ?? ride.pricingSnapshot?.admin_commission_from_driver ?? 0));
+    ride.set('pricingSnapshot.resolvedAt', ride.pricingSnapshot?.resolvedAt || new Date());
     await ride.save({ session });
 
     if (!amount) {

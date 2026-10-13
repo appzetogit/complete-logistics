@@ -415,6 +415,24 @@ const rideSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    // The trip ended before the booked drop at the rider's request (passenger rides only).
+    earlyDrop: {
+      type: {
+        at: { type: Date, default: null },
+        distanceFromDropMeters: { type: Number, default: null },
+        coordinates: { type: [Number], default: undefined },
+      },
+      default: undefined,
+    },
+    // The point the driven distance was last measured from (moves once the driver is a few meters away from it).
+    travelAnchor: {
+      type: {
+        coordinates: { type: [Number], default: undefined },
+        at: { type: Date, default: null },
+      },
+      default: undefined,
+      select: false,
+    },
     driverPaymentCollection: {
       provider: {
         type: String,

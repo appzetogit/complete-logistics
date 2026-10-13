@@ -1408,7 +1408,6 @@ const ActiveTrip = () => {
 
     const displayFare = liveRequest?.fare || tripData.fare;
     const fareAmount = parseFareAmount(displayFare);
-    const expectedOtp = String(liveRaw?.otp || liveRequest?.otp || effectiveState?.otp || '');
     const waitingPricing = liveRaw?.pricingSnapshot || liveRequest?.raw?.pricingSnapshot || effectiveState?.pricingSnapshot || {};
     const allowedPaymentModes = (() => {
         const rawItems = Array.isArray(waitingPricing?.allowed_payment_methods) ? waitingPricing.allowed_payment_methods : [];
@@ -1525,11 +1524,15 @@ const ActiveTrip = () => {
             })
             : null;
 
+        // The server checks the pickup / drop radius against this position ([lng, lat]).
+        const lat = Number(driverPosition?.lat);
+        const lng = Number(driverPosition?.lng);
         socketService.emit('ride:status:update', {
             rideId,
             status: nextStatus,
             paymentMethod: paymentMode || undefined,
             ...(driverPaymentCollection ? { driverPaymentCollection } : {}),
+            ...(Number.isFinite(lat) && Number.isFinite(lng) ? { coordinates: [lng, lat] } : {}),
         });
     };
 
@@ -1780,35 +1783,20 @@ const ActiveTrip = () => {
             return;
         }
 
-        let resolvedExpectedOtp = String(expectedOtp || '');
-
-        try {
-            const driverToken = getLocalDriverToken();
-            const endpoint = isParcel ? '/deliveries/active/me' : '/rides/active/me';
-            const response = await api.get(endpoint, withDriverAuthorization(driverToken));
-            const latestActiveJob = unwrapApiPayload(response);
-            const latestRideId = getJobRideId(latestActiveJob);
-
-            if (latestRideId && String(latestRideId) === String(rideId || routeRideId || '')) {
-                resolvedExpectedOtp = String(latestActiveJob?.otp || resolvedExpectedOtp || '');
-
-                const latestPersistedState = buildPersistedTripState(latestActiveJob, {
-                    phase,
-                    arrivedAt: localArrivedAt || latestActiveJob?.arrivedAt || '',
-                });
-
-                if (latestPersistedState) {
-                    setHydratedTripState(latestPersistedState);
-                    writeStoredActiveTripSnapshot(latestPersistedState);
-                }
+        // The PIN is checked by the server: drivers never receive it, they must ask the passenger.
+        if (rideId) {
+            try {
+                const driverToken = getLocalDriverToken();
+                await api.patch(
+                    `/rides/${rideId}/status`,
+                    { status: 'started', otp: String(enteredOtp) },
+                    withDriverAuthorization(driverToken),
+                );
+            } catch (error) {
+                const body = error?.response?.data || error?.data || {};
+                setOtpError(body.message || error?.message || 'Could not start the trip. Try again.');
+                return;
             }
-        } catch {
-            // Fall back to the currently hydrated OTP if the refresh request fails.
-        }
-
-        if (String(enteredOtp) !== resolvedExpectedOtp) {
-            setOtpError('Wrong PIN. Ask the passenger again.');
-            return;
         }
 
         setOtpError('');
@@ -1831,19 +1819,6 @@ const ActiveTrip = () => {
         if (optimisticSnapshot) {
             writeStoredActiveTripSnapshot(optimisticSnapshot);
             setHydratedTripState(optimisticSnapshot);
-        }
-
-        try {
-            if (rideId) {
-                const driverToken = getLocalDriverToken();
-                await api.patch(
-                    `/rides/${rideId}/status`,
-                    { status: 'started' },
-                    withDriverAuthorization(driverToken),
-                );
-            }
-        } catch {
-            // Keep the optimistic local state; socket/live hydration will reconcile when available.
         }
 
         publishRideStatus('started');
@@ -2178,13 +2153,9 @@ const ActiveTrip = () => {
 
         const enteredOtp = nextOtp.join('');
 
-        if (enteredOtp.length === 4 && expectedOtp && enteredOtp === expectedOtp) {
+        // All 4 digits: let the server check it (wrong PIN, attempts left and the lock come back as the message).
+        if (enteredOtp.length === 4) {
             setTimeout(() => startTripAfterOtp(enteredOtp), 250);
-            return;
-        }
-
-        if (enteredOtp.length === 4 && expectedOtp) {
-            setOtpError('Incorrect PIN. Please enter the PIN shown to the passenger.');
         }
     };
 

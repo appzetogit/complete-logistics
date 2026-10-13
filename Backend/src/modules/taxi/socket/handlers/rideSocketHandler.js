@@ -186,7 +186,7 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
 
   socket.on(
     SOCKET_EVENTS.RIDE_STATUS_UPDATE,
-    onAsync(socket, async ({ rideId, status, paymentMethod, proofImageUrl, proofNote, receivedBy, selfieImageUrl, coordinates, otp }) => {
+    onAsync(socket, async ({ rideId, status, paymentMethod, proofImageUrl, proofNote, receivedBy, selfieImageUrl, coordinates, otp, endTripEarly }) => {
       if (socket.auth.role !== 'driver') {
         throw new Error('Only drivers can update ride status');
       }
@@ -209,6 +209,7 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
         // [lng, lat] of the driver now (checked against the pickup / drop radius), and the start-trip OTP.
         coordinates,
         otp,
+        endTripEarly, // "arrived" short of the drop: the rider got off early (passenger rides)
       });
       const populatedRide = await getRideDetails(rideId);
 
