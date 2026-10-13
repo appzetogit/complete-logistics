@@ -965,7 +965,7 @@ const AdminLayout = () => {
               { label: 'Add Employee', path: '/admin/employees/create', permission: 'employees.view' },
             ],
           },
-          { icon: Briefcase, label: 'Owner Management', path: '/admin/owners/dashboard', permission: 'owners.view' },
+          //{ icon: Briefcase, label: 'Owner Management', path: '/admin/owners/dashboard', permission: 'owners.view' },
           {
             icon: FileText,
             label: 'Report',
