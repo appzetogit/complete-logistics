@@ -716,6 +716,46 @@ const rideSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // How the completed ride was settled with the driver: 'cash' = commission deducted, the fare is credited when
+    // the rider pays online; 'online' = fare - commission credited at completion. Empty on older rides.
+    settledAs: {
+      type: String,
+      enum: ['', 'cash', 'online'],
+      default: '',
+    },
+    // 'cash' when a cash ride ended up paid online (reports can show both).
+    paymentSwitchedFrom: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    // The rider's open in-app checkout order for the fare, reused while unpaid (a double tap never makes two).
+    riderPaymentOrder: {
+      type: {
+        orderId: { type: String, default: '' },
+        amountPaise: { type: Number, default: 0 },
+        fareDue: { type: Number, default: 0 },
+        tipAmount: { type: Number, default: 0 },
+        createdAt: { type: Date, default: null },
+      },
+      default: undefined,
+    },
+    // Payments returned to the rider because the ride was already paid (or the amount was wrong).
+    paymentRefunds: {
+      type: [
+        {
+          _id: false,
+          paymentId: { type: String, default: '' },
+          amount: { type: Number, default: 0 },
+          refundId: { type: String, default: '' },
+          status: { type: String, default: '' },
+          reason: { type: String, default: '' },
+          error: { type: String, default: '' },
+          at: { type: Date, default: null },
+        },
+      ],
+      default: [],
+    },
     promo: {
       code: {
         type: String,

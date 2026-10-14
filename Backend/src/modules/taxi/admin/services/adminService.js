@@ -5560,6 +5560,8 @@ export const getDriverProfile = async (id) => {
   // "card" = paid in the app (online or wallet), so cash + card still add up to the total; wallet also on its own
   const byCard = sum(completedRides.filter((r) => ['online', 'wallet'].includes(r.paymentMethod)), 'fare');
   const byWallet = sum(completedRides.filter((r) => r.paymentMethod === 'wallet'), 'fare');
+  // part of by_card: rides booked as cash that the rider paid online in the end
+  const switchedFromCash = sum(completedRides.filter((r) => r.paymentSwitchedFrom === 'cash'), 'fare');
   const spendAmount = walletTransactions.reduce((total, item) => {
     const amount = Number(item?.amount || 0);
     return amount < 0 ? total + Math.abs(amount) : total;
@@ -5609,6 +5611,7 @@ export const getDriverProfile = async (id) => {
       by_wallet: 0,
       by_card: Number(byCard.toFixed(2)),
       by_wallet: Number(byWallet.toFixed(2)),
+      by_card_switched_from_cash: Number(switchedFromCash.toFixed(2)),
       spend_amount: Number(spendAmount.toFixed(2)),
       balance_amount: Number(balanceAmount.toFixed(2)),
     },
@@ -6197,6 +6200,8 @@ const toAdminDeliveryRow = (ride) => {
     rideStatus: ride.status,
     liveStatus: ride.liveStatus,
     paymentOption: String(ride.paymentMethod || 'cash').toUpperCase(),
+    // 'CASH' when a cash ride ended up paid online (paymentOption then says ONLINE)
+    paymentSwitchedFrom: String(ride.paymentSwitchedFrom || '').toUpperCase(),
     fare: Number(ride.fare || 0),
     pickupLabel: ride.pickupAddress || formatRidePointLabel(ride.pickupLocation, 'Pickup'),
     dropLabel: ride.dropAddress || formatRidePointLabel(ride.dropLocation, 'Drop'),
@@ -6252,6 +6257,8 @@ const toAdminIntercityTripRow = (ride) => {
     rideStatus: ride.status,
     liveStatus: ride.liveStatus,
     paymentOption: String(ride.paymentMethod || 'cash').toUpperCase(),
+    // 'CASH' when a cash ride ended up paid online (paymentOption then says ONLINE)
+    paymentSwitchedFrom: String(ride.paymentSwitchedFrom || '').toUpperCase(),
     fare: Number(ride.fare || 0),
     pickupLabel: ride.pickupAddress || formatRidePointLabel(ride.pickupLocation, 'Pickup'),
     dropLabel: ride.dropAddress || formatRidePointLabel(ride.dropLocation, 'Drop'),
@@ -8441,6 +8448,9 @@ export const getAdminEarnings = async (query = {}) => {
         driverPhone: driver.phone || '',
         riderType: ride.serviceType || 'ride',
         paymentMethod: ride.paymentMethod || 'cash',
+        // 'cash' when the rider booked cash and paid online in the end; settledAs = how the driver was settled
+        paymentSwitchedFrom: ride.paymentSwitchedFrom || '',
+        settledAs: ride.settledAs || '',
         zoneId: zoneDoc?._id ? String(zoneDoc._id) : '',
         zoneName: zoneDoc?.name || 'Unmapped Zone',
         vehicleId: vehicleDoc?._id ? String(vehicleDoc._id) : '',

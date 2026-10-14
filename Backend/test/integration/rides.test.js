@@ -209,9 +209,9 @@ test('regression: normal ride payment at completion (wallet + tip) is unchanged'
 
   // paying twice is refused
   const second = await t.api('POST', `/rides/${rideId}/complete-payment/wallet`, { token: rider.token, body: { rating: 5, tipAmount: 0 } });
-  // existing behaviour: nothing left to pay once the fare and tip are settled
-  assert.equal(second.status, 400);
-  assert.match(second.body.message, /No payable amount remains|already submitted/);
+  // nothing left to pay once the fare is settled
+  assert.equal(second.status, 409);
+  assert.equal(second.body.code, 'ALREADY_PAID');
   assert.equal((await t.m.UserWallet.findOne({ userId: rider.user._id }).lean()).balance, 780);
 });
 

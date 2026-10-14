@@ -6,6 +6,7 @@ import { Vehicle } from '../../admin/models/Vehicle.js';
 import { Driver } from '../models/Driver.js';
 import { WalletTransaction } from '../models/WalletTransaction.js';
 import { Ride } from '../../user/models/Ride.js';
+import { rideSettlementBasis } from '../../services/ridePaymentState.js';
 import { getWalletSettings } from '../../services/appSettingsService.js';
 
 const normalizeAmount = (value, fieldName = 'amount') => {
@@ -365,16 +366,20 @@ const settleCompletedRideWalletOnce = async ({ rideId }) => {
       value: commissionConfig.value,
     });
     const paymentMethod = normalizePaymentMethod(ride.paymentMethod);
+    // An online ride the rider has not paid yet is settled like cash (commission only); its fare is credited
+    // when the payment arrives (ridePaymentService). Paid online, wallet and free rides credit fare - commission.
+    const settledAs = rideSettlementBasis(ride);
     const driverEarnings = Math.max(Math.round((fare - commissionAmount) * 100) / 100, 0);
     const advancePaid = ride.goodsAdvance?.status === 'paid' ? Number(ride.goodsAdvance.amount || 0) : 0;
     const { amount, type } = computeRideSettlementAmount({
-      paymentMethod,
+      paymentMethod: settledAs === 'cash' ? 'cash' : paymentMethod,
       commissionAmount,
       driverEarnings,
       advancePaid,
     });
 
     ride.paymentMethod = paymentMethod;
+    ride.settledAs = settledAs;
     ride.commissionAmount = commissionAmount;
     ride.driverEarnings = driverEarnings;
     // Only the commission paths: replacing the whole snapshot wiped the waiting terms and allowed payment methods.
@@ -394,10 +399,12 @@ const settleCompletedRideWalletOnce = async ({ rideId }) => {
       rideId: ride._id,
       amount,
       type,
-      description: paymentMethod === 'cash'
-        ? (advancePaid > 0
-          ? 'Goods advance settled against commission for cash ride'
-          : 'Commission deducted for cash ride')
+      description: settledAs === 'cash'
+        ? (paymentMethod !== 'cash'
+          ? 'Commission deducted; the fare is credited when the rider pays'
+          : advancePaid > 0
+            ? 'Goods advance settled against commission for cash ride'
+            : 'Commission deducted for cash ride')
         : 'Driver earning credited for online ride',
       metadata: {
         fare,
@@ -405,6 +412,7 @@ const settleCompletedRideWalletOnce = async ({ rideId }) => {
         commissionAmount,
         driverEarnings,
         paymentMethod,
+        settledAs,
         commissionSource: commissionConfig.source,
         commissionType: normalizeCommissionType(commissionConfig.type),
         commissionValue: Number(commissionConfig.value || 0),

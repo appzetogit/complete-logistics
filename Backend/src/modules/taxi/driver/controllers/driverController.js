@@ -79,6 +79,14 @@ import {
   updateRentalVehicleType,
 } from "../../admin/services/adminService.js";
 import { resolveConfiguredGatewayCredentials } from "../../services/paymentGatewayService.js";
+import { applyRidePayment, closeRidePaymentCollection, ridePaymentError } from "../../services/ridePaymentService.js";
+import {
+  RIDE_PAYMENT_CODES,
+  UNPAID_COLLECTION_FILTER,
+  isRideCollectionPaid,
+  isRidePayableNow,
+  rideFareDue,
+} from "../../services/ridePaymentState.js";
 import { assignPushTokenToEntity } from "../../services/pushTokenService.js";
 import {
   completeDriverOnboarding,
@@ -1642,6 +1650,8 @@ const serializeDriverPaymentCollection = (collection = {}) => {
     providerMode: collection.providerMode || "",
     status,
     paid: PAYMENT_PAID_STATUSES.has(status),
+    // cash | qr | razorpay | wallet: how the fare was paid
+    source: collection.source || "",
     amount: Number(collection.amount || 0),
     currency: collection.currency || "INR",
     linkUrl: collection.linkUrl || "",
@@ -1650,11 +1660,34 @@ const serializeDriverPaymentCollection = (collection = {}) => {
   };
 };
 
+// Which Razorpay payment paid this QR / payment link. Best effort: the QR id alone also identifies the payment
+// (single use), the webhook brings the payment id anyway.
+const findCollectionPaymentId = async ({ providerId, providerMode, providerPayload }) => {
+  try {
+    if (String(providerMode || "").includes("payment_link")) {
+      const payments = Array.isArray(providerPayload?.payments) ? providerPayload.payments : [];
+      const paid = payments.find((item) => ["captured", "paid"].includes(String(item?.status || "").toLowerCase())) || payments[0];
+      return String(paid?.payment_id || paid?.id || "");
+    }
+    const list = await razorpayRequest({
+      method: "GET",
+      path: `/payments/qr_codes/${encodeURIComponent(providerId)}/payments`,
+    });
+    const items = Array.isArray(list?.items) ? list.items : [];
+    const paid = items.find((item) => item?.status === "captured") || items[0];
+    return String(paid?.id || "");
+  } catch {
+    return "";
+  }
+};
+
 const refreshDriverPaymentCollection = async (ride) => {
-  const collection = ride?.driverPaymentCollection || {};
+  const plainRide = typeof ride?.toObject === "function" ? ride.toObject() : ride;
+  const collection = plainRide?.driverPaymentCollection || {};
   const providerId = String(collection.providerId || "").trim();
 
-  if (!providerId) {
+  // Nothing to ask Razorpay: no QR, or the fare is already paid (by this QR, in cash or in the rider's app).
+  if (!providerId || isRideCollectionPaid(plainRide)) {
     return serializeDriverPaymentCollection(collection);
   }
 
@@ -1670,27 +1703,46 @@ const refreshDriverPaymentCollection = async (ride) => {
       providerPayload?.amount_received ||
       0,
   );
-  const expectedAmount = Number(collection.amount || 0) * 100;
+  const expectedAmount = Math.round(Number(collection.amount || 0) * 100);
   const isProviderAmountPaid = expectedAmount > 0 && receivedAmount >= expectedAmount;
   const providerStatus = normalizeCollectionStatus(providerPayload?.status);
   const isPaid = PAYMENT_PAID_STATUSES.has(providerStatus) || isProviderAmountPaid;
-  const nextStatus = isPaid ? "paid" : providerStatus;
-  const nextCollection = {
-    provider: "razorpay",
-    providerId,
-    providerMode,
-    status: nextStatus,
-    amount: Number(collection.amount || 0),
-    currency: collection.currency || "INR",
-    linkUrl: collection.linkUrl || providerPayload?.short_url || providerPayload?.url || "",
-    paidAt: isPaid ? collection.paidAt || new Date() : collection.paidAt || null,
-    updatedAt: new Date(),
-  };
 
-  ride.driverPaymentCollection = nextCollection;
-  await ride.save();
+  if (isPaid) {
+    // Same path as the webhook and the rider's in-app payment: marks the ride paid once, credits the driver
+    // what they are owed, tells both apps. Poll + webhook for the same QR credit only once.
+    const paymentId = await findCollectionPaymentId({ providerId, providerMode, providerPayload });
+    await applyRidePayment({
+      rideId: plainRide._id,
+      fareAmount: Number(collection.amount || 0),
+      payment: {
+        provider: "razorpay",
+        providerId,
+        providerPaymentId: paymentId,
+        providerMode,
+        source: "qr",
+        currency: collection.currency || "INR",
+      },
+    });
+    const updated = await Ride.findById(plainRide._id).select("driverPaymentCollection").lean();
+    return serializeDriverPaymentCollection(updated?.driverPaymentCollection || {});
+  }
 
-  return serializeDriverPaymentCollection(nextCollection);
+  const linkUrl = collection.linkUrl || providerPayload?.short_url || providerPayload?.url || "";
+  const updatedAt = new Date();
+  // Only this QR's status: keeps every other field and never overwrites a payment that landed meanwhile.
+  await Ride.updateOne(
+    { _id: plainRide._id, "driverPaymentCollection.providerId": providerId, ...UNPAID_COLLECTION_FILTER },
+    {
+      $set: {
+        "driverPaymentCollection.status": providerStatus,
+        "driverPaymentCollection.linkUrl": linkUrl,
+        "driverPaymentCollection.updatedAt": updatedAt,
+      },
+    },
+  );
+
+  return serializeDriverPaymentCollection({ ...collection, status: providerStatus, linkUrl, updatedAt });
 };
 
 const sanitizeEmergencyPhone = (value) =>
@@ -6343,22 +6395,40 @@ export const topUpMyWallet = async (req, res) => {
 };
 
 export const createDriverPaymentQr = async (req, res) => {
-  const amountInPaise = normalizePaymentAmount(req.body.amount);
   const rideId = String(req.body.rideId || "").trim();
 
-  if (!rideId) {
+  if (!rideId || !mongoose.isValidObjectId(rideId)) {
     throw new ApiError(400, "rideId is required");
   }
 
   const ride = await Ride.findOne({
     _id: rideId,
     driverId: req.auth.sub,
-  })
-    .select("_id fare paymentMethod serviceType driverPaymentCollection");
+  }).select("_id userId driverId fare status liveStatus paymentMethod serviceType goodsAdvance walletPayment walletShortfall driverPaymentCollection");
 
   if (!ride) {
     throw new ApiError(404, "Ride not found for this driver");
   }
+
+  if (isRideCollectionPaid(ride)) {
+    throw ridePaymentError(409, RIDE_PAYMENT_CODES.ALREADY_PAID, "This ride is already paid");
+  }
+
+  if (!isRidePayableNow(ride)) {
+    throw ridePaymentError(409, RIDE_PAYMENT_CODES.PAYMENT_NOT_ALLOWED, "The QR can be shown once you reach the drop");
+  }
+
+  // The amount is decided here, never by the app (an `amount` in the request is ignored): what the rider still
+  // owes, the same number the apps show as amountToCollect.
+  const amountDue = rideFareDue(ride);
+  if (amountDue <= 0) {
+    throw ridePaymentError(409, RIDE_PAYMENT_CODES.PAYMENT_NOT_ALLOWED, "Nothing is left to collect on this ride");
+  }
+  const amountInPaise = normalizePaymentAmount(amountDue);
+
+  // A new QR replaces the old one: close the old one so it can no longer be paid.
+  const previousCollection = ride.toObject().driverPaymentCollection || {};
+  await closeRidePaymentCollection(previousCollection);
 
   let payload;
 
@@ -6378,6 +6448,7 @@ export const createDriverPaymentQr = async (req, res) => {
         notes: {
           rideId,
           driverId: String(req.auth.sub),
+          userId: String(ride.userId || ""),
           serviceType: ride.serviceType || "ride",
           source: "driver_collect_amount",
         },
@@ -6410,18 +6481,33 @@ export const createDriverPaymentQr = async (req, res) => {
     });
   }
 
-  ride.driverPaymentCollection = {
-    provider: "razorpay",
-    providerId: payload.id,
-    providerMode: payload.providerMode,
-    status: normalizeCollectionStatus(payload.rawStatus || payload.status),
-    amount: payload.amount,
-    currency: payload.currency || "INR",
-    linkUrl: payload.linkUrl || "",
-    paidAt: null,
-    updatedAt: new Date(),
-  };
-  await ride.save();
+  const saved = await Ride.updateOne(
+    { _id: ride._id, ...UNPAID_COLLECTION_FILTER },
+    {
+      $set: {
+        driverPaymentCollection: {
+          provider: "razorpay",
+          providerId: payload.id,
+          providerOrderId: "",
+          providerPaymentId: "",
+          providerMode: payload.providerMode,
+          source: "qr",
+          status: normalizeCollectionStatus(payload.rawStatus || payload.status),
+          amount: payload.amount,
+          currency: payload.currency || "INR",
+          linkUrl: payload.linkUrl || "",
+          paidAt: null,
+          updatedAt: new Date(),
+        },
+      },
+    },
+  );
+
+  if (!saved.modifiedCount) {
+    // Paid meanwhile (cash received or the rider paid in the app): this QR must not be payable.
+    await closeRidePaymentCollection({ providerId: payload.id, providerMode: payload.providerMode, status: "active" });
+    throw ridePaymentError(409, RIDE_PAYMENT_CODES.ALREADY_PAID, "This ride is already paid");
+  }
 
   res.json({
     success: true,
@@ -7369,7 +7455,7 @@ export const getDriverPaymentQrStatus = async (req, res) => {
   const ride = await Ride.findOne({
     _id: rideId,
     driverId: req.auth.sub,
-  }).select("_id driverPaymentCollection");
+  }).select("_id userId driverId fare status liveStatus paymentMethod goodsAdvance walletPayment walletShortfall driverPaymentCollection");
 
   if (!ride) {
     throw new ApiError(404, "Ride not found for this driver");

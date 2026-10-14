@@ -84,7 +84,8 @@ test('complete: the hold is captured, the ride is paid (no payment sheet), the d
 
   // nothing left to pay from the completion sheet
   const pay = await t.api('POST', `/rides/${rideId}/complete-payment/wallet`, { token: rider.token, body: { rating: 5 } });
-  assert.equal(pay.status, 400, pay.text);
+  assert.equal(pay.status, 409, pay.text);
+  assert.equal(pay.body.code, 'ALREADY_PAID');
 
   // driver: credited fare - commission, like an online ride
   const earning = await t.m.WalletTransaction.findOne({ rideId, type: 'ride_earning' }).lean();

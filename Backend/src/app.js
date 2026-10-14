@@ -17,9 +17,11 @@ app.use(
 );
   app.use(express.json({
     limit: '25mb',
-    // Razorpay signs the exact bytes it sent, so keep them for the webhook route only.
+    // Razorpay signs the exact bytes it sent, so keep them for the webhook routes only
+    // (goods advance: /deliveries/advance/razorpay/webhook, ride payments: /rides/payments/razorpay/webhook).
     verify: (req, _res, buf) => {
-      if (String(req.originalUrl || '').includes('/advance/razorpay/webhook')) {
+      const url = String(req.originalUrl || '');
+      if (url.includes('/advance/razorpay/webhook') || url.includes('/rides/payments/razorpay/webhook')) {
         req.rawBody = buf;
       }
     },

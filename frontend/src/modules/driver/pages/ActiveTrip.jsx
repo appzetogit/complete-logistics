@@ -1531,6 +1531,7 @@ const ActiveTrip = () => {
             rideId,
             status: nextStatus,
             paymentMethod: paymentMode || undefined,
+            ...(nextStatus === 'completed' ? { cashReceived: String(paymentMode || selectedPaymentMode).toLowerCase() === 'cash' } : {}),
             ...(driverPaymentCollection ? { driverPaymentCollection } : {}),
             ...(Number.isFinite(lat) && Number.isFinite(lng) ? { coordinates: [lng, lat] } : {}),
         });
@@ -1547,6 +1548,8 @@ const ActiveTrip = () => {
                     {
                         status: 'completed',
                         paymentMethod: paymentMode || undefined,
+                        // The driver collected the fare in cash: the rider can no longer pay it online too.
+                        cashReceived: String(paymentMode).toLowerCase() === 'cash',
                         driverPaymentCollection: buildDriverPaymentCollection({
                             mode: paymentMode,
                             status: driverPaymentStatus,
@@ -1578,6 +1581,8 @@ const ActiveTrip = () => {
                 {
                     status: 'completed',
                     paymentMethod: paymentMode || undefined,
+                    // The driver collected the fare in cash: the rider can no longer pay it online too.
+                    cashReceived: String(paymentMode).toLowerCase() === 'cash',
                     driverPaymentCollection: buildDriverPaymentCollection({
                         mode: paymentMode,
                         status: driverPaymentStatus,
@@ -1705,6 +1710,7 @@ const ActiveTrip = () => {
         setPaymentQr(null);
 
         try {
+            // The server decides the amount (what the rider still owes); `amount` is ignored.
             const response = await api.post('/drivers/payments/qr', {
                 rideId,
                 amount: fareAmount,

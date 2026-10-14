@@ -26,6 +26,7 @@ import {
   serializeGoodsAdvance,
 } from '../user/services/goodsAdvanceService.js';
 import { applyPromoToRideInTransaction } from './promoService.js';
+import { UNPAID_COLLECTION_FILTER, rideFareDue } from './ridePaymentState.js';
 import { getTipSettings } from './appSettingsService.js';
 import { getBidRideSettings, getTransportRideSettings } from './transportSettingsService.js';
 import {
@@ -1520,6 +1521,46 @@ export const withoutAcceptSelfie = (ride) => {
 const PAID_COLLECTION_STATUSES = new Set(['paid', 'captured', 'success', 'completed']);
 
 /**
+ * The driver tapped "Cash received" when completing a cash ride: the fare is paid, so the rider can no longer pay
+ * it online as well (ALREADY_PAID). Does nothing when the ride was already paid another way (the rider paid
+ * online at the drop) or is not a cash ride. An open QR for the ride is closed.
+ */
+const markRideCashReceived = async (ride) => {
+  if (ride.paymentMethod !== 'cash') return false;
+  const now = new Date();
+  const collection = ride.driverPaymentCollection || {};
+  const openCollection = collection.providerId
+    ? { providerId: collection.providerId, providerMode: collection.providerMode, status: collection.status }
+    : null;
+  const result = await Ride.updateOne(
+    { _id: ride._id, paymentMethod: 'cash', ...UNPAID_COLLECTION_FILTER },
+    {
+      $set: {
+        driverPaymentCollection: {
+          provider: 'cash',
+          providerId: '',
+          providerOrderId: '',
+          providerPaymentId: '',
+          providerMode: 'cash',
+          source: 'cash',
+          status: 'paid',
+          amount: rideFareDue(ride),
+          currency: 'INR',
+          linkUrl: '',
+          paidAt: now,
+          updatedAt: now,
+        },
+      },
+    },
+  );
+  if (result.modifiedCount && openCollection) {
+    const { closeRidePaymentCollection } = await import('./ridePaymentService.js');
+    await closeRidePaymentCollection(openCollection);
+  }
+  return Boolean(result.modifiedCount);
+};
+
+/**
  * How the ride is paid, for both apps: isPaid, what the driver must still collect, and the wallet details.
  *   cash: the driver collects the fare (less a paid goods advance)
  *   wallet: nothing to collect, unless the wallet fell short at completion (walletShortfall)
@@ -1530,12 +1571,14 @@ export const serializeRidePaymentState = (ride) => {
   const collectionPaid = Boolean(ride?.driverPaymentCollection?.paidAt)
     || PAID_COLLECTION_STATUSES.has(String(ride?.driverPaymentCollection?.status || '').toLowerCase());
   const shortfall = Number(ride?.walletShortfall || 0);
-  const remaining = getRemainingFare(ride);
   return {
     isPaid: collectionPaid || (method === 'wallet' && Boolean(ride?.walletPayment?.at) && shortfall <= 0),
     // What the DRIVER collects in hand: only on cash rides. A wallet shortfall is paid by the rider in the app
     // (the driver was already credited at completion).
-    amountToCollect: collectionPaid || method !== 'cash' ? 0 : remaining,
+    amountToCollect: collectionPaid || method !== 'cash' ? 0 : rideFareDue(ride),
+    // How the fare was paid once it is: cash | qr | razorpay | wallet | free_ride ...
+    paidBy: collectionPaid ? String(ride?.driverPaymentCollection?.source || ride?.driverPaymentCollection?.provider || '') : '',
+    paymentSwitchedFrom: ride?.paymentSwitchedFrom || '',
     riderPaysInApp: method === 'wallet' && !collectionPaid ? shortfall : 0,
     walletHold: ride?.walletHold?.status
       ? { amount: Number(ride.walletHold.amount || 0), status: ride.walletHold.status }
@@ -2331,6 +2374,7 @@ export const updateRideLifecycle = async ({
   coordinates,
   otp,
   endTripEarly = false,
+  cashReceived,
 }) => {
   const config = rideStatusConfig[nextStatus];
 
@@ -2448,13 +2492,9 @@ export const updateRideLifecycle = async ({
     }
   }
 
-  // The driver's app may report how it was paid (cash/online), but a wallet ride stays a wallet ride: the rider
-  // chose it and the money is already held.
-  // Nor can the driver make a ride a wallet ride: only the rider chooses wallet, at booking (with a hold).
-  if (paymentMethod !== undefined && paymentMethod !== null && String(paymentMethod).trim() && ride.paymentMethod !== 'wallet') {
-    const driverReportedMethod = normalizeRidePaymentMethod(paymentMethod);
-    ride.paymentMethod = driverReportedMethod === 'wallet' ? 'online' : driverReportedMethod;
-  }
+  // How a ride is paid is never the driver's call: `paymentMethod` from the driver's app is ignored. Only the
+  // rider's choice at booking and a confirmed payment (ridePaymentService) change it; otherwise a driver could
+  // mark an unpaid cash ride "online" and be credited the fare. It only tells whether the driver took cash (below).
 
   if (nextStatus === RIDE_LIVE_STATUS.COMPLETED) {
     ride.completedAt = new Date();
@@ -2473,6 +2513,15 @@ export const updateRideLifecycle = async ({
   }
   await ride.save();
   await syncDeliveryWithRide(ride);
+
+  // "Cash received": `cashReceived: true`, or (current apps) completing with `paymentMethod: 'cash'`. An app that
+  // completes before the rider has paid sends `cashReceived: false`, so the rider can still pay online.
+  const tookCash = cashReceived === undefined || cashReceived === null || cashReceived === ''
+    ? String(paymentMethod || '').trim().toLowerCase() === 'cash'
+    : cashReceived === true || cashReceived === 'true';
+  if (nextStatus === RIDE_LIVE_STATUS.COMPLETED && tookCash) {
+    await markRideCashReceived(ride);
+  }
 
   let walletUpdate = null;
 
@@ -3070,10 +3119,19 @@ export const submitRideFeedback = async ({ rideId, userId, rating, comment = '',
     throw new ApiError(404, 'Driver not found');
   }
 
+  // A tip already paid online (with the fare) is kept; the rating no longer has to come with the payment.
+  const paidTip = ride.feedback?.tipPaidAt
+    ? {
+        tipAmount: ride.feedback.tipAmount,
+        tipPaymentId: ride.feedback.tipPaymentId,
+        tipOrderId: ride.feedback.tipOrderId,
+        tipPaidAt: ride.feedback.tipPaidAt,
+      }
+    : { tipAmount: numericTip };
   ride.feedback = {
     rating: numericRating,
     comment: String(comment || '').trim(),
-    tipAmount: numericTip,
+    ...paidTip,
     submittedAt: new Date(),
   };
 

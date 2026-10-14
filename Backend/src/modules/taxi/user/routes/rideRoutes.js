@@ -23,6 +23,7 @@ import {
   listAvailableDrivers,
   listAvailableDriversSummary,
   payRideCompletionWithWallet,
+  razorpayRidePaymentWebhook,
   submitAcceptSelfie,
   submitRiderRating,
   submitRideReview,
@@ -34,6 +35,8 @@ import {
 
 export const rideRouter = Router();
 
+// Razorpay -> server (no app token): driver QR / payment link and rider checkout payments. Signature checked.
+rideRouter.post('/payments/razorpay/webhook', asyncHandler(razorpayRidePaymentWebhook));
 rideRouter.post('/', authenticate(['user']), rideCreationRateLimit, asyncHandler(createRide));
 rideRouter.get('/', authenticate(['user', 'driver']), asyncHandler(listMyRides));
 rideRouter.get('/app-settings/tip', asyncHandler(getRideAppTipSettings));
