@@ -26,7 +26,7 @@ import {
   serializeGoodsAdvance,
 } from '../user/services/goodsAdvanceService.js';
 import { applyPromoToRideInTransaction } from './promoService.js';
-import { UNPAID_COLLECTION_FILTER, rideFareDue } from './ridePaymentState.js';
+import { UNPAID_COLLECTION_FILTER, canRidePayOnline, rideFareDue } from './ridePaymentState.js';
 import { getTipSettings } from './appSettingsService.js';
 import { getBidRideSettings, getTransportRideSettings } from './transportSettingsService.js';
 import {
@@ -1579,6 +1579,9 @@ export const serializeRidePaymentState = (ride) => {
     // How the fare was paid once it is: cash | qr | razorpay | wallet | free_ride ...
     paidBy: collectionPaid ? String(ride?.driverPaymentCollection?.source || ride?.driverPaymentCollection?.provider || '') : '',
     paymentSwitchedFrom: ride?.paymentSwitchedFrom || '',
+    // Cash ride that can switch to online right now (driver at the drop / completed within the window, unpaid):
+    // the driver app shows "Show QR", the user app "Pay online instead".
+    canPayOnline: canRidePayOnline(ride),
     riderPaysInApp: method === 'wallet' && !collectionPaid ? shortfall : 0,
     walletHold: ride?.walletHold?.status
       ? { amount: Number(ride.walletHold.amount || 0), status: ride.walletHold.status }

@@ -74,6 +74,9 @@ export const createDefaultBusinessSettings = () => ({
     goods_advance_refund_to: 'refund_wallet',
     // Where a rider's compensation goes when a driver cancels with a fine: wallet (spendable) | refund_wallet.
     driver_cancel_compensation_to: 'wallet',
+    // An ONLINE booking the rider has not paid this many hours after completion: the platform credits the driver
+    // the fare (the rider still owes it and can pay later). 0 = never (the driver waits for the rider).
+    unpaid_online_cover_hours: '24',
     // Riders may choose to pay the full fare up front instead of the default advance share.
     goods_advance_allow_full: 'true',
     // 1 = the driver must also take a face selfie at goods pickup and delivery (turn on once the driver app ships it).

@@ -131,6 +131,7 @@ import {
   AdminUserSubscriptions,
   AdminVehicleType,
   AdminWalletPayment,
+  AdminPaymentRefunds,
   AdminWalletSettings,
   AdminWithdrawalRequestDetail,
   AdminWithdrawalRequestDrivers,
@@ -221,6 +222,7 @@ const adminRoutes = (
       <Route path="pooling/vehicles/view/:id" element={<AdminPoolingVehicleForm mode="view" />} />
       <Route path="pooling/bookings" element={<AdminPoolingBookings />} />
       <Route path="wallet/payment" element={<AdminWalletPayment />} />
+      <Route path="wallet/refunds" element={<AdminPaymentRefunds />} />
       <Route path="users" element={<AdminUserList />} />
       <Route path="users/create" element={<AdminUserCreate />} />
       <Route path="users/subscriptions" element={<AdminUserSubscriptions />} />

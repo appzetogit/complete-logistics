@@ -47,11 +47,41 @@ export const rideFareDue = (ride) => {
   return Math.max(0, roundMoney(fare - advancePaid));
 };
 
-export const isRidePayableNow = (ride) =>
+// Driver assigned, not cancelled, and at the drop or done.
+export const isRideInPayableStage = (ride) =>
   Boolean(ride)
   && ride.status !== 'cancelled'
   && Boolean(ride.driverId)
   && (ride.status === 'completed' || PAYABLE_LIVE_STATUSES.has(String(ride.liveStatus || '')));
+
+// A missing method counts as cash (the Ride model default).
+export const isCashBooking = (ride) => String(ride?.paymentMethod || 'cash').trim().toLowerCase() === 'cash';
+
+// How long after completion a cash ride can still be paid online (env CASH_PAY_ONLINE_WINDOW_MINUTES, default 60).
+export const cashPayOnlineWindowMinutes = () => {
+  const raw = process.env.CASH_PAY_ONLINE_WINDOW_MINUTES;
+  const value = Number(raw);
+  return raw !== undefined && raw !== '' && Number.isFinite(value) && value >= 0 ? value : 60;
+};
+
+// A completed cash ride is open for online payment only for a while: older ones were paid in cash (the driver
+// app did not record it), so "Pay online instead" must not appear on the rider's history.
+export const isPastCashPayWindow = (ride, now = Date.now()) => {
+  if (ride?.status !== 'completed' || !isCashBooking(ride)) return false;
+  const completedAt = ride.completedAt ? new Date(ride.completedAt).getTime() : Number.NaN;
+  if (!Number.isFinite(completedAt)) return true;
+  return now - completedAt > cashPayOnlineWindowMinutes() * 60 * 1000;
+};
+
+export const isRidePayableNow = (ride, now = Date.now()) => isRideInPayableStage(ride) && !isPastCashPayWindow(ride, now);
+
+/**
+ * A cash ride that can switch to online payment right now: driver at the drop (or completed within the window),
+ * fare unpaid and > 0. Drives the apps' "Show QR" / "Pay online instead". Same rule the payment endpoints apply.
+ * Online and wallet bookings have their own pay flow, so they never get it.
+ */
+export const canRidePayOnline = (ride, now = Date.now()) =>
+  isCashBooking(ride) && rideFareDue(ride) > 0 && isRidePayableNow(ride, now);
 
 /**
  * How a completed ride is settled with the driver:

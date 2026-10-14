@@ -248,6 +248,11 @@ import {
 } from '../controllers/poolingController.js';
 import { promotionsRouter } from '../promotions/routes/index.js';
 import { listSafetyAlerts, resolveSafetyAlert } from '../../safety/controllers/safetyController.js';
+import {
+  listRidePaymentRefunds,
+  resolveRidePaymentRefundAdmin,
+  retryRidePaymentRefundAdmin,
+} from '../controllers/ridePaymentRefundController.js';
 
 export const adminRouter = Router();
 
@@ -456,6 +461,10 @@ adminRouter.get('/admin/safety/alerts', authenticate(['admin']), listSafetyAlert
 adminRouter.patch('/admin/safety/alerts/:id/resolve', authenticate(['admin']), resolveSafetyAlert);
 adminRouter.get('/admin/ongoing-rides', getOngoingRides);
 adminRouter.get('/admin/ride-requests', getRideRequests);
+// Rider payments refunded automatically (ride already paid...): failed / stuck ones need an admin.
+adminRouter.get('/admin/ride-payment-refunds', listRidePaymentRefunds);
+adminRouter.post('/admin/ride-payment-refunds/:rideId/:paymentId/retry', retryRidePaymentRefundAdmin);
+adminRouter.patch('/admin/ride-payment-refunds/:rideId/:paymentId/resolve', resolveRidePaymentRefundAdmin);
 adminRouter.delete('/admin/ongoing-rides/:id', deleteOngoingRide);
 adminRouter.get('/admin/deliveries', getDeliveries);
 adminRouter.get('/admin/trips', getIntercityTrips);

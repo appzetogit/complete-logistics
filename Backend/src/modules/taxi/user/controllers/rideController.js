@@ -21,6 +21,7 @@ import {
   listRideHistoryForIdentity,
   RIDE_AUDIENCE,
   audienceForRole,
+  serializeRidePaymentState,
   serializeRideRealtime,
   submitRideFeedback,
   submitRiderRatingByDriver,
@@ -335,6 +336,11 @@ export const getRideById = async (req, res) => {
 
   // Each side gets its own cut: no OTP for the driver; no earnings, commission or accept selfie for the rider.
   const plain = rawRideForAudience(ride, audienceForRole(req.auth.role));
+  // The same payment fields as every other ride payload (the raw document does not have them).
+  const paymentState = serializeRidePaymentState(ride);
+  for (const key of ['isPaid', 'amountToCollect', 'riderPaysInApp', 'paidBy', 'paymentSwitchedFrom', 'canPayOnline']) {
+    plain[key] = paymentState[key];
+  }
   // Same shape as every other ride payload: null until the ride is cancelled.
   plain.cancellation = serializeRideCancellation(ride);
 

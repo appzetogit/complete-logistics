@@ -99,6 +99,7 @@ Ride payloads now carry these fields. That covers REST (`GET /rides`, `GET /ride
   "paidBy": "qr",
   "paymentSwitchedFrom": "cash",
   "riderPaysInApp": 0,
+  "canPayOnline": false,
   "driverPaymentCollection": {
     "provider": "razorpay", "providerId": "qr_Q1...", "providerOrderId": "", "providerPaymentId": "pay_Q1...",
     "providerMode": "razorpay_qr", "source": "qr", "status": "paid", "amount": 200, "currency": "INR",
@@ -115,6 +116,7 @@ Ride payloads now carry these fields. That covers REST (`GET /rides`, `GET /ride
 | `paymentSwitchedFrom` | `"cash"` when a cash ride was paid online in the end. Receipts can show "Booked: Cash · Paid: Online". |
 | `paymentMethod` | `cash` \| `online` \| `wallet`. Becomes `online` when a cash ride is paid online. **The driver can no longer change it.** |
 | `driverPaymentCollection.source` | Same values as `paidBy` |
+| `canPayOnline` | **Show "Show QR" (driver) / "Pay online instead" (rider) only when this is `true`.** It is `true` for a **cash** booking that is unpaid, has something to pay, and is at the drop (`arrived` / `goods_delivered`) or was completed **less than 60 minutes ago**. It is always `false` for online and wallet bookings. It is sent in every ride payload (`GET /rides/:id`, active ride, history, the status update response, `ride:state`) and turns `false` live after "Cash received" or a payment. |
 
 ### 3.1 Model change (both apps)
 
@@ -258,6 +260,7 @@ void _onPaid() { _poll?.cancel(); setState(() => paid = true); }
 | Cash, paid online **before** completion | `+(fare - commission)` ("Driver earning credited for online ride") | — |
 | Cash, completed unpaid, paid online **after** | `-commission` | `+fare` ("Ride completion payment credited from rider") |
 | Online booking, rider not paid yet | `-commission` ("Commission deducted; the fare is credited when the rider pays") | `+fare` |
+| Online booking, rider **still** not paid 24 h later (admin setting) | — | `+fare` from the platform ("Fare paid by the platform (the rider has not paid yet)"); a later rider payment adds nothing more |
 
 The end result is always **fare − commission**, plus any tip. `driver:wallet:updated` still arrives with each credit; refresh the wallet when it does.
 

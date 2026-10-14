@@ -924,6 +924,8 @@ const AdminLayout = () => {
             ],
           },
           { icon: Wallet, label: 'Wallet Payment', path: '/admin/wallet/payment', permission: 'wallet.view' },
+          // Rider payments refunded automatically; failed ones need an admin
+          { icon: Wallet, label: 'Payment Refunds', path: '/admin/wallet/refunds', permission: 'wallet.view' },
           {
             icon: Car,
             label: 'Driver Management',

@@ -209,6 +209,21 @@ const TransportRideSettings = () => {
                    </div>
 
                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium text-gray-700 block ml-0.5">Pay Driver For Unpaid Online Rides After (hours)</label>
+                      <input
+                       type="number"
+                       min="0"
+                       value={settings.unpaid_online_cover_hours ?? '24'}
+                       onChange={(e) => handleChange('unpaid_online_cover_hours', e.target.value)}
+                       className="w-full bg-white border border-gray-200 rounded-lg py-2.5 px-4 text-sm text-gray-900 focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400 transition-all outline-none shadow-sm"
+                      />
+                      <p className="text-xs text-gray-500 ml-0.5">
+                         If a rider booked online and still has not paid this long after the trip, the platform pays the
+                         driver the fare (the rider still owes it). 0 = never.
+                      </p>
+                   </div>
+
+                   <div className="space-y-1.5">
                       <label className="text-sm font-medium text-gray-700 block ml-0.5">Require Admin Approval to End Rental</label>
                       <select 
                        value={settings.require_admin_approval_to_end_rental || '0'} 

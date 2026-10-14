@@ -21,7 +21,7 @@ const round2 = (n) => Math.round(n * 100) / 100;
 
 // ---- fake Razorpay -------------------------------------------------------------------------------------------
 
-const rp = { orders: new Map(), payments: new Map(), qrs: new Map(), calls: [], n: 0 };
+const rp = { orders: new Map(), payments: new Map(), qrs: new Map(), calls: [], n: 0, failRefunds: new Set() };
 const json = (value) => new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } });
 const realFetch = globalThis.fetch;
 
@@ -67,6 +67,9 @@ before(() => {
       return json(payment);
     }
     if (method === 'POST' && (m = path.match(/^\/payments\/([^/]+)\/refund$/))) {
+      if (rp.failRefunds.has(m[1])) {
+        return new Response(JSON.stringify({ error: { description: 'The refund could not be processed' } }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      }
       return json({ id: `rfnd_${(rp.n += 1)}`, payment_id: m[1], amount: body.amount, status: 'processed' });
     }
     throw new Error(`unexpected Razorpay call ${method} ${path}`);
@@ -473,4 +476,282 @@ test('two wallet payments at the same moment: the rider is charged once', async 
   assert.equal((await t.m.UserWallet.findOne({ userId: ctx.rider.user._id }).lean()).balance, 1000 - FARE);
   assert.equal((await complete(rideId, ctx.driver)).status, 200);
   assert.equal(await driverNet(rideId), FARE - COMMISSION);
+});
+
+// ---- canPayOnline: the flag that turns on "Show QR" (driver) / "Pay online instead" (rider) ------------------------
+
+const rideAs = async (rideId, who) => (await t.api('GET', `/rides/${rideId}`, { token: who.token })).body.data;
+const step = (rideId, driver, status, extra = {}) => t.patchRideStatus(rideId, { token: driver.token, body: { status, ...extra } });
+const book = async (ctx, { paymentMethod = 'cash', vehicle = ctx.vehicle } = {}) => {
+  const created = await t.api('POST', '/rides', {
+    token: ctx.rider.token,
+    body: { pickup: t.locations.pickup, drop: t.locations.drop, fare: FARE, vehicleTypeId: String(vehicle._id), paymentMethod },
+  });
+  assert.equal(created.status, 201, created.text);
+  return created.body.data.ride._id;
+};
+
+test('canPayOnline 1-3: false before the drop, true at the drop (REST + ride:state, rider and driver), false after cash received', async () => {
+  const ctx = await setup();
+  const rideId = await book(ctx);
+  await t.acceptRide(rideId, ctx.driver.driver._id);
+  assert.equal((await rideAs(rideId, ctx.rider)).canPayOnline, false, 'accepted');
+  assert.equal((await step(rideId, ctx.driver, 'arriving')).status, 200);
+  assert.equal((await step(rideId, ctx.driver, 'started')).status, 200);
+  assert.equal((await rideAs(rideId, ctx.rider)).canPayOnline, false, 'started');
+
+  const riderLive = await t.connectSocket(ctx.rider.token);
+  const driverLive = await t.connectSocket(ctx.driver.token);
+  const arrived = await step(rideId, ctx.driver, 'arrived');
+  assert.equal(arrived.status, 200, arrived.text);
+  assert.equal(arrived.body.data.canPayOnline, true, 'driver lifecycle response');
+  await waitFor(() => riderLive.of('ride:state').find((e) => e.payload.rideId === rideId && e.payload.canPayOnline === true), { message: 'rider ride:state' });
+  await waitFor(() => driverLive.of('ride:state').find((e) => e.payload.rideId === rideId && e.payload.canPayOnline === true), { message: 'driver ride:state' });
+  assert.equal((await rideAs(rideId, ctx.rider)).canPayOnline, true, 'GET /rides/:id rider');
+  assert.equal((await rideAs(rideId, ctx.driver)).canPayOnline, true, 'GET /rides/:id driver');
+  assert.equal((await t.api('GET', '/rides/active/me', { token: ctx.rider.token })).body.data.canPayOnline, true, 'active ride');
+
+  const done = await complete(rideId, ctx.driver, { cashReceived: true });
+  assert.equal(done.body.data.canPayOnline, false);
+  assert.equal(done.body.data.isPaid, true);
+  const asRider = await rideAs(rideId, ctx.rider);
+  assert.equal(asRider.canPayOnline, false);
+  assert.equal(asRider.isPaid, true);
+  assert.equal(asRider.paidBy, 'cash');
+  await waitFor(() => riderLive.of('ride:state').find((e) => e.payload.rideId === rideId && e.payload.isPaid === true && e.payload.canPayOnline === false), { message: 'rider told it is paid' });
+});
+
+test('canPayOnline 4: the rider pays at the drop -> false, isPaid, paidBy, live to the rider', async () => {
+  const ctx = await setup();
+  const rideId = await bookAndArrive(ctx);
+  const riderLive = await t.connectSocket(ctx.rider.token);
+  assert.equal((await rideAs(rideId, ctx.rider)).canPayOnline, true);
+  assert.equal((await walletPay(rideId, ctx.rider)).status, 201);
+  const live = await waitFor(() => riderLive.of('ride:state').find((e) => e.payload.rideId === rideId && e.payload.isPaid === true), { message: 'paid state' });
+  assert.equal(live.payload.canPayOnline, false);
+  assert.equal(live.payload.paidBy, 'wallet');
+  assert.equal((await rideAs(rideId, ctx.driver)).canPayOnline, false);
+});
+
+test('canPayOnline 5: completed with cashReceived:false stays true; paying turns it false', async () => {
+  const ctx = await setup();
+  const rideId = await bookAndArrive(ctx);
+  const done = await complete(rideId, ctx.driver, { cashReceived: false });
+  assert.equal(done.body.data.canPayOnline, true);
+  const history = (await t.api('GET', '/rides', { token: ctx.rider.token })).body.data.results.find((r) => r.rideId === rideId);
+  assert.equal(history.canPayOnline, true, 'history list carries it too');
+  assert.equal((await walletPay(rideId, ctx.rider)).status, 201);
+  assert.equal((await rideAs(rideId, ctx.rider)).canPayOnline, false);
+});
+
+test('canPayOnline 6: nothing left to pay (goods advance == fare) -> false', async () => {
+  const ctx = await setup();
+  const rideId = await bookAndArrive(ctx);
+  await t.m.Ride.collection.updateOne(
+    { _id: new t.mongoose.Types.ObjectId(rideId) },
+    { $set: { goodsAdvance: { status: 'paid', amount: FARE, percent: 100 } } },
+  );
+  assert.equal((await rideAs(rideId, ctx.rider)).canPayOnline, false);
+  assert.equal((await rideAs(rideId, ctx.rider)).amountToCollect, 0);
+});
+
+test('canPayOnline 7: online and wallet bookings never get it', async () => {
+  const ctx = await setup();
+  const walletVehicle = await t.factories.vehicle({ setPrice: { payment_type: ['cash', 'online', 'wallet'] } });
+  const walletDriver = await t.factories.driver({ vehicleTypeId: walletVehicle._id });
+  for (const [paymentMethod, vehicle, driver] of [['online', ctx.vehicle, ctx.driver], ['wallet', walletVehicle, walletDriver]]) {
+    const rideId = await book(ctx, { paymentMethod, vehicle });
+    assert.equal((await loadRide(rideId)).paymentMethod, paymentMethod);
+    await t.acceptRide(rideId, driver.driver._id);
+    for (const status of ['arriving', 'started', 'arrived']) assert.equal((await step(rideId, driver, status)).status, 200);
+    assert.equal((await rideAs(rideId, ctx.rider)).canPayOnline, false, paymentMethod);
+    assert.equal((await complete(rideId, driver)).status, 200);
+  }
+});
+
+test('canPayOnline 8: a cancelled ride -> false', async () => {
+  const ctx = await setup();
+  const rideId = await book(ctx);
+  await t.acceptRide(rideId, ctx.driver.driver._id);
+  const cancelled = await t.api('PATCH', `/rides/${rideId}/cancel`, { token: ctx.rider.token, body: { reason: 'test' } });
+  assert.equal(cancelled.status, 200, cancelled.text);
+  assert.equal((await rideAs(rideId, ctx.rider)).canPayOnline, false);
+});
+
+test('pay-online window: an old completed cash ride cannot be paid online, but a QR opened in time still counts', async () => {
+  const ctx = await setup();
+  const rideId = await bookAndArrive(ctx);
+  const qr = await createQr(rideId, ctx.driver); // shown at the drop
+  assert.equal((await complete(rideId, ctx.driver, { cashReceived: false })).status, 200);
+  await t.m.Ride.updateOne({ _id: rideId }, { $set: { completedAt: new Date(Date.now() - 2 * 3600 * 1000) } });
+
+  const asRider = await rideAs(rideId, ctx.rider);
+  assert.equal(asRider.canPayOnline, false, 'not on the history any more');
+  const late = await walletPay(rideId, ctx.rider);
+  assert.equal(late.status, 409);
+  assert.equal(late.body.code, 'PAYMENT_NOT_ALLOWED');
+  assert.equal((await createQr(rideId, ctx.driver)).body.code, 'PAYMENT_NOT_ALLOWED');
+
+  // the QR shown in time is paid late: accepted, not refunded
+  const payment = payQr(qr.body.data.id);
+  const hook = await postWebhook(qrCreditedEvent(qr.body.data.id, payment));
+  assert.equal(hook.body.status, 'applied');
+  assert.equal(await driverNet(rideId), FARE - COMMISSION);
+});
+
+// ---- review fixes: refunds and the unique payment id -------------------------------------------------------------
+
+const extraPaidOrder = (rideId, ctx) => {
+  const id = `order_extra_${(rp.n += 1)}`;
+  rp.orders.set(id, {
+    id, amount: FARE * 100, currency: 'INR', status: 'created',
+    notes: { rideId, userId: String(ctx.rider.user._id), driverId: String(ctx.driver.driver._id), fareDue: String(FARE), tipAmount: '0', source: 'ride_completion' },
+  });
+  return payOrder(id);
+};
+
+test('refund race: verify and the webhook handle the same extra payment at once -> refunded exactly once', async () => {
+  const ctx = await setup();
+  const rideId = await bookAndArrive(ctx);
+  assert.equal((await walletPay(rideId, ctx.rider)).status, 201); // the ride is paid
+  const extra = extraPaidOrder(rideId, ctx);
+  const payment = rp.payments.get(extra.razorpay_payment_id);
+  const [verify, hook] = await Promise.all([
+    t.api('POST', `/rides/${rideId}/complete-payment/razorpay/verify`, { token: ctx.rider.token, body: extra }),
+    postWebhook({ event: 'payment.captured', payload: { payment: { entity: payment }, order: { entity: rp.orders.get(extra.razorpay_order_id) } } }),
+  ]);
+  assert.equal(verify.body.code, 'ALREADY_PAID', verify.text);
+  assert.equal(hook.status, 200);
+  assert.equal(callsTo(new RegExp(`POST /payments/${payment.id}/refund`)).length, 1, 'one refund call');
+  const refunds = (await loadRide(rideId)).paymentRefunds;
+  assert.equal(refunds.length, 1);
+  assert.equal(refunds[0].status, 'processed');
+});
+
+test('failed refund: listed in Admin > Payment Refunds, retry refunds it; another one can be marked done by hand', async () => {
+  const { token: adminToken } = await t.factories.admin();
+  const ctx = await setup();
+  const rideId = await bookAndArrive(ctx);
+  assert.equal((await walletPay(rideId, ctx.rider)).status, 201);
+
+  const first = extraPaidOrder(rideId, ctx);
+  const second = extraPaidOrder(rideId, ctx);
+  rp.failRefunds.add(first.razorpay_payment_id);
+  rp.failRefunds.add(second.razorpay_payment_id);
+  for (const extra of [first, second]) {
+    const res = await t.api('POST', `/rides/${rideId}/complete-payment/razorpay/verify`, { token: ctx.rider.token, body: extra });
+    assert.equal(res.body.code, 'ALREADY_PAID');
+    assert.equal(res.body.details.refunded, false);
+  }
+
+  const list = await t.api('GET', '/admin/ride-payment-refunds', { token: adminToken });
+  assert.equal(list.status, 200, list.text);
+  const mine = list.body.data.results.filter((row) => row.rideId === rideId);
+  assert.deepEqual(mine.map((row) => row.status), ['failed', 'failed']);
+  assert.ok(list.body.data.attentionCount >= 2);
+
+  rp.failRefunds.delete(first.razorpay_payment_id);
+  const retry = await t.api('POST', `/admin/ride-payment-refunds/${rideId}/${first.razorpay_payment_id}/retry`, { token: adminToken });
+  assert.equal(retry.status, 200, retry.text);
+  assert.equal(retry.body.data.status, 'processed');
+  const again = await t.api('POST', `/admin/ride-payment-refunds/${rideId}/${first.razorpay_payment_id}/retry`, { token: adminToken });
+  assert.equal(again.status, 409, 'a processed refund is never sent again');
+
+  const resolved = await t.api('PATCH', `/admin/ride-payment-refunds/${rideId}/${second.razorpay_payment_id}/resolve`, {
+    token: adminToken, body: { note: 'paid back by bank transfer' },
+  });
+  assert.equal(resolved.status, 200, resolved.text);
+  const after = (await t.api('GET', '/admin/ride-payment-refunds', { token: adminToken })).body.data.results;
+  assert.equal(after.filter((row) => row.rideId === rideId).length, 0, 'nothing left needing attention');
+  const stored = (await loadRide(rideId)).paymentRefunds;
+  assert.deepEqual(stored.map((r) => r.status).sort(), ['processed', 'resolved_manually']);
+});
+
+test('unique payment id: a payment already recorded on one ride can never pay another (not applied, not refunded)', async () => {
+  const ctx = await setup();
+  const rideA = await bookAndArrive(ctx);
+  const qrA = await createQr(rideA, ctx.driver);
+  const paymentA = payQr(qrA.body.data.id);
+  assert.equal((await postWebhook(qrCreditedEvent(qrA.body.data.id, paymentA))).body.status, 'applied');
+
+  const other = await setup();
+  const rideB = await bookAndArrive(other);
+  const qrB = await createQr(rideB, other.driver);
+  const reused = { ...paymentA, amount: rp.qrs.get(qrB.body.data.id).payment_amount };
+  const hook = await postWebhook(qrCreditedEvent(qrB.body.data.id, reused));
+  assert.equal(hook.status, 200, JSON.stringify(hook.body));
+  assert.equal(hook.body.status, 'used_elsewhere');
+  assert.notEqual((await loadRide(rideB)).driverPaymentCollection.status, 'paid');
+  assert.equal(callsTo(new RegExp(`POST /payments/${paymentA.id}/refund`)).length, 0, 'the payment that paid ride A is not refunded');
+
+  await assert.rejects(
+    t.m.Ride.collection.updateOne({ _id: new t.mongoose.Types.ObjectId(rideB) }, { $set: { 'driverPaymentCollection.providerPaymentId': paymentA.id } }),
+    (error) => error.code === 11000,
+  );
+});
+
+// ---- review 4.4: online bookings the rider never pays -----------------------------------------------------------
+
+const coverSweep = async () => {
+  const { coverUnpaidOnlineRides } = await import('../../src/modules/taxi/services/ridePaymentService.js');
+  return coverUnpaidOnlineRides({ force: true });
+};
+const completedOnlineRide = async (ctx) => {
+  const rideId = await bookAndArrive(ctx, { paymentMethod: 'online' });
+  assert.equal((await complete(rideId, ctx.driver)).status, 200);
+  assert.equal(await driverNet(rideId), -COMMISSION, 'commission only at completion');
+  return rideId;
+};
+const ageCompletion = (rideId, hours) =>
+  t.m.Ride.updateOne({ _id: rideId }, { $set: { completedAt: new Date(Date.now() - hours * 3600 * 1000) } });
+
+test('unpaid online booking: after the set hours the platform pays the driver once; a late rider payment is not credited again', async () => {
+  await t.setSettings('transport_ride', { unpaid_online_cover_hours: '24' });
+  const ctx = await setup();
+  const rideId = await completedOnlineRide(ctx);
+
+  await ageCompletion(rideId, 23);
+  await coverSweep();
+  assert.equal(await driverNet(rideId), -COMMISSION, 'not yet: still inside the 24 hours');
+
+  const live = await t.connectSocket(ctx.driver.token);
+  await ageCompletion(rideId, 25);
+  await coverSweep();
+  assert.equal(await driverNet(rideId), FARE - COMMISSION, 'driver paid by the platform');
+  await waitFor(() => live.of('driver:wallet:updated').find((e) => e.payload.notification?.id === `ride-cover-${rideId}`), { message: 'driver told' });
+  let ride = await loadRide(rideId);
+  assert.ok(ride.platformCoveredAt);
+  assert.equal(ride.platformCoveredAmount, FARE);
+  assert.notEqual(ride.driverPaymentCollection?.status, 'paid', 'the rider still owes it');
+
+  await coverSweep();
+  assert.equal(await driverNet(rideId), FARE - COMMISSION, 'once only');
+
+  // the rider pays later: their debt is settled, the driver is not credited a second time
+  const pay = await walletPay(rideId, ctx.rider);
+  assert.equal(pay.status, 201, pay.text);
+  assert.equal(await driverNet(rideId), FARE - COMMISSION);
+  ride = await loadRide(rideId);
+  assert.equal(ride.driverPaymentCollection.status, 'paid');
+});
+
+test('unpaid online booking: setting 0 = never covered; paid rides and cash rides are never covered', async () => {
+  const ctx = await setup();
+  await t.setSettings('transport_ride', { unpaid_online_cover_hours: '0' });
+  const unpaid = await completedOnlineRide(ctx);
+  await ageCompletion(unpaid, 48);
+  await coverSweep();
+  assert.equal(await driverNet(unpaid), -COMMISSION);
+
+  await t.setSettings('transport_ride', { unpaid_online_cover_hours: '24' });
+  const paid = await completedOnlineRide(ctx);
+  assert.equal((await walletPay(paid, ctx.rider)).status, 201);
+  await ageCompletion(paid, 48);
+  const cashRide = await bookAndArrive(ctx);
+  assert.equal((await complete(cashRide, ctx.driver)).status, 200);
+  await ageCompletion(cashRide, 48);
+  await coverSweep();
+  assert.equal(await driverNet(paid), FARE - COMMISSION, 'paid: unchanged');
+  assert.equal(await driverNet(cashRide), -COMMISSION, 'cash: the driver holds the cash');
+  assert.equal(await driverNet(unpaid), FARE - COMMISSION, 'the 0-hours ride is covered now that the setting is 24');
 });

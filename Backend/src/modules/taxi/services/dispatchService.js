@@ -19,6 +19,7 @@ import {
   getRideRoom,
   resolveSetPriceForRide,
   RIDE_AUDIENCE,
+  serializeRidePaymentState,
   serializeRideRealtime,
   withoutParcelSelfies,
 } from './rideService.js';
@@ -1969,6 +1970,12 @@ export const startDispatchRecoveryLoop = () => {
     releaseStaleRideWalletHolds().catch((error) => {
       console.error('Stale wallet hold sweep failed', error);
     });
+    // Online bookings the rider never paid: the platform credits the driver after the admin-set hours.
+    import('./ridePaymentService.js')
+      .then(({ coverUnpaidOnlineRides }) => coverUnpaidOnlineRides())
+      .catch((error) => {
+        console.error('Unpaid online ride cover sweep failed', error);
+      });
   }, DISPATCH_RECOVERY_INTERVAL_MS);
 
   dispatchRecoveryTimer.unref?.();
@@ -2108,6 +2115,8 @@ export const notifyRideAccepted = async (ride) => {
     serviceType: populatedRide.serviceType || 'ride',
     status: populatedRide.status,
     liveStatus: populatedRide.liveStatus,
+    // isPaid, amountToCollect, canPayOnline... like every other ride payload
+    ...serializeRidePaymentState(populatedRide),
     fare: populatedRide.fare,
     estimatedDistanceMeters: populatedRide.estimatedDistanceMeters || 0,
     estimatedDurationMinutes: populatedRide.estimatedDurationMinutes || 0,

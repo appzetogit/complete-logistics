@@ -723,6 +723,17 @@ const rideSchema = new mongoose.Schema(
       enum: ['', 'cash', 'online'],
       default: '',
     },
+    // Online booking the rider did not pay in time: the platform credited the driver the fare (amount) at this
+    // moment. The rider still owes it; a later payment goes to the platform, not to the driver again.
+    platformCoveredAt: {
+      type: Date,
+      default: null,
+    },
+    platformCoveredAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     // 'cash' when a cash ride ended up paid online (reports can show both).
     paymentSwitchedFrom: {
       type: String,
@@ -748,10 +759,14 @@ const rideSchema = new mongoose.Schema(
           paymentId: { type: String, default: '' },
           amount: { type: Number, default: 0 },
           refundId: { type: String, default: '' },
+          // pending -> processed (Razorpay accepted) | failed (retry in Admin > Payment Refunds) | resolved_manually
           status: { type: String, default: '' },
           reason: { type: String, default: '' },
           error: { type: String, default: '' },
+          note: { type: String, default: '' },
+          resolvedBy: { type: String, default: '' },
           at: { type: Date, default: null },
+          updatedAt: { type: Date, default: null },
         },
       ],
       default: [],
@@ -913,6 +928,26 @@ const rideSchema = new mongoose.Schema(
 );
 
 rideSchema.index({ userId: 1, createdAt: -1 });
+// One gateway payment can pay one ride only, even if two requests race. Empty ids (unpaid, cash, free rides)
+// are left out. Production has autoIndex off: create it with `node scripts/ensureRidePaymentIndexes.js`.
+rideSchema.index(
+  { 'driverPaymentCollection.providerPaymentId': 1 },
+  {
+    name: 'uniq_ride_provider_payment_id',
+    unique: true,
+    partialFilterExpression: { 'driverPaymentCollection.providerPaymentId': { $gt: '' } },
+  },
+);
+// The unpaid-online-booking cover sweep (see ridePaymentService.coverUnpaidOnlineRides).
+rideSchema.index(
+  { completedAt: 1 },
+  {
+    name: 'ride_unpaid_online_cover',
+    partialFilterExpression: { settledAs: 'cash', paymentMethod: 'online', platformCoveredAt: null },
+  },
+);
+// Admin > Payment Refunds: rides with a refund that needs attention.
+rideSchema.index({ 'paymentRefunds.status': 1 }, { name: 'ride_payment_refund_status', sparse: true });
 rideSchema.index({ driverId: 1, createdAt: -1 });
 rideSchema.index({ status: 1, liveStatus: 1, scheduledAt: 1, createdAt: -1 });
 rideSchema.index({ driverId: 1, scheduledAt: 1, status: 1, liveStatus: 1 });

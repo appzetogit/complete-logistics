@@ -133,6 +133,7 @@ export const AdminTrips = lazy(() => import('../modules/admin/pages/operations/T
 export const AdminDeliveries = lazy(() => import('../modules/admin/pages/operations/Deliveries'));
 export const AdminOngoing = lazy(() => import('../modules/admin/pages/operations/Ongoing'));
 export const AdminWalletPayment = lazy(() => import('../modules/admin/pages/wallet/WalletPayment'));
+export const AdminPaymentRefunds = lazy(() => import('../modules/admin/pages/wallet/PaymentRefunds'));
 export const AdminUserList = lazy(() => import('../modules/admin/pages/users/UserList'));
 export const AdminUserCreate = lazy(() => import('../modules/admin/pages/users/UserCreate'));
 export const AdminUserDetails = lazy(() => import('../modules/admin/pages/users/UserDetails'));

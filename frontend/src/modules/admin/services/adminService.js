@@ -195,6 +195,13 @@ export const adminService = {
   getTodayEarnings: () => api.get('/admin/dashboard/today-earnings'),
   getOverallEarnings: () => api.get('/admin/dashboard/overall-earnings'),
   getCancelChart: () => api.get('/admin/dashboard/cancel-chart'),
+  // Rider payments refunded automatically (status: attention | processed | resolved_manually | all)
+  getRidePaymentRefunds: (status = 'attention') =>
+    api.get(`/admin/ride-payment-refunds?status=${encodeURIComponent(status)}`),
+  retryRidePaymentRefund: (rideId, paymentId) =>
+    api.post(`/admin/ride-payment-refunds/${rideId}/${encodeURIComponent(paymentId)}/retry`),
+  resolveRidePaymentRefund: (rideId, paymentId, note = '') =>
+    api.patch(`/admin/ride-payment-refunds/${rideId}/${encodeURIComponent(paymentId)}/resolve`, { note }),
   getSafetyAlerts: ({ page = 1, limit = 25, status = 'active' } = {}) =>
     api.get(`/admin/safety/alerts?page=${page}&limit=${limit}&status=${encodeURIComponent(status)}`),
   resolveSafetyAlert: (id, note = '') => api.patch(`/admin/safety/alerts/${id}/resolve`, { note }),

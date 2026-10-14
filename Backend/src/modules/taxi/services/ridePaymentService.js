@@ -5,11 +5,13 @@ import { applyDriverWalletAdjustment } from '../driver/services/walletService.js
 import { Ride } from '../user/models/Ride.js';
 import { emitRideStateToParticipants, emitToDriver } from './dispatchService.js';
 import { razorpayRequest, resolveRazorpayCredentials, signaturesMatch } from './razorpayClient.js';
+import { getTransportRideSettings } from './transportSettingsService.js';
 import { getRideDetails } from './rideService.js';
 import {
   RIDE_PAYMENT_CODES,
   UNPAID_COLLECTION_FILTER,
   isRideCollectionPaid,
+  isRideInPayableStage,
   isRidePayableNow,
   rideFareDue,
   wasSettledAsCash,
@@ -66,7 +68,11 @@ export const applyRidePaymentInSession = async ({ session, rideId, userId = null
   if (isSamePayment(ride, payment)) {
     return { status: 'already_applied', ride };
   }
-  if (!isRidePayableNow(ride)) {
+  // A QR or checkout order opened in time may be paid a little later (after the cash pay-online window):
+  // that payment still counts.
+  const openedInTime = (payment.providerId && ride.driverPaymentCollection?.providerId === payment.providerId)
+    || (payment.providerOrderId && ride.riderPaymentOrder?.orderId === payment.providerOrderId);
+  if (!isRidePayableNow(ride) && !(openedInTime && isRideInPayableStage(ride))) {
     return { status: 'not_payable', ride };
   }
 
@@ -138,7 +144,9 @@ export const applyRidePaymentInSession = async ({ session, rideId, userId = null
     return { status: 'duplicate', ride };
   }
 
-  const fareCredit = fare > 0 && wasSettledAsCash(ride) ? fare : 0;
+  // Not again when the platform already paid the driver this fare (unpaid online booking covered): the rider's
+  // late payment settles their debt to the platform.
+  const fareCredit = fare > 0 && wasSettledAsCash(ride) && !ride.platformCoveredAt ? fare : 0;
   const credit = roundMoney(fareCredit + tip);
   let walletResult = null;
   if (credit > 0) {
@@ -194,12 +202,7 @@ export { closeOpenCollection as closeRidePaymentCollection };
  * Refunds a Razorpay payment we cannot use for this ride (already paid, wrong amount, ride cancelled) and
  * records it on the ride. Never refunds the same payment twice.
  */
-export const refundUnusedRidePayment = async ({ rideId, paymentId, amount, reason }) => {
-  if (!paymentId || !(Number(amount) > 0)) return null;
-  const already = await Ride.exists({ _id: rideId, 'paymentRefunds.paymentId': paymentId });
-  if (already) return { paymentId, alreadyRefunded: true };
-
-  const entry = { paymentId, amount: roundMoney(amount), reason, refundId: '', status: 'failed', at: new Date() };
+const callRazorpayRefund = async ({ rideId, paymentId, amount, reason }) => {
   try {
     const { keyId, keySecret } = await resolveRazorpayCredentials();
     const refund = await razorpayRequest({
@@ -209,14 +212,93 @@ export const refundUnusedRidePayment = async ({ rideId, paymentId, amount, reaso
       keyId,
       keySecret,
     });
-    entry.refundId = String(refund?.id || '');
-    entry.status = String(refund?.status || 'processed');
+    return { status: String(refund?.status || 'processed'), refundId: String(refund?.id || ''), error: '' };
   } catch (error) {
-    entry.error = String(error?.message || error).slice(0, 300);
-    console.error('[ride-payment] refund failed, admin must refund manually', String(rideId), paymentId, entry.error);
+    const message = String(error?.message || error).slice(0, 300);
+    console.error('[ride-payment] refund failed, an admin must retry or refund it by hand', String(rideId), paymentId, message);
+    return { status: 'failed', refundId: '', error: message };
   }
-  await Ride.updateOne({ _id: rideId }, { $push: { paymentRefunds: entry } });
-  return entry;
+};
+
+const saveRefundOutcome = (rideId, paymentId, outcome) => Ride.updateOne(
+  { _id: rideId, 'paymentRefunds.paymentId': paymentId },
+  {
+    $set: {
+      'paymentRefunds.$.status': outcome.status,
+      'paymentRefunds.$.refundId': outcome.refundId,
+      'paymentRefunds.$.error': outcome.error,
+      'paymentRefunds.$.updatedAt': new Date(),
+    },
+  },
+);
+
+/**
+ * Refunds a Razorpay payment we cannot use for this ride (already paid, wrong amount, ride not payable) and
+ * records it on the ride. The refund is claimed first (a 'pending' entry, only if none exists for this payment),
+ * so verify and the webhook handling the same extra payment at the same moment refund it once.
+ * A refund Razorpay rejects stays 'failed' and shows up in Admin > Payment Refunds.
+ */
+export const refundUnusedRidePayment = async ({ rideId, paymentId, amount, reason }) => {
+  if (!paymentId || !(Number(amount) > 0)) return null;
+  const now = new Date();
+  const entry = { paymentId, amount: roundMoney(amount), reason, refundId: '', status: 'pending', error: '', at: now, updatedAt: now };
+  const claimed = await Ride.updateOne(
+    { _id: rideId, 'paymentRefunds.paymentId': { $ne: paymentId } },
+    { $push: { paymentRefunds: entry } },
+  );
+  if (!claimed.modifiedCount) {
+    return { paymentId, alreadyRefunded: true };
+  }
+
+  const outcome = await callRazorpayRefund({ rideId, paymentId, amount, reason });
+  await saveRefundOutcome(rideId, paymentId, outcome);
+  return { ...entry, ...outcome };
+};
+
+// A 'pending' refund older than this was interrupted (server restart mid-call): it needs an admin look too.
+export const STALE_PENDING_REFUND_MS = 10 * 60 * 1000;
+
+/** Admin: try a failed (or stuck) refund again. Claimed atomically so two clicks never refund twice. */
+export const retryRidePaymentRefund = async ({ rideId, paymentId }) => {
+  const staleBefore = new Date(Date.now() - STALE_PENDING_REFUND_MS);
+  const ride = await Ride.findOneAndUpdate(
+    {
+      _id: rideId,
+      paymentRefunds: {
+        $elemMatch: {
+          paymentId,
+          $or: [{ status: 'failed' }, { status: 'pending', updatedAt: { $lt: staleBefore } }],
+        },
+      },
+    },
+    { $set: { 'paymentRefunds.$.status': 'pending', 'paymentRefunds.$.updatedAt': new Date() } },
+    { returnDocument: 'after' },
+  ).lean();
+  if (!ride) {
+    throw new ApiError(409, 'This refund is not waiting for a retry (already refunded, in progress or resolved)');
+  }
+  const entry = ride.paymentRefunds.find((item) => item.paymentId === paymentId);
+  const outcome = await callRazorpayRefund({ rideId, paymentId, amount: entry.amount, reason: entry.reason });
+  await saveRefundOutcome(rideId, paymentId, outcome);
+  return { ...entry, ...outcome };
+};
+
+/** Admin: the money was returned outside the app (bank transfer, Razorpay dashboard). */
+export const resolveRidePaymentRefundManually = async ({ rideId, paymentId, note = '', adminId = null }) => {
+  const result = await Ride.updateOne(
+    { _id: rideId, paymentRefunds: { $elemMatch: { paymentId, status: { $in: ['failed', 'pending'] } } } },
+    {
+      $set: {
+        'paymentRefunds.$.status': 'resolved_manually',
+        'paymentRefunds.$.note': String(note || '').trim().slice(0, 300),
+        'paymentRefunds.$.resolvedBy': adminId ? String(adminId) : '',
+        'paymentRefunds.$.updatedAt': new Date(),
+      },
+    },
+  );
+  if (!result.modifiedCount) {
+    throw new ApiError(409, 'This refund is not open');
+  }
 };
 
 /** After the transaction committed: close the QR that is no longer needed, tell both apps. */
@@ -258,6 +340,12 @@ export const applyRidePayment = async ({ refundIfUnused = true, ...args }) => {
     await session.withTransaction(async () => {
       result = await applyRidePaymentInSession({ ...args, session });
     });
+  } catch (error) {
+    // The unique index on the payment id: this payment is already recorded on another ride. It paid that ride,
+    // so it is neither applied here nor refunded.
+    if (error?.code !== 11000) throw error;
+    console.error('[ride-payment] payment id already used on another ride', args.payment?.providerPaymentId, String(args.rideId));
+    return { status: 'used_elsewhere', ride: { _id: args.rideId } };
   } finally {
     await session.endSession();
   }
@@ -298,6 +386,87 @@ export const ensureRazorpayPaymentCaptured = async ({ paymentId, orderId, amount
     });
   }
   throw ridePaymentError(400, RIDE_PAYMENT_CODES.PAYMENT_NOT_ALLOWED, `Payment is ${payment?.status || 'not completed'}`);
+};
+
+// ------------------------------------------------------------------------- unpaid online bookings
+
+const COVER_SWEEP_EVERY_MS = 10 * 60 * 1000;
+let lastCoverSweepAt = 0;
+
+/**
+ * An ONLINE booking is settled at completion as commission-only, and its fare is credited when the rider pays.
+ * If the rider has still not paid `unpaid_online_cover_hours` after completion (admin setting, default 24,
+ * 0 = never), the platform credits the driver the fare itself, so the driver is never left out of pocket.
+ * The rider still owes it (the ride stays unpaid and payable); their late payment goes to the platform.
+ * Once per ride (atomic), never after a payment. Runs from the dispatch recovery loop, at most every 10 minutes.
+ */
+export const coverUnpaidOnlineRides = async ({ now = Date.now(), limit = 50, force = false } = {}) => {
+  if (!force && now - lastCoverSweepAt < COVER_SWEEP_EVERY_MS) return 0;
+  lastCoverSweepAt = now;
+
+  const settings = await getTransportRideSettings();
+  const hours = Number(settings.unpaid_online_cover_hours ?? 24);
+  if (!Number.isFinite(hours) || hours <= 0) return 0;
+
+  const cutoff = new Date(now - hours * 3600 * 1000);
+  const candidates = await Ride.find({
+    status: 'completed',
+    paymentMethod: 'online',
+    settledAs: 'cash',
+    platformCoveredAt: null,
+    driverId: { $ne: null },
+    completedAt: { $lt: cutoff },
+    ...UNPAID_COLLECTION_FILTER,
+  })
+    .sort({ completedAt: 1 })
+    .limit(limit)
+    .lean();
+
+  let covered = 0;
+  for (const candidate of candidates) {
+    const amount = rideFareDue(candidate);
+    if (amount <= 0) continue;
+    const session = await mongoose.startSession();
+    let walletResult = null;
+    try {
+      await session.withTransaction(async () => {
+        walletResult = null;
+        const claimed = await Ride.findOneAndUpdate(
+          { _id: candidate._id, platformCoveredAt: null, status: 'completed', ...UNPAID_COLLECTION_FILTER },
+          { $set: { platformCoveredAt: new Date(now), platformCoveredAmount: amount } },
+          { session, returnDocument: 'after' },
+        );
+        if (!claimed) return;
+        walletResult = await applyDriverWalletAdjustment({
+          driverId: candidate.driverId,
+          rideId: candidate._id,
+          amount,
+          type: 'adjustment',
+          description: 'Fare paid by the platform (the rider has not paid yet)',
+          metadata: { source: 'platform_cover', rideId: String(candidate._id), userId: String(candidate.userId || ''), farePortion: amount },
+          session,
+        });
+      });
+    } catch (error) {
+      console.error('[ride-payment] could not cover an unpaid online ride', String(candidate._id), error?.message || error);
+    } finally {
+      await session.endSession();
+    }
+    if (walletResult?.transaction) {
+      covered += 1;
+      emitToDriver(candidate.driverId, 'driver:wallet:updated', {
+        wallet: walletResult.wallet,
+        transaction: walletResult.transaction,
+        notification: {
+          id: `ride-cover-${candidate._id}`,
+          title: 'Fare credited',
+          body: `Rs ${amount.toFixed(2)} credited for a ride the rider has not paid yet.`,
+          sentAt: new Date().toISOString(),
+        },
+      });
+    }
+  }
+  return covered;
 };
 
 // ---------------------------------------------------------------------------------------------- webhook

@@ -6404,7 +6404,7 @@ export const createDriverPaymentQr = async (req, res) => {
   const ride = await Ride.findOne({
     _id: rideId,
     driverId: req.auth.sub,
-  }).select("_id userId driverId fare status liveStatus paymentMethod serviceType goodsAdvance walletPayment walletShortfall driverPaymentCollection");
+  }).select("_id userId driverId fare status liveStatus completedAt paymentMethod serviceType goodsAdvance walletPayment walletShortfall driverPaymentCollection");
 
   if (!ride) {
     throw new ApiError(404, "Ride not found for this driver");
@@ -7455,7 +7455,7 @@ export const getDriverPaymentQrStatus = async (req, res) => {
   const ride = await Ride.findOne({
     _id: rideId,
     driverId: req.auth.sub,
-  }).select("_id userId driverId fare status liveStatus paymentMethod goodsAdvance walletPayment walletShortfall driverPaymentCollection");
+  }).select("_id userId driverId fare status liveStatus completedAt paymentMethod goodsAdvance walletPayment walletShortfall driverPaymentCollection");
 
   if (!ride) {
     throw new ApiError(404, "Ride not found for this driver");

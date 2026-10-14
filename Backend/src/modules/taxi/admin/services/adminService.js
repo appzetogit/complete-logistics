@@ -8451,6 +8451,9 @@ export const getAdminEarnings = async (query = {}) => {
         // 'cash' when the rider booked cash and paid online in the end; settledAs = how the driver was settled
         paymentSwitchedFrom: ride.paymentSwitchedFrom || '',
         settledAs: ride.settledAs || '',
+        // online booking the rider did not pay: the platform paid the driver (the rider still owes it)
+        platformCoveredAt: ride.platformCoveredAt || null,
+        platformCoveredAmount: Number(ride.platformCoveredAmount || 0),
         zoneId: zoneDoc?._id ? String(zoneDoc._id) : '',
         zoneName: zoneDoc?.name || 'Unmapped Zone',
         vehicleId: vehicleDoc?._id ? String(vehicleDoc._id) : '',
