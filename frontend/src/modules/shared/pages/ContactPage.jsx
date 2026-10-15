@@ -1,7 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Phone, Mail, MapPin, Clock } from 'lucide-react';
-import { SUPPORT_INFO } from '../content/supportInfo';
 
 const ContactPage = () => {
     const navigate = useNavigate();
@@ -39,11 +38,9 @@ const ContactPage = () => {
                         </div>
                         <h3 className="text-2xl font-bold mb-4">Phone Support</h3>
                         <p className="text-gray-500 mb-6 leading-relaxed">
-                            Call us anytime for immediate assistance with your rides or accounts.
+                            Call our toll-free line anytime for immediate assistance with your rides or accounts.
                         </p>
-                        <a href={`tel:${SUPPORT_INFO.phoneHref}`} className="text-3xl font-black text-[#1a1a1a] hover:text-[#FFB300] transition-colors">
-                            {SUPPORT_INFO.phone}
-                        </a>
+                        <p className="text-3xl font-black text-[#1a1a1a]">91-93-911-911</p>
                     </div>
 
                     <div className="bg-white p-10 rounded-3xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
@@ -54,9 +51,7 @@ const ContactPage = () => {
                         <p className="text-gray-500 mb-6 leading-relaxed">
                             Prefer writing? Send us an email and our team will get back to you within 2 hours.
                         </p>
-                        <a href={`mailto:${SUPPORT_INFO.email}`} className="text-xl md:text-2xl font-bold text-[#FFB300] break-all hover:underline">
-                            {SUPPORT_INFO.email}
-                        </a>
+                        <p className="text-2xl font-bold text-[#FFB300]">customercare@Appzeto 24.com</p>
                     </div>
 
                     <div className="bg-white p-10 rounded-3xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
@@ -65,7 +60,7 @@ const ContactPage = () => {
                         </div>
                         <h3 className="text-2xl font-bold mb-4">Headquarters</h3>
                         <p className="text-gray-500 mb-6 leading-relaxed">
-                            {SUPPORT_INFO.officeAddress}
+                            Office No. 110,<br />B. K Tower, H-65, Sec-63,<br />Noida 201301
                         </p>
                     </div>
 

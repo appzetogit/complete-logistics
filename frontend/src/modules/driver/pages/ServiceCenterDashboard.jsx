@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { SUPPORT_INFO } from '../../shared/content/supportInfo';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft,
@@ -3233,7 +3232,7 @@ Processing Time: Refunds are typically credited back to the original payment met
                   </div>
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email Owner</p>
-                    <a href={`mailto:${SUPPORT_INFO.email}`} className="text-base font-bold text-slate-900 hover:text-emerald-600 transition">{SUPPORT_INFO.email}</a>
+                    <a href="mailto:customercare@Appzeto 24.com" className="text-base font-bold text-slate-900 hover:text-emerald-600 transition">customercare@Appzeto 24.com</a>
                   </div>
                 </div>
 
@@ -3243,7 +3242,7 @@ Processing Time: Refunds are typically credited back to the original payment met
                   </div>
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Call Owner</p>
-                    <a href={`tel:${SUPPORT_INFO.phoneHref}`} className="text-base font-bold text-slate-900 hover:text-sky-600 transition">{SUPPORT_INFO.phone}</a>
+                    <a href="tel:91-93-911-911" className="text-base font-bold text-slate-900 hover:text-sky-600 transition">91-93-911-911</a>
                   </div>
                 </div>
 

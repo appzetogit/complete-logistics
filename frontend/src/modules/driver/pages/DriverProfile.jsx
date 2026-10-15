@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { SUPPORT_INFO } from '../../shared/content/supportInfo';
 import * as Motion from 'framer-motion';
 import { AnimatePresence } from 'framer-motion';
 import {
@@ -492,23 +491,23 @@ Processing Time: Refunds are typically credited back to the original payment met
                     </div>
 
                     <div className="space-y-5">
-                        <a href={`mailto:${SUPPORT_INFO.email}`} className="flex items-center gap-4 group">
+                        <a href="mailto:customercare@Appzeto 24.com" className="flex items-center gap-4 group">
                             <div className="w-10 h-10 rounded-xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 group-hover:text-emerald-500 transition-colors shadow-sm">
                                 <Mail size={18} />
                             </div>
                             <div>
                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email Support</p>
-                                <p className="text-[14px] font-bold text-slate-800">{SUPPORT_INFO.email}</p>
+                                <p className="text-[14px] font-bold text-slate-800">customercare@Appzeto 24.com</p>
                             </div>
                         </a>
 
-                        <a href={`tel:${SUPPORT_INFO.phoneHref}`} className="flex items-center gap-4 group">
+                        <a href="tel:" className="flex items-center gap-4 group">
                             <div className="w-10 h-10 rounded-xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 group-hover:text-sky-500 transition-colors shadow-sm">
                                 <Phone size={18} />
                             </div>
                             <div>
                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Call Owner</p>
-                                <p className="text-[14px] font-bold text-slate-800">{SUPPORT_INFO.phone}</p>
+                                <p className="text-[14px] font-bold text-slate-800">91-93-911-911</p>
                             </div>
                         </a>
                     </div>
