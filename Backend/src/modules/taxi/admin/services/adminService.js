@@ -1,6 +1,11 @@
 import mongoose from 'mongoose';
 import { invalidateCachedValue } from '../../../../utils/cache.js';
 import { storeDataUrlImage } from '../../../../utils/localImageStore.js';
+import {
+  DRIVER_DOCUMENT_IMAGE_MAX_BYTES,
+  storeDriverImage,
+  storeInlineImagesDeep,
+} from '../../driver/services/driverImageService.js';
 import { randomBytes } from 'node:crypto';
 import { ApiError } from '../../../../utils/ApiError.js';
 import { env } from '../../../../config/env.js';
@@ -5271,7 +5276,11 @@ export const createDriver = async (payload = {}, currentAdmin = null) => {
   );
   // The map icon follows the catalog vehicle (a "car" driver must not get the truck icon).
   const vehicleIconType = vehicleRecord?.icon_types || vehicleType;
-  const profilePicture = String(payload.profile_picture || payload.profilePicture || '').trim();
+  // Photos and document pictures are stored as files (only the URL in Mongo), as for the driver app.
+  const profilePicture = await storeDriverImage(payload.profile_picture || payload.profilePicture, {
+    folder: 'drivers/profile',
+    label: 'Profile photo',
+  });
   const status = String(
     payload.status || (payload.approve === false ? 'pending' : 'approved'),
   )
@@ -5289,10 +5298,12 @@ export const createDriver = async (payload = {}, currentAdmin = null) => {
     payload.onboarding && typeof payload.onboarding === 'object' && !Array.isArray(payload.onboarding)
       ? payload.onboarding
       : {};
-  const documents =
+  const documents = await storeInlineImagesDeep(
     payload.documents && typeof payload.documents === 'object' && !Array.isArray(payload.documents)
       ? payload.documents
-      : {};
+      : {},
+    { folder: 'drivers/documents', label: 'Document image', maxBytes: DRIVER_DOCUMENT_IMAGE_MAX_BYTES },
+  );
 
   const driver = await Driver.create({
     name,
@@ -5445,7 +5456,11 @@ export const updateDriver = async (id, payload, currentAdmin = null) => {
   }
 
   if (payload.documents !== undefined) {
-    update.documents = payload.documents;
+    update.documents = await storeInlineImagesDeep(payload.documents, {
+      folder: 'drivers/documents',
+      label: 'Document image',
+      maxBytes: DRIVER_DOCUMENT_IMAGE_MAX_BYTES,
+    });
   }
 
   if (payload.onboarding !== undefined) {

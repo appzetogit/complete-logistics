@@ -6,6 +6,23 @@ import { ApiError } from './ApiError.js';
 
 const DATA_URL_PATTERN = /^data:([^;]+);base64,(.+)$/;
 
+const SAFE_UPLOAD_EXTENSIONS = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/pjpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+  'application/pdf': 'pdf',
+  'video/mp4': 'mp4',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/aac': 'aac',
+  'audio/wav': 'wav',
+};
+
 const parseDataUrl = (dataUrl) => {
   const match = String(dataUrl || '').match(DATA_URL_PATTERN);
 
@@ -13,9 +30,14 @@ const parseDataUrl = (dataUrl) => {
     throw new ApiError(400, 'A valid base64 image data URL is required');
   }
 
-  const mimeType = match[1];
+  const mimeType = match[1].toLowerCase();
   const base64 = match[2];
-  const extension = (mimeType.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'bin';
+  // Files are served from /uploads on the admin panel's domain: HTML, SVG, XML or script types there could run
+  // script in an admin's browser. Only plain pictures, PDFs and media are accepted.
+  const extension = SAFE_UPLOAD_EXTENSIONS[mimeType];
+  if (!extension) {
+    throw new ApiError(400, 'Upload a JPEG, PNG, WebP, GIF or HEIC image, or a PDF');
+  }
 
   return { mimeType, base64, extension };
 };

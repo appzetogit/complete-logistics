@@ -30,6 +30,13 @@ import { FleetVehicle } from "../../admin/models/FleetVehicle.js";
 import { Zone } from "../models/Zone.js";
 import { uploadDataUrlToCloudinary } from "../../../../utils/cloudinaryUpload.js";
 import {
+  DRIVER_DOCUMENT_IMAGE_MAX_BYTES,
+  driverHasInlineImages,
+  healDriverInlineImages,
+  storeDriverImage,
+  storeInlineImagesDeep,
+} from "../services/driverImageService.js";
+import {
   comparePassword,
   hashPassword,
   signAccessToken,
@@ -2924,7 +2931,12 @@ export const loginDriver = async (req, res) => {
 };
 
 export const goOnline = async (req, res) => {
-  const { location, selfieImageUrl } = req.body;
+  const { location } = req.body;
+  // The daily selfie is stored as a file, not as base64 on the driver.
+  const selfieImageUrl = await storeDriverImage(req.body?.selfieImageUrl, {
+    folder: "drivers/selfies",
+    label: "Selfie",
+  });
 
   const coordinates = normalizePoint(location, "location");
   const zone = await findZoneByPickup(coordinates);
@@ -3081,6 +3093,13 @@ export const getCurrentDriver = async (req, res) => {
 
   if (!driver) {
     throw new ApiError(404, "Driver not found");
+  }
+
+  // Older rows still holding base64 images: store them as files now, so this response carries only URLs.
+  if (driverHasInlineImages(driver)) {
+    await healDriverInlineImages(driver).catch((error) => {
+      console.error("Could not convert the driver's stored images", String(driver._id), error?.message || error);
+    });
   }
 
   if (!String(driver.referralCode || "").trim()) {
@@ -3541,7 +3560,11 @@ export const updateCurrentDriver = async (req, res) => {
   }
 
   if (Object.prototype.hasOwnProperty.call(req.body || {}, "profileImage")) {
-    driver.profileImage = String(req.body.profileImage || "").trim();
+    // A photo is stored as a file (only its URL is kept); "" clears it; a URL is kept as it is.
+    driver.profileImage = await storeDriverImage(req.body.profileImage, {
+      folder: "drivers/profile",
+      label: "Profile photo",
+    });
   }
 
   if (Object.prototype.hasOwnProperty.call(req.body || {}, "routeBooking")) {
@@ -4256,7 +4279,12 @@ export const requestDriverAccountDeletion = async (req, res) => {
 
 export const updateCurrentDriverDocument = async (req, res) => {
   const documentKey = String(req.params.documentKey || "").trim();
-  const document = req.body?.document || {};
+  // Document photos are stored as files; every field keeps only the URL (one file for the same picture).
+  const document = await storeInlineImagesDeep(req.body?.document || {}, {
+    folder: "drivers/documents",
+    label: "Document image",
+    maxBytes: DRIVER_DOCUMENT_IMAGE_MAX_BYTES,
+  });
 
   if (!documentKey) {
     throw new ApiError(400, "Document key is required");
@@ -4268,7 +4296,11 @@ export const updateCurrentDriverDocument = async (req, res) => {
     throw new ApiError(404, "Driver not found");
   }
 
-  const existingDocument = driver.documents?.[documentKey] || {};
+  // An older document still holding base64 is converted too (never dropped).
+  const existingDocument = await storeInlineImagesDeep(driver.documents?.[documentKey] || {}, {
+    folder: "drivers/documents",
+    strict: false,
+  });
   const previewUrl = String(
     document.previewUrl || document.secureUrl || document.url || existingDocument.previewUrl || existingDocument.secureUrl || existingDocument.url || "",
   ).trim();
@@ -7580,7 +7612,10 @@ export const updateDriverVehicle = async (req, res) => {
     }
   }
   if (vehicleImage !== undefined) {
-    const normalizedVehicleImage = String(vehicleImage || "").trim();
+    const normalizedVehicleImage = await storeDriverImage(vehicleImage, {
+      folder: "drivers/vehicles",
+      label: "Vehicle photo",
+    });
     update.vehicleImage = normalizedVehicleImage;
     if (String(driver.vehicleImage || "") !== normalizedVehicleImage) {
       vehicleChanged = true;

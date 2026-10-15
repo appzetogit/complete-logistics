@@ -115,7 +115,14 @@ export const env = {
     // /uploads static route / nginx alias. Previously the two stores defaulted to different folders.
     dir: path.resolve(__dirname, '../..', process.env.UPLOAD_DIR || process.env.UPLOAD_PATH || 'uploads'),
     // Absolute so mobile clients can use the URL without knowing the API host.
-    publicBaseUrl: `${(process.env.PUBLIC_BACKEND_URL || process.env.BACKEND_URL || '').replace(/\/+$/, '')}/uploads`,
+    // Same variables as publicBackendUrl, so both upload helpers build the same absolute URL.
+    publicBaseUrl: `${(
+      process.env.PUBLIC_BACKEND_URL
+      || process.env.APP_BACKEND_URL
+      || process.env.BACKEND_PUBLIC_URL
+      || process.env.BACKEND_URL
+      || ''
+    ).replace(/\/+$/, '')}/uploads`,
   },
   redis: {
     url: readEnv('REDIS_URL'),
