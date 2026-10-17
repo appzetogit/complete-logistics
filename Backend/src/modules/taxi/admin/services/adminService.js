@@ -6,7 +6,7 @@ import {
   storeDriverImage,
   storeInlineImagesDeep,
 } from '../../driver/services/driverImageService.js';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { ApiError } from '../../../../utils/ApiError.js';
 import { env } from '../../../../config/env.js';
 import { createDefaultAdminState } from '../data/defaultAdminState.js';
@@ -3027,39 +3027,41 @@ const syncSettingRows = (rows, payload) =>
     };
   });
 
-const DEFAULT_ADMIN_EMAIL = 'admin@gmail.com';
-const DEFAULT_ADMIN_PASSWORD = '12345';
 const BCRYPT_HASH_PATTERN = /^\$2[aby]\$\d{2}\$/;
+const MIN_BOOTSTRAP_ADMIN_PASSWORD_LENGTH = 10;
 
-const syncDefaultAdminRecord = async () => {
-  const now = new Date();
-  const existingAdmin = await Admin.findOne({ email: DEFAULT_ADMIN_EMAIL }).select('+password');
-  const nextPassword =
-    !existingAdmin || !BCRYPT_HASH_PATTERN.test(existingAdmin.password || '')
-      ? await hashPassword(DEFAULT_ADMIN_PASSWORD)
-      : undefined;
+// Creates the first superadmin from ADMIN_BOOTSTRAP_EMAIL / ADMIN_BOOTSTRAP_PASSWORD, and only while the database has
+// no admin at all. It never touches an existing account (this used to keep a hardcoded admin@gmail.com
+// superadmin alive, re-activating it and resetting its password).
+const bootstrapFirstAdmin = async () => {
+  const email = String(process.env.ADMIN_BOOTSTRAP_EMAIL || '').trim().toLowerCase();
+  const password = String(process.env.ADMIN_BOOTSTRAP_PASSWORD || '');
 
-  await Admin.collection.updateOne(
-    { email: DEFAULT_ADMIN_EMAIL },
-    {
-      $set: {
-        name: 'Super Admin',
-        email: DEFAULT_ADMIN_EMAIL,
-        phone: '9999999999',
-        role: 'superadmin',
-        admin_type: 'superadmin',
-        permissions: ['*'],
-        active: true,
-        status: 'active',
-        ...(nextPassword ? { password: nextPassword } : {}),
-        updatedAt: now,
-      },
-      $setOnInsert: {
-        createdAt: now,
-      },
-    },
-    { upsert: true },
-  );
+  if (!email || !password) {
+    return;
+  }
+
+  if (password.length < MIN_BOOTSTRAP_ADMIN_PASSWORD_LENGTH) {
+    console.warn(
+      `[admin] ADMIN_BOOTSTRAP_PASSWORD must be at least ${MIN_BOOTSTRAP_ADMIN_PASSWORD_LENGTH} characters; no admin created`,
+    );
+    return;
+  }
+
+  if (await Admin.exists({})) {
+    return;
+  }
+
+  await Admin.create({
+    name: 'Super Admin',
+    email,
+    role: 'superadmin',
+    admin_type: 'superadmin',
+    permissions: ['*'],
+    active: true,
+    status: 'active',
+    password: await hashPassword(password),
+  });
 };
 
 const LEGACY_OWNER_SERVICE_LOCATION = {
@@ -3419,7 +3421,7 @@ export const ensureFleetOwnersSeeded = async () => {
 };
 
 export const ensureAdminState = async () => {
-  await syncDefaultAdminRecord();
+  await bootstrapFirstAdmin();
   await seedInitialData();
   return { ready: true };
 };
@@ -3459,9 +3461,9 @@ export const loginAdmin = async ({ email, password }) => {
     throw new ApiError(401, 'Invalid admin credentials');
   }
 
-  const passwordMatches = BCRYPT_HASH_PATTERN.test(admin.password || '')
-    ? await comparePassword(password, admin.password)
-    : admin.password === password;
+  // Only bcrypt hashes are accepted; an account still holding a plaintext password has to reset it.
+  const passwordMatches =
+    BCRYPT_HASH_PATTERN.test(admin.password || '') && (await comparePassword(String(password || ''), admin.password));
 
   if (!passwordMatches) {
     throw new ApiError(401, 'Invalid admin credentials');
@@ -3493,8 +3495,13 @@ export const listAdmins = async (currentAdmin) => {
   return enrichAdminSummaries(admins);
 };
 
-const validateSubadminPayload = async (payload = {}, existingAdminId = null) => {
+const validateSubadminPayload = async (payload = {}, existingAdminId = null, currentAdmin = null) => {
   const adminType = normalizeAdminType(payload.admin_type || payload.role);
+
+  if (adminType === 'superadmin' && !isSuperAdmin(currentAdmin || {})) {
+    throw new ApiError(403, 'Only a superadmin can create or promote a superadmin');
+  }
+
   const name = String(payload.name || '').trim();
   const email = String(payload.email || '').trim().toLowerCase();
   const phone = String(payload.phone || '').trim();
@@ -3583,7 +3590,7 @@ export const createAdminAccount = async (currentAdmin, payload = {}) => {
     throw new ApiError(400, 'Passwords do not match');
   }
 
-  const validated = await validateSubadminPayload(payload);
+  const validated = await validateSubadminPayload(payload, null, currentAdmin);
   const created = await Admin.create({
     ...validated,
     password: await hashPassword(password),
@@ -3605,7 +3612,11 @@ export const updateAdminAccount = async (currentAdmin, id, payload = {}) => {
     throw new ApiError(400, 'Use your profile flow to update your own admin account');
   }
 
-  const validated = await validateSubadminPayload(payload, admin._id);
+  if (isSuperAdmin(admin) && !isSuperAdmin(currentAdmin || {})) {
+    throw new ApiError(403, 'Only a superadmin can change a superadmin account');
+  }
+
+  const validated = await validateSubadminPayload(payload, admin._id, currentAdmin);
   Object.assign(admin, validated);
 
   if (payload.password) {
@@ -3637,6 +3648,10 @@ export const deleteAdminAccount = async (currentAdmin, id) => {
     throw new ApiError(400, 'You cannot delete your own admin account');
   }
 
+  if (isSuperAdmin(admin) && !isSuperAdmin(currentAdmin || {})) {
+    throw new ApiError(403, 'Only a superadmin can delete a superadmin account');
+  }
+
   await Admin.deleteOne({ _id: admin._id });
   return { deleted: true };
 };
@@ -3648,7 +3663,7 @@ export const forgotPassword = async (email) => {
   }
 
   // Generate 6-digit OTP
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = String(randomInt(100000, 1000000));
   const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   admin.resetPasswordOtp = otp;
@@ -3674,8 +3689,6 @@ export const forgotPassword = async (email) => {
       </div>
     `,
   });
-
-  console.log(`[ADMIN FORGOT PASSWORD] OTP for ${email}: ${otp}`);
 
   return { message: 'OTP sent to your email' };
 };

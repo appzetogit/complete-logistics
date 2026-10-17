@@ -1,6 +1,6 @@
 /**
- * Seed script: create or update the default admin account.
- * Usage: node scripts/seedAdmin.js
+ * Seed script: create a superadmin, or set its password if it already exists.
+ * Usage: SEED_ADMIN_EMAIL=you@example.com SEED_ADMIN_PASSWORD='a long password' node scripts/seedAdmin.js
  */
 
 import mongoose from 'mongoose';
@@ -22,10 +22,15 @@ if (!MONGO_URI) {
   process.exit(1);
 }
 
-// ── Admin credentials ────────────────────────────────────────────────────────
-const ADMIN_EMAIL = 'admin@admin.com';
-const ADMIN_PASS  = '123456';
+// ── Admin credentials (from the environment, never hardcoded) ────────────────
+const ADMIN_EMAIL = String(process.env.SEED_ADMIN_EMAIL || '').trim().toLowerCase();
+const ADMIN_PASS  = String(process.env.SEED_ADMIN_PASSWORD || '');
 const ADMIN_NAME  = 'Super Admin';
+
+if (!ADMIN_EMAIL || ADMIN_PASS.length < 10) {
+  console.error('❌  Set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (at least 10 characters)');
+  process.exit(1);
+}
 
 // ── Mongoose schema (mirrors Admin.js) ───────────────────────────────────────
 const adminSchema = new mongoose.Schema(
@@ -34,7 +39,8 @@ const adminSchema = new mongoose.Schema(
     email:       { type: String, lowercase: true, trim: true, unique: true },
     phone:       { type: String, trim: true },
     password:    { type: String, required: true, minlength: 5, select: false },
-    role:        { type: String, default: 'admin' },
+    role:        { type: String, default: 'superadmin' },
+    admin_type:  { type: String, default: 'superadmin' },
     permissions: { type: [String], default: [] },
   },
   { timestamps: true },
@@ -56,22 +62,31 @@ const Admin = mongoose.models.TaxiAdmin || mongoose.model('TaxiAdmin', adminSche
       // Update password in case it changed
       await Admin.updateOne(
         { email: ADMIN_EMAIL },
-        { $set: { password: hashedPassword, name: ADMIN_NAME, role: 'admin' } },
+        {
+          $set: {
+            password: hashedPassword,
+            name: ADMIN_NAME,
+            role: 'superadmin',
+            admin_type: 'superadmin',
+            permissions: ['*'],
+          },
+        },
       );
       console.log(`🔄  Admin already exists — password updated.`);
     } else {
       await Admin.create({
-        name:     ADMIN_NAME,
-        email:    ADMIN_EMAIL,
-        password: hashedPassword,
-        role:     'admin',
+        name:        ADMIN_NAME,
+        email:       ADMIN_EMAIL,
+        password:    hashedPassword,
+        role:        'superadmin',
+        admin_type:  'superadmin',
+        permissions: ['*'],
       });
       console.log(`🎉  Admin created successfully!`);
     }
 
     console.log(`\n  Email   : ${ADMIN_EMAIL}`);
-    console.log(`  Password: ${ADMIN_PASS}`);
-    console.log(`  Role    : admin\n`);
+    console.log(`  Role    : superadmin\n`);
   } catch (err) {
     console.error('❌  Seed failed:', err.message);
     process.exit(1);

@@ -2841,52 +2841,13 @@ const serializeDriverScheduledRide = (ride = {}, currentDriverId = "") => ({
   updatedAt: ride.updatedAt || null,
 });
 
-export const registerDriver = async (req, res) => {
-  const { name, phone, password, vehicleType, location } = req.body;
-
-  if (!name || !phone || !password || !vehicleType || !location) {
-    throw new ApiError(
-      400,
-      "name, phone, password, vehicleType and location are required",
-    );
-  }
-
-  const existingDriver = await Driver.findOne({ phone });
-
-  if (existingDriver) {
-    throw new ApiError(409, "Phone number is already registered");
-  }
-
-  const coordinates = normalizePoint(location, "location");
-  const zone = await findZoneByPickup(coordinates);
-
-  const driver = await Driver.create({
-    name,
-    phone,
-    password: await hashPassword(password),
-    vehicleType,
-    approve: true,
-    status: "approved",
-    zoneId: zone?._id || null,
-    location: toPoint(coordinates, "location"),
-  });
-
-  const token = signAccessToken({ sub: String(driver._id), role: "driver" });
-
-  res.status(201).json({
-    success: true,
-    data: {
-      token,
-      driver: {
-        id: driver._id,
-        name: driver.name,
-        phone: driver.phone,
-        vehicleType: driver.vehicleType,
-        rating: driver.rating,
-        status: driver.status,
-      },
-    },
-  });
+/// POST /drivers/register: switched off. It created an already approved driver and returned a token with no OTP,
+/// documents or admin approval. Drivers sign up through /drivers/onboarding/* (OTP, documents, admin review).
+export const registerDriver = async () => {
+  throw new ApiError(
+    410,
+    "Driver registration has moved to the onboarding flow (/drivers/onboarding/send-otp).",
+  );
 };
 
 export const loginDriver = async (req, res) => {
@@ -6397,33 +6358,13 @@ export const createDriverWithdrawalRequest = async (req, res) => {
   });
 };
 
-export const topUpMyWallet = async (req, res) => {
-  const amount = Number(req.body.amount);
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    throw new ApiError(400, "amount must be greater than zero");
-  }
-
-  const result = await topUpDriverWallet({
-    driverId: req.auth.sub,
-    amount,
-    metadata: {
-      source: req.body.source || "manual",
-      referenceId: req.body.referenceId || null,
-    },
-  });
-
-  const payload = {
-    wallet: result.wallet,
-    transaction: result.transaction,
-  };
-
-  emitToDriver(req.auth.sub, "driver:wallet:updated", payload);
-
-  res.json({
-    success: true,
-    data: payload,
-  });
+/// POST /drivers/wallet/top-up: switched off. It credited any amount without a payment; drivers top up through
+/// /drivers/wallet/top-up/razorpay/* and /drivers/wallet/top-up/phonepe/*, which check the payment with the gateway.
+export const topUpMyWallet = async () => {
+  throw new ApiError(
+    410,
+    "Direct wallet top-up is no longer supported. Use the Razorpay or PhonePe wallet top-up.",
+  );
 };
 
 export const createDriverPaymentQr = async (req, res) => {
