@@ -31,8 +31,12 @@ export const ADMIN_PERMISSIONS = [
   'settings.view',
 ];
 
+// Only these values mean full access ('admin' is what scripts/seedAdmin.js used to write). Anything else, including
+// a missing or unknown value, is a subadmin, which only gets the permissions listed on the account.
+const SUPERADMIN_TYPES = new Set(['superadmin', 'super-admin', 'super_admin', 'admin']);
+
 export const normalizeAdminType = (value = '') =>
-  String(value || '').trim().toLowerCase() === 'subadmin' ? 'subadmin' : 'superadmin';
+  SUPERADMIN_TYPES.has(String(value || '').trim().toLowerCase()) ? 'superadmin' : 'subadmin';
 
 export const normalizeAdminPermissions = (permissions = []) => {
   if (!Array.isArray(permissions)) {

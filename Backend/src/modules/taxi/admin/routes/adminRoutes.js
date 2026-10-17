@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../middlewares/authMiddleware.js';
+import { ApiError } from '../../../../utils/ApiError.js';
 import { getPushDiagnostics, sendTestPush } from '../controllers/pushDiagnosticsController.js';
 import {
   loginRateLimit,
@@ -256,6 +257,16 @@ import {
 
 export const adminRouter = Router();
 
+// Moving money by hand, deleting accounts and reading or changing gateway / SMS / mail / Firebase credentials are
+// superadmin-only. Runs after authenticate(['admin']), which puts the normalized admin_type on req.auth.admin.
+const requireSuperAdmin = (req, _res, next) => {
+  if (req.auth?.admin?.admin_type !== 'superadmin') {
+    next(new ApiError(403, 'Only a superadmin can do this'));
+    return;
+  }
+  next();
+};
+
 adminRouter.get('/admin', getAdminStatus);
 adminRouter.get('/admin/status', getAdminStatus);
 adminRouter.post('/admin/login', loginRateLimit, loginAdmin);
@@ -283,7 +294,7 @@ adminRouter.post('/admin/users/bulk-import', bulkImportUsers);
 adminRouter.post('/admin/users', createUser);
 adminRouter.get('/admin/users/deleted', getDeletedUsers);
 adminRouter.patch('/admin/users/deleted/:id/restore', restoreDeletedUser);
-adminRouter.delete('/admin/users/deleted/:id', permanentlyDeleteDeletedUser);
+adminRouter.delete('/admin/users/deleted/:id', requireSuperAdmin, permanentlyDeleteDeletedUser);
 adminRouter.get('/admin/users/delete-requests', getUserDeletionRequests);
 adminRouter.patch('/admin/users/delete-requests/:id/approve', approveUserDeletionRequest);
 adminRouter.patch('/admin/users/delete-requests/:id/reject', rejectUserDeletionRequest);
@@ -291,7 +302,7 @@ adminRouter.get('/admin/users/:id', getUser);
 adminRouter.get('/admin/employees/:id', getEmployee);
 adminRouter.patch('/admin/employees/:id', updateEmployee);
 adminRouter.patch('/admin/users/:id', updateUser);
-adminRouter.delete('/admin/users/:id', deleteUser);
+adminRouter.delete('/admin/users/:id', requireSuperAdmin, deleteUser);
 adminRouter.get('/admin/users/:id/subscriptions', getUserSubscriptions);
 adminRouter.get('/admin/users/:id/requests', getUserRequests);
 adminRouter.get('/admin/users/:id/wallet-history', getUserWalletHistory);
@@ -303,21 +314,21 @@ adminRouter.get('/admin/drivers/delete-requests', authenticate(['admin']), getDr
 adminRouter.patch('/admin/drivers/delete-requests/:id/approve', authenticate(['admin']), approveDriverDeletionRequest);
 adminRouter.patch('/admin/drivers/delete-requests/:id/reject', authenticate(['admin']), rejectDriverDeletionRequest);
 adminRouter.patch('/admin/drivers/deleted/:id/restore', authenticate(['admin']), restoreDeletedDriver);
-adminRouter.delete('/admin/drivers/deleted/:id', authenticate(['admin']), permanentlyDeleteDeletedDriver);
+adminRouter.delete('/admin/drivers/deleted/:id', requireSuperAdmin, permanentlyDeleteDeletedDriver);
 adminRouter.post('/admin/drivers', createDriver);
 adminRouter.get('/admin/drivers/:id/profile', getDriverProfile);
 adminRouter.get('/admin/drivers/:id', getDriver);
 adminRouter.patch('/admin/drivers/:id', updateDriver);
 adminRouter.patch('/admin/drivers/update-password/:id', updateDriverPassword);
 adminRouter.patch('/admin/drivers/:id/clear-cancel-block', clearDriverCancelBlock);
-adminRouter.delete('/admin/drivers/:id', deleteDriver);
-adminRouter.post('/admin/wallet/users/:id/adjust', adjustUserWallet);
+adminRouter.delete('/admin/drivers/:id', requireSuperAdmin, deleteDriver);
+adminRouter.post('/admin/wallet/users/:id/adjust', requireSuperAdmin, adjustUserWallet);
 adminRouter.get('/admin/wallet/users/:id/history', getUserWalletHistory);
 
-adminRouter.post('/admin/wallet/drivers/:id/adjust', adjustDriverWallet);
+adminRouter.post('/admin/wallet/drivers/:id/adjust', requireSuperAdmin, adjustDriverWallet);
 adminRouter.get('/admin/wallet/drivers/:id/history', listDriverWalletHistory);
 
-adminRouter.post('/admin/wallet/owners/:id/adjust', adjustOwnerWallet);
+adminRouter.post('/admin/wallet/owners/:id/adjust', requireSuperAdmin, adjustOwnerWallet);
 adminRouter.get('/admin/wallet/owners/:id/history', listOwnerWalletHistory);
 
 adminRouter.get('/admin/wallet/drivers/negative-balance', authenticate(['admin']), getNegativeBalanceDrivers);
@@ -425,7 +436,7 @@ adminRouter.get('/admin/owner-management/manage-owners/:id', getOwner);
 adminRouter.patch('/admin/owner-management/manage-owners/:id', updateOwner);
 adminRouter.patch('/admin/owner-management/manage-owners/:id/approve', approveOwner);
 adminRouter.patch('/admin/owner-management/pending-owners/:driverId/approve', approveOwnerSignupFromDriver);
-adminRouter.delete('/admin/owner-management/manage-owners/:id', deleteOwner);
+adminRouter.delete('/admin/owner-management/manage-owners/:id', requireSuperAdmin, deleteOwner);
 
 adminRouter.get('/admin/owner-management/manage-fleet', getFleetVehicles);
 adminRouter.post('/admin/owner-management/manage-fleet', createFleetVehicle);
@@ -500,29 +511,29 @@ adminRouter.patch('/admin/notification-channels/:id/push', toggleChannelPush);
 adminRouter.patch('/admin/notification-channels/:id/mail', toggleChannelMail);
 
 adminRouter.get('/admin/integration-settings/payment-gateways', getPaymentGateways);
-adminRouter.get('/admin/integration-settings/payment-settings', getPaymentSettings);
-adminRouter.patch('/admin/integration-settings/payment-settings', updatePaymentSettings);
+adminRouter.get('/admin/integration-settings/payment-settings', requireSuperAdmin, getPaymentSettings);
+adminRouter.patch('/admin/integration-settings/payment-settings', requireSuperAdmin, updatePaymentSettings);
 
 adminRouter.get('/admin/payment-methods', authenticate(['admin']), getPaymentMethods);
-adminRouter.post('/admin/payment-methods', authenticate(['admin']), createPaymentMethod);
-adminRouter.patch('/admin/payment-methods/:id', authenticate(['admin']), updatePaymentMethod);
-adminRouter.delete('/admin/payment-methods/:id', authenticate(['admin']), deletePaymentMethod);
+adminRouter.post('/admin/payment-methods', requireSuperAdmin, createPaymentMethod);
+adminRouter.patch('/admin/payment-methods/:id', requireSuperAdmin, updatePaymentMethod);
+adminRouter.delete('/admin/payment-methods/:id', requireSuperAdmin, deletePaymentMethod);
 
-adminRouter.get('/admin/integration-settings/sms', getSmsSettings);
-adminRouter.patch('/admin/integration-settings/sms', updateSmsSettings);
-adminRouter.get('/admin/integration-settings/firebase', getFirebaseSettings);
-adminRouter.patch('/admin/integration-settings/firebase', updateFirebaseSettings);
+adminRouter.get('/admin/integration-settings/sms', requireSuperAdmin, getSmsSettings);
+adminRouter.patch('/admin/integration-settings/sms', requireSuperAdmin, updateSmsSettings);
+adminRouter.get('/admin/integration-settings/firebase', requireSuperAdmin, getFirebaseSettings);
+adminRouter.patch('/admin/integration-settings/firebase', requireSuperAdmin, updateFirebaseSettings);
 adminRouter.get('/admin/integration-settings/map', getMapSettings);
-adminRouter.patch('/admin/integration-settings/map', updateMapSettings);
-adminRouter.get('/admin/integration-settings/mail', getMailSettings);
-adminRouter.patch('/admin/integration-settings/mail', updateMailSettings);
-adminRouter.get('/admin/integration-settings/recharge-api', getRechargeApiSettings);
-adminRouter.patch('/admin/integration-settings/recharge-api', updateRechargeApiSettings);
-adminRouter.post('/admin/integration-settings/recharge-api/generate-token', generateRechargeApiToken);
-adminRouter.post('/admin/integration-settings/recharge-api/test', runRechargeApiTest);
+adminRouter.patch('/admin/integration-settings/map', requireSuperAdmin, updateMapSettings);
+adminRouter.get('/admin/integration-settings/mail', requireSuperAdmin, getMailSettings);
+adminRouter.patch('/admin/integration-settings/mail', requireSuperAdmin, updateMailSettings);
+adminRouter.get('/admin/integration-settings/recharge-api', requireSuperAdmin, getRechargeApiSettings);
+adminRouter.patch('/admin/integration-settings/recharge-api', requireSuperAdmin, updateRechargeApiSettings);
+adminRouter.post('/admin/integration-settings/recharge-api/generate-token', requireSuperAdmin, generateRechargeApiToken);
+adminRouter.post('/admin/integration-settings/recharge-api/test', requireSuperAdmin, runRechargeApiTest);
 
 adminRouter.get('/admin/general-settings/:category', getGeneralSettingsCategory);
-adminRouter.patch('/admin/general-settings/:category', updateGeneralSettingsCategory);
+adminRouter.patch('/admin/general-settings/:category', requireSuperAdmin, updateGeneralSettingsCategory);
 
 adminRouter.get('/on-boarding', getUserOnboarding);
 adminRouter.post('/on-boarding', createOnboardingScreen);

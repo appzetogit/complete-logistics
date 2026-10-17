@@ -1658,72 +1658,9 @@ const processSignupReferralRewards = async ({ user, referrer }) => {
   }
 };
 
-export const registerUser = async (req, res) => {
-  const name = toCleanString(req.body.name);
-  const phone = normalizePhone(req.body.phone);
-  const email = normalizeEmail(req.body.email);
-  const countryCode = toCleanString(req.body.countryCode) || '+91';
-  const gender = normalizeGender(req.body.gender);
-  const profileImage = toCleanString(req.body.profileImage);
-  const governmentIdProof = normalizeGovernmentIdProof(req.body.governmentIdProof || {}, { required: false });
-  const referralCode = normalizeReferralCode(req.body.referralCode);
-  const employeeCode = normalizeEmployeeCode(req.body.employeeCode);
-
-  validateName(name);
-  validatePhone(phone);
-  validateEmail(email);
-
-  const existingUser = await User.findOne({ phone });
-
-  const referrer = referralCode ? await findUserByReferralCode(referralCode) : null;
-  const employee = employeeCode ? await findActiveEmployeeByCode(employeeCode) : null;
-
-  if (referralCode && !referrer) {
-    throw new ApiError(400, 'Invalid referral code');
-  }
-
-  if (employeeCode && !employee) {
-    throw new ApiError(400, 'Invalid employee code');
-  }
-
-  if (existingUser && !canRestoreUserForSignup(existingUser)) {
-    throw new ApiError(409, 'Phone number is already registered');
-  }
-
-  const userPayload = await buildReactivatedUserPayload({
-    req,
-    name,
-    phone,
-    email,
-    countryCode,
-    gender,
-    profileImage,
-    governmentIdProof,
-    referrer,
-    employee,
-  });
-
-  const user = existingUser
-    ? await User.findByIdAndUpdate(existingUser._id, { $set: userPayload }, { new: true, runValidators: true })
-    : await User.create(userPayload);
-
-  if (!String(user.referralCode || '').trim()) {
-    user.referralCode = generateUserReferralCode(user);
-    await user.save();
-  }
-
-  if (referrer?._id) {
-    await User.updateOne({ _id: referrer._id }, { $inc: { referralCount: 1 } });
-    await processSignupReferralRewards({ user, referrer });
-  }
-
-  void sendWelcomeEmail({ role: 'user', email: user.email, name: user.name });
-
-  res.status(201).json({
-    success: true,
-    data: createUserSession(user),
-  });
-};
+/// POST /users/register: an alias of /users/signup, so it also needs a phone verified by OTP first
+/// (it used to create an account, or restore a deleted one, and return a token without any OTP).
+export const registerUser = (req, res) => signupUser(req, res);
 
 const serializeUserNotification = (item = {}) => ({
   id: String(item._id || ''),
@@ -1885,32 +1822,18 @@ export const loginUser = async (req, res) => {
   });
 };
 
+/// POST /users/otp-login { phone, otp }: same as /users/auth/verify-otp. A token is only issued for a correct OTP
+/// (this used to log in by phone number alone).
 export const verifyUserPhoneForOtpLogin = async (req, res) => {
   const phone = normalizePhone(req.body.phone);
   validatePhone(phone);
 
-  const user = await User.findOne({ phone }).lean();
-
-  if (!user || user.deletedAt) {
-    res.json({
-      success: true,
-      data: {
-        exists: false,
-        user: null,
-      },
-    });
-    return;
+  if (!String(req.body.otp || '').trim()) {
+    throw new ApiError(400, 'otp is required');
   }
 
-  ensureUserCanLogin(user);
-
-  res.json({
-    success: true,
-    data: {
-      exists: true,
-      ...createUserSession(user),
-    },
-  });
+  const result = await verifyUserOtp({ phone, otp: req.body.otp });
+  res.json({ success: true, data: result });
 };
 
 /// POST /users/logout: this phone stops getting pushes and the login token stops working (every token issued
@@ -2225,42 +2148,10 @@ export const moveRefundWalletToBalance = async (req, res) => {
   res.json({ success: true, data: buildUserWalletPayload(wallet) });
 };
 
-export const topupUserWallet = async (req, res) => {
-  const amount = normalizeMoneyAmount(req.body?.amount);
-  const userId = req.auth?.sub;
-  const user = await User.findById(userId).select('_id').lean();
-
-  if (!user) {
-    throw new ApiError(404, 'User not found');
-  }
-
-  const tx = {
-    kind: 'credit',
-    amount,
-    title: 'Wallet Refilled',
-    provider: 'manual',
-  };
-
-  await ensureUserWallet(userId);
-
-  await UserWallet.updateOne(
-    { userId },
-    {
-      $inc: { balance: amount },
-      $push: { transactions: { $each: [tx], $slice: -50 } },
-    },
-  );
-
-  const updatedWallet = await UserWallet.findOne({ userId }).select('balance transactions').slice('transactions', -10).lean();
-  const updatedWalletWithRefund = updatedWallet
-    ? { ...updatedWallet, refundWallet: Number(updatedWallet.refundWallet || 0) }
-    : updatedWallet;
-  const transactions = Array.isArray(updatedWallet?.transactions) ? updatedWallet.transactions : [];
-
-  res.status(201).json({
-    success: true,
-    data: buildUserWalletPayload({ ...updatedWalletWithRefund, transactions }),
-  });
+/// POST /users/wallet/topup: switched off. It credited any amount without a payment; money only comes in through
+/// /users/wallet/razorpay/* and /users/wallet/phonepe/*, which check the payment with the gateway.
+export const topupUserWallet = async () => {
+  throw new ApiError(410, 'Direct wallet top-up is no longer supported. Use the Razorpay or PhonePe wallet top-up.');
 };
 
 export const transferUserWallet = async (req, res) => {
