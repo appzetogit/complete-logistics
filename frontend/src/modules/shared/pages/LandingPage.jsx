@@ -19,7 +19,11 @@ import { useGSAP } from '@gsap/react';
 import {
   ArrowRight,
   ArrowUp,
+  Ambulance,
   Bell,
+  Bike,
+  Car,
+  CarTaxiFront,
   ChevronDown,
   Clock3,
   Share2,
@@ -31,6 +35,7 @@ import {
   Gauge,
   Headphones,
   KeyRound,
+  LayoutGrid,
   LifeBuoy,
   Mail,
   MapPin,
@@ -41,6 +46,7 @@ import {
   ShieldCheck,
   Smartphone,
   Sparkles,
+  Truck,
   Users,
   Wallet,
   X,
@@ -106,11 +112,11 @@ const MARQUEE_EXTRAS = ['Verified Drivers', 'Live Tracking', '24x7 Support'];
 
 /** The groups the website uses to present the admin's services and vehicles. */
 const CATEGORIES = [
-  { key: 'cab', label: 'Cabs', text: 'Comfortable cab rides' },
-  { key: 'auto', label: 'Autos', text: 'Quick & affordable auto rides' },
-  { key: 'bike', label: 'Bikes & Scooty', text: 'Beat the traffic on two wheels' },
-  { key: 'truck', label: 'Parcel & Trucks', text: 'Goods, cargo & parcel delivery' },
-  { key: 'special', label: 'Special', text: 'Ambulance & group travel' },
+  { key: 'cab', label: 'Cabs', text: 'Comfortable cab rides', icon: Car },
+  { key: 'auto', label: 'Autos', text: 'Quick & affordable auto rides', icon: CarTaxiFront },
+  { key: 'bike', label: 'Bikes & Scooty', text: 'Beat the traffic on two wheels', icon: Bike },
+  { key: 'truck', label: 'Parcel & Trucks', text: 'Goods, cargo & parcel delivery', icon: Truck },
+  { key: 'special', label: 'Special', text: 'Ambulance & group travel', icon: Ambulance },
 ];
 const CATEGORY_LABEL = Object.fromEntries(CATEGORIES.map((category) => [category.key, category.label]));
 const CATEGORY_TEXT = Object.fromEntries(CATEGORIES.map((category) => [category.key, category.text]));
@@ -602,7 +608,7 @@ function LandingPage() {
   const serviceList = services || FALLBACK_SERVICES;
   const fleetList = vehicles || FALLBACK_FLEET;
   const chips = [
-    { key: 'all', label: 'All', count: serviceList.length },
+    { key: 'all', label: 'All', icon: LayoutGrid, count: serviceList.length },
     ...CATEGORIES.map((category) => ({ ...category, count: serviceList.filter((item) => item.category === category.key).length })).filter(
       (category) => services === null || category.count > 0,
     ),
@@ -1134,24 +1140,30 @@ function LandingPage() {
       {/* ------------------------------------------------------------------------------------ services */}
       <section id="services" ref={servicesRef} className="lp-section lp-services">
         <div className="lp-container">
-          <SectionHead index="01" kicker="What we move" title="Choose your ride">
+          <SectionHead index="01" kicker="What we move" title={<>Choose your <span className="lp-mark">ride</span></>}>
             <p className="lp-lead lp-reveal">
               Cabs, autos, bikes, trucks and more. Pick a category to see every vehicle you can book in the app.
             </p>
           </SectionHead>
 
           <div className="lp-chips" role="tablist" aria-label="Service categories">
-            {chips.map((chip) => (
+            {chips.map(({ key, label, count, icon: ChipIcon }) => (
               <button
-                key={chip.key}
+                key={key}
                 type="button"
                 role="tab"
-                aria-selected={filter === chip.key}
-                className={`lp-chip ${filter === chip.key ? 'is-active' : ''}`}
-                onClick={() => selectFilter(chip.key)}
+                aria-selected={filter === key}
+                className={`lp-chip ${filter === key ? 'is-active' : ''}`}
+                onClick={() => selectFilter(key)}
               >
-                {chip.label}
-                {services !== null && <b>{chip.count}</b>}
+                {filter === key && (
+                  <motion.span layoutId="lp-chip-pill" className="lp-chip-pill" transition={{ type: 'spring', stiffness: 420, damping: 34 }} />
+                )}
+                <span className="lp-chip-in">
+                  {ChipIcon && <ChipIcon size={15} />}
+                  {label}
+                  {services !== null && <b>{count}</b>}
+                </span>
               </button>
             ))}
           </div>
@@ -1166,7 +1178,7 @@ function LandingPage() {
                   </div>
                 ))
               : shownServices.map(({ id, category, image, fallbackImage, title, text }, index) => (
-                  <TiltCard key={id} index={index} className="lp-svc">
+                  <TiltCard key={id} index={index} className={`lp-svc is-${category}`}>
                     <span className="lp-svc-shine" aria-hidden="true" />
                     <span className="lp-svc-tag">{CATEGORY_LABEL[category]}</span>
                     <span className="lp-svc-img">
@@ -1226,8 +1238,8 @@ function LandingPage() {
           <div className="lp-fleet-track">
             {[0, 1].map((copy) => (
               <div className="lp-fleet-group" key={copy} aria-hidden={copy === 1 ? 'true' : undefined}>
-                {fleetList.map(({ id, tag, name, image, icon: Icon, spec }) => (
-                  <motion.article key={`${copy}-${id}`} className="lp-car" whileHover={{ y: -8 }}>
+                {fleetList.map(({ id, category, tag, name, image, icon: Icon, spec }) => (
+                  <motion.article key={`${copy}-${id}`} className={`lp-car is-${category}`} whileHover={{ y: -8 }}>
                     <div className="lp-car-img">
                       <img src={image} alt={copy === 0 ? name : ''} loading="lazy" decoding="async" />
                       <span className="lp-car-tag">{tag}</span>

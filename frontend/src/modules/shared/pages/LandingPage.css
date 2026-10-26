@@ -2660,3 +2660,224 @@
     height: 160px;
   }
 }
+
+/* ---------------------------------------------------------------------------------------- make it attractive */
+
+/* each group has its own colour: --accent (bright), --accent-ink (readable on white), --soft (tint) */
+.lp-svc,
+.lp-car {
+  --accent: #0a55a4;
+  --accent-ink: #0a4a91;
+  --soft: #e3eefb;
+  --on-accent: #fff;
+}
+
+.lp-svc.is-auto,
+.lp-car.is-auto {
+  --accent: #0d8928;
+  --accent-ink: #0b7022;
+  --soft: #e3f5e8;
+}
+
+.lp-svc.is-bike,
+.lp-car.is-bike {
+  --accent: #ef6c1a;
+  --accent-ink: #c4540f;
+  --soft: #ffeedd;
+}
+
+.lp-svc.is-truck,
+.lp-car.is-truck {
+  --accent: #fbba04;
+  --accent-ink: #8a5a00;
+  --soft: #fff3cc;
+  --on-accent: #14110a;
+}
+
+.lp-svc.is-special,
+.lp-car.is-special {
+  --accent: #7c3aed;
+  --accent-ink: #6a2fd0;
+  --soft: #efe6ff;
+}
+
+/* backdrop: warm light, two colour blooms and a faint dot grid */
+.lp-services {
+  background:
+    radial-gradient(760px 380px at 100% 0%, rgba(251, 186, 4, 0.16), transparent 62%),
+    radial-gradient(640px 380px at 0% 100%, rgba(10, 85, 164, 0.09), transparent 62%),
+    var(--lp-cream);
+}
+
+.lp-services::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(11, 13, 18, 0.1) 1px, transparent 1.4px);
+  background-size: 24px 24px;
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 55%);
+  mask-image: linear-gradient(180deg, #000 0%, transparent 55%);
+}
+
+.lp-services > .lp-container {
+  position: relative;
+}
+
+/* hand-marked highlight under one word of the title */
+.lp-mark {
+  background: linear-gradient(transparent 64%, rgba(251, 186, 4, 0.6) 64%, rgba(251, 186, 4, 0.6) 92%, transparent 92%);
+  padding: 0 4px;
+}
+
+/* tabs: icon + a pill that slides to the chosen tab */
+.lp-chip {
+  position: relative;
+  padding: 0;
+  border-color: rgba(11, 13, 18, 0.1);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(6px);
+}
+
+.lp-chip-in {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+}
+
+.lp-chip-in svg {
+  color: var(--lp-yellow-deep);
+  transition: color 0.2s ease;
+}
+
+.lp-chip-pill {
+  position: absolute;
+  inset: -1px;
+  z-index: 0;
+  border-radius: 999px;
+  background: var(--lp-ink);
+  box-shadow: 0 10px 22px rgba(11, 13, 18, 0.25);
+}
+
+.lp-chip.is-active {
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.lp-chip.is-active .lp-chip-in svg {
+  color: var(--lp-yellow);
+}
+
+/* service cards */
+.lp-svc {
+  border-color: rgba(11, 13, 18, 0.07);
+  background: linear-gradient(180deg, #fff 0%, #fff 55%, var(--soft) 160%);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.lp-svc::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 2;
+  height: 4px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.4s ease;
+}
+
+.lp-svc:hover {
+  border-color: var(--accent);
+  box-shadow: 0 24px 46px rgba(11, 13, 18, 0.12);
+}
+
+.lp-svc:hover::before {
+  transform: scaleX(1);
+}
+
+.lp-svc-img {
+  position: relative;
+  background:
+    radial-gradient(ellipse 62% 48% at 50% 78%, rgba(11, 13, 18, 0.1), transparent 70%),
+    radial-gradient(circle at 50% 55%, var(--soft), #fff 74%);
+}
+
+/* the vehicle photos have white backgrounds: multiply lets the coloured stage show through */
+.lp-svc-img img {
+  mix-blend-mode: multiply;
+}
+
+.lp-svc:hover .lp-svc-img img {
+  transform: scale(1.1) translateY(-3px);
+}
+
+.lp-svc-tag {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 6px 14px rgba(11, 13, 18, 0.18);
+}
+
+.lp-svc h3 {
+  transition: color 0.25s ease;
+}
+
+.lp-svc:hover h3 {
+  color: var(--accent-ink);
+}
+
+/* vehicle strip */
+.lp-car {
+  border-color: rgba(11, 13, 18, 0.07);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.lp-car:hover {
+  border-color: var(--accent);
+  box-shadow: 0 26px 48px rgba(11, 13, 18, 0.14);
+}
+
+.lp-car-img {
+  background:
+    radial-gradient(ellipse 60% 46% at 50% 82%, rgba(11, 13, 18, 0.1), transparent 70%),
+    radial-gradient(circle at 50% 55%, var(--soft), #fff 76%);
+}
+
+.lp-car-img img {
+  mix-blend-mode: multiply;
+}
+
+.lp-car-tag {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 6px 14px rgba(11, 13, 18, 0.18);
+}
+
+.lp-car-body p {
+  display: inline-flex;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.lp-car-note::before {
+  content: '\2713';
+  margin-right: 6px;
+  color: var(--accent-ink);
+  font-weight: 800;
+}
+
+.lp-fleet {
+  background: linear-gradient(180deg, var(--lp-cream) 0%, #fff 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-svc::before {
+    transition: none;
+  }
+}
