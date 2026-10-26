@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, HelpCircle, Phone, MessageCircle, ChevronRight, FileText, Globe, Search, ArrowUpRight, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { SUPPORT_INFO } from '../../../shared/content/supportInfo';
 
 const DriverSupport = () => {
     const navigate = useNavigate();
@@ -17,8 +18,8 @@ const DriverSupport = () => {
     ];
 
     const openHelp = (type) => {
-        if(type === 'call') window.open('tel:1800123456');
-        if(type === 'wa') window.open('https://wa.me/919424100424');
+        if(type === 'call') window.open(`tel:${SUPPORT_INFO.phoneHref}`);
+        if(type === 'wa') window.open(`https://wa.me/${SUPPORT_INFO.phoneHref.replace('+', '')}`);
     };
 
     return (
