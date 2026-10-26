@@ -60,6 +60,7 @@ import heroImg from '@/assets/landing/hero-bg.png';
 import cityRideImg from '@/assets/3d images/AutoCab/taxi.png';
 import busImg from '@/assets/3d images/AutoCab/bus.png';
 import bikeImg from '@/assets/icons/premium_bike.png';
+import activaImg from '@/assets/landing/activa.webp';
 import autoImg from '@/assets/icons/premium_auto.png';
 import sedanImg from '@/assets/icons/premium_car.png';
 import miniImg from '@/assets/landing/ride.png';
@@ -102,7 +103,7 @@ const TRUST = [
 
 const HERO_RIDES = [
   { image: bikeImg, title: 'Bike', text: 'Beat the traffic' },
-  { image: autoImg, title: 'Auto', text: 'Quick & affordable' },
+  { image: activaImg, title: 'Activa', text: 'Easy city rides' },
   { image: sedanImg, title: 'Cab', text: 'Comfort for 4' },
   { image: truckImg, title: 'Truck', text: 'Goods & shifting' },
 ];
