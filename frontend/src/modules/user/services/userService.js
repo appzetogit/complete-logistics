@@ -5,6 +5,10 @@ export const userService = {
     const response = await api.get('/users/app-modules', { params });
     return response;
   },
+  getPublicVehicleTypes: async (params) => {
+    const response = await api.get('/users/vehicle-types', { params });
+    return response;
+  },
   getRentalVehicles: async () => {
     const response = await api.get('/users/rental-vehicles');
     return response;

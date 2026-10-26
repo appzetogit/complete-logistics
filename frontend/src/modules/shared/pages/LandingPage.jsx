@@ -5,6 +5,7 @@ import {
   motion,
   useMotionValue,
   useMotionValueEvent,
+  useInView,
   useReducedMotion,
   useScroll,
   useSpring,
@@ -51,17 +52,13 @@ import { normalizeAssetUrl } from '../../../shared/context/SettingsContext';
 
 import heroImg from '@/assets/landing/hero-bg.png';
 import cityRideImg from '@/assets/3d images/AutoCab/taxi.png';
-import airportImg from '@/assets/3d images/AutoCab/airoplan.png';
-import outstationImg from '@/assets/3d images/AutoCab/one way.png';
 import busImg from '@/assets/3d images/AutoCab/bus.png';
-import parcelImg from '@/assets/user-app/parcel.png';
 import bikeImg from '@/assets/icons/premium_bike.png';
 import autoImg from '@/assets/icons/premium_auto.png';
 import sedanImg from '@/assets/icons/premium_car.png';
 import miniImg from '@/assets/landing/ride.png';
 import parcelBikeImg from '@/assets/images/delivery/bike.png';
 import truckImg from '@/assets/images/delivery/trucks.png';
-import moversImg from '@/assets/images/delivery/movers.png';
 import qrImg from '@/assets/check_us_out.jpg';
 import carSideImg from '@/assets/landing/car-side.webp';
 import cityLifeImg from '@/assets/landing/journey-commute.webp';
@@ -104,16 +101,46 @@ const HERO_RIDES = [
   { image: truckImg, title: 'Truck', text: 'Goods & shifting' },
 ];
 
-// Shown after the admin services in the yellow band
+// Shown after the categories in the yellow band
 const MARQUEE_EXTRAS = ['Verified Drivers', 'Live Tracking', '24x7 Support'];
+
+/** The groups the website uses to present the admin's services and vehicles. */
+const CATEGORIES = [
+  { key: 'cab', label: 'Cabs', text: 'Comfortable cab rides' },
+  { key: 'auto', label: 'Autos', text: 'Quick & affordable auto rides' },
+  { key: 'bike', label: 'Bikes & Scooty', text: 'Beat the traffic on two wheels' },
+  { key: 'truck', label: 'Parcel & Trucks', text: 'Goods, cargo & parcel delivery' },
+  { key: 'special', label: 'Special', text: 'Ambulance & group travel' },
+];
+const CATEGORY_LABEL = Object.fromEntries(CATEGORIES.map((category) => [category.key, category.label]));
+const CATEGORY_TEXT = Object.fromEntries(CATEGORIES.map((category) => [category.key, category.text]));
+
+/** Admin names as typed can have double spaces or a lowercase first letter. */
+const tidyName = (name) => {
+  const clean = String(name || '').trim().replace(/\s+/g, ' ');
+  return clean.charAt(0).toUpperCase() + clean.slice(1);
+};
+
+/** Which group an admin service or vehicle belongs to, from its name and type. */
+const categoryOf = ({ name = '', transport_type: transport = '', category = '', icon_types: iconTypes = '' }) => {
+  const text = `${name} ${category} ${iconTypes}`.toLowerCase();
+  if (/ambulance|traveller|traveler|tourist|\bbus\b/.test(text)) return 'special';
+  if (transport === 'delivery' || /truck|cargo|tata|pickup|eicher|leyland|parcel|goods|luggage/.test(text)) return 'truck';
+  if (/scooty|scooter|bike/.test(text)) return 'bike';
+  if (/auto|rickshaw/.test(text)) return 'auto';
+  return 'cab';
+};
 
 // Used only if the services list cannot be loaded
 const FALLBACK_SERVICES = [
-  { image: cityRideImg, title: 'City Rides', text: 'Bike, auto & cab' },
-  { image: outstationImg, title: 'Outstation', text: 'One way & round trip' },
-  { image: parcelImg, title: 'Parcel Delivery', text: 'Send anything, anywhere' },
-  { image: busImg, title: 'Bus', text: 'Buses & mini buses' },
+  { id: 'f-cab', category: 'cab', image: cityRideImg, title: 'Cab', text: CATEGORY_TEXT.cab },
+  { id: 'f-auto', category: 'auto', image: autoImg, title: 'Auto', text: CATEGORY_TEXT.auto },
+  { id: 'f-bike', category: 'bike', image: bikeImg, title: 'Bike', text: CATEGORY_TEXT.bike },
+  { id: 'f-truck', category: 'truck', image: truckImg, title: 'Truck', text: CATEGORY_TEXT.truck },
 ];
+
+/** Picture for an admin service that has no icon uploaded. */
+const FALLBACK_IMAGE = { cab: cityRideImg, auto: autoImg, bike: bikeImg, truck: truckImg, special: busImg };
 
 const SERVICE_TEXT = {
   outstation: 'One way & round trip',
@@ -123,36 +150,16 @@ const SERVICE_TEXT = {
   bus: 'Book your bus seat',
 };
 
-/** Picture for an admin service that has no icon uploaded. */
-const fallbackServiceImage = (module) => {
-  const text = `${module.name} ${module.service_type} ${module.transport_type}`.toLowerCase();
-  if (/bus/.test(text)) return busImg;
-  if (/outstation|intercity|one way/.test(text)) return outstationImg;
-  if (/airport|flight/.test(text)) return airportImg;
-  if (/parcel|delivery|courier|send/.test(text)) return parcelImg;
-  if (/truck|goods|mover|shift/.test(text)) return truckImg;
-  if (/auto|rickshaw/.test(text)) return autoImg;
-  if (/bike|scooty|scooter|two/.test(text)) return bikeImg;
-  return cityRideImg;
-};
-
-const TRANSPORT_TEXT = {
-  taxi: 'Book a ride in minutes',
-  delivery: 'Goods & parcel delivery',
-  both: 'Rides & deliveries',
-  pooling: 'Share the ride, split the fare',
-};
-
 // Equal admin order numbers: rides first, then deliveries
 const TRANSPORT_RANK = { taxi: 0, both: 1, pooling: 2, delivery: 3 };
 
 const isActiveModule = (module) => [1, true, '1', 'true'].includes(module?.active);
 
 /** One line under the service name; skips an admin description that only repeats the name. */
-const serviceText = (module, title) => {
+const serviceText = (module, title, category) => {
   const description = String(module.short_description || '').trim();
   if (description && description.toLowerCase() !== title.toLowerCase()) return description;
-  return SERVICE_TEXT[module.service_type] || TRANSPORT_TEXT[module.transport_type] || 'Book in the app';
+  return SERVICE_TEXT[module.service_type] || CATEGORY_TEXT[category];
 };
 
 /** Admin "App Modules" (public endpoint) as landing-page service cards, in the admin's order. */
@@ -167,14 +174,56 @@ const toServices = (modules) =>
         a.index - b.index,
     )
     .map(({ module }) => {
-      const title = String(module.name).trim();
+      const title = tidyName(module.name);
+      const category = categoryOf(module);
       return {
+        id: String(module._id || module.id || title),
+        category,
         title,
-        text: serviceText(module, title),
-        image: normalizeAssetUrl(module.mobile_menu_icon || '') || fallbackServiceImage(module),
-        fallbackImage: fallbackServiceImage(module),
+        text: serviceText(module, title, category),
+        image: normalizeAssetUrl(module.mobile_menu_icon || '') || FALLBACK_IMAGE[category],
+        fallbackImage: FALLBACK_IMAGE[category],
       };
     });
+
+/** All groups in turn (one cab, one auto, one bike...) so the first cards show the variety. */
+const interleave = (items) => {
+  const lanes = CATEGORIES.map((category) => items.filter((item) => item.category === category.key));
+  const mixed = [];
+  for (let round = 0; lanes.some((lane) => round < lane.length); round += 1) {
+    lanes.forEach((lane) => {
+      if (lane[round]) mixed.push(lane[round]);
+    });
+  }
+  return mixed;
+};
+
+const FIRST_CARDS = 10;
+
+/** Admin vehicle types (public endpoint) as fleet cards: photo, name, seats. */
+const toFleet = (vehicles) =>
+  vehicles
+    .filter((vehicle) => vehicle?.active !== false && String(vehicle?.status ?? 1) !== '0' && vehicle?.name && vehicle?.image)
+    .map((vehicle, index) => {
+      const category = categoryOf(vehicle);
+      const seats = Number(vehicle.capacity) || 0;
+      let spec = 'Book in the app';
+      if (category === 'truck') spec = /parcel|bike|3-wheeler/i.test(vehicle.name) ? 'Parcel delivery' : 'Goods & cargo';
+      else if (/ambulance/i.test(vehicle.name)) spec = 'Emergency transport';
+      else if (seats === 1) spec = '1 rider';
+      else if (seats > 1) spec = `${seats} seats`;
+      return {
+        id: String(vehicle.id || vehicle._id || vehicle.name),
+        index,
+        category,
+        tag: CATEGORY_LABEL[category],
+        name: tidyName(vehicle.name),
+        image: normalizeAssetUrl(vehicle.image),
+        icon: category === 'truck' ? Package : Users,
+        spec,
+      };
+    })
+    .sort((a, b) => CATEGORIES.findIndex((c) => c.key === a.category) - CATEGORIES.findIndex((c) => c.key === b.category) || a.index - b.index);
 
 const WHY = [
   { icon: BadgeCheck, title: 'Verified & Trained Drivers', text: 'Document-checked before their first trip, rated after every ride.' },
@@ -184,14 +233,14 @@ const WHY = [
   { icon: Headphones, title: '24x7 Customer Support', text: 'Call or chat with us, any time of the day.' },
 ];
 
-const FLEET = [
-  { tag: 'Bike', name: 'Bike Taxi', image: bikeImg, icon: Users, spec: '1 rider' },
-  { tag: 'Auto', name: 'Auto Rickshaw', image: autoImg, icon: Users, spec: '3 seats' },
-  { tag: 'Mini', name: 'Everyday Cab', image: miniImg, icon: Users, spec: '4 seats' },
-  { tag: 'Sedan', name: 'Comfort Sedan', image: sedanImg, icon: Users, spec: '4 seats' },
-  { tag: 'Parcel', name: 'Parcel Bike', image: parcelBikeImg, icon: Package, spec: 'Small parcels' },
-  { tag: 'Truck', name: 'Mini Truck', image: truckImg, icon: Package, spec: 'Shop & bulk loads' },
-  { tag: 'Shifting', name: 'Packers & Movers', image: moversImg, icon: Package, spec: 'Home & office' },
+// Used only if the vehicle list cannot be loaded
+const FALLBACK_FLEET = [
+  { id: 'fb-bike', category: 'bike', tag: 'Bikes & Scooty', name: 'Bike Taxi', image: bikeImg, icon: Users, spec: '1 rider' },
+  { id: 'fb-auto', category: 'auto', tag: 'Autos', name: 'Auto Rickshaw', image: autoImg, icon: Users, spec: '3 seats' },
+  { id: 'fb-cab', category: 'cab', tag: 'Cabs', name: 'Everyday Cab', image: miniImg, icon: Users, spec: '4 seats' },
+  { id: 'fb-sedan', category: 'cab', tag: 'Cabs', name: 'Comfort Sedan', image: sedanImg, icon: Users, spec: '4 seats' },
+  { id: 'fb-parcel', category: 'truck', tag: 'Parcel & Trucks', name: 'Parcel Bike', image: parcelBikeImg, icon: Package, spec: 'Parcel delivery' },
+  { id: 'fb-truck', category: 'truck', tag: 'Parcel & Trucks', name: 'Mini Truck', image: truckImg, icon: Package, spec: 'Goods & cargo' },
 ];
 
 const DRIVE = [
@@ -293,7 +342,7 @@ const SectionHead = ({ index, kicker, title, children, light = false }) => (
 );
 
 /** Card that tilts toward the cursor in 3D (mouse only). */
-const TiltCard = ({ className = '', children }) => {
+const TiltCard = ({ className = '', children, index = 0 }) => {
   const x = useMotionValue(0.5);
   const y = useMotionValue(0.5);
   const rotateX = useSpring(useTransform(y, [0, 1], [10, -10]), { stiffness: 220, damping: 18 });
@@ -318,7 +367,10 @@ const TiltCard = ({ className = '', children }) => {
       style={{ rotateX, rotateY, transformPerspective: 800 }}
       onPointerMove={handleMove}
       onPointerLeave={reset}
-      whileHover={{ y: -8 }}
+      initial={{ opacity: 0, y: 28 }}
+      whileInView={{ opacity: 1, y: 0, transition: { duration: 0.5, delay: (index % 5) * 0.06, ease: [0.16, 1, 0.3, 1] } }}
+      viewport={{ once: true, margin: '0px 0px -40px 0px' }}
+      whileHover={{ y: -8, transition: { type: 'spring', stiffness: 300, damping: 20 } }}
     >
       {children}
     </motion.article>
@@ -499,10 +551,19 @@ function LandingPage() {
   const [showTop, setShowTop] = useState(false);
   const [openFaq, setOpenFaq] = useState(0);
   const [activeId, setActiveId] = useState('home');
-  // Services from the admin panel; null until loaded (the scroll animations wait for it, so they measure the final layout)
+  // Services and vehicles come from the admin panel. They load when the visitor scrolls close to their
+  // section (the services list is large), and null means "not loaded yet".
   const [services, setServices] = useState(null);
+  const [vehicles, setVehicles] = useState(null);
+  const [filter, setFilter] = useState('all');
+  const [expanded, setExpanded] = useState(false);
+  const servicesRef = useRef(null);
+  const fleetRef = useRef(null);
+  const nearServices = useInView(servicesRef, { once: true, margin: '800px 0px 800px 0px' });
+  const nearFleet = useInView(fleetRef, { once: true, margin: '800px 0px 800px 0px' });
 
   useEffect(() => {
+    if (!nearServices) return undefined;
     let alive = true;
     userService
       .getAppModules({ limit: 100 })
@@ -515,11 +576,51 @@ function LandingPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [nearServices]);
 
-  const servicesReady = services !== null;
+  useEffect(() => {
+    if (!nearFleet) return undefined;
+    let alive = true;
+    userService
+      .getPublicVehicleTypes({ limit: 200 })
+      .then((response) => {
+        const list = response?.data?.data?.results || response?.data?.results || [];
+        const fromAdmin = toFleet(Array.isArray(list) ? list : []);
+        if (alive) setVehicles(fromAdmin.length ? fromAdmin : FALLBACK_FLEET);
+      })
+      .catch(() => alive && setVehicles(FALLBACK_FLEET));
+    return () => {
+      alive = false;
+    };
+  }, [nearFleet]);
+
+  const selectFilter = (key) => {
+    setFilter(key);
+    setExpanded(false);
+  };
+
   const serviceList = services || FALLBACK_SERVICES;
-  const bandItems = [...serviceList.map((service) => service.title), ...MARQUEE_EXTRAS];
+  const fleetList = vehicles || FALLBACK_FLEET;
+  const chips = [
+    { key: 'all', label: 'All', count: serviceList.length },
+    ...CATEGORIES.map((category) => ({ ...category, count: serviceList.filter((item) => item.category === category.key).length })).filter(
+      (category) => services === null || category.count > 0,
+    ),
+  ];
+  const filteredServices = filter === 'all' ? interleave(serviceList) : serviceList.filter((item) => item.category === filter);
+  const shownServices = expanded ? filteredServices : filteredServices.slice(0, FIRST_CARDS);
+  const bandItems = [...CATEGORIES.map((category) => category.label), ...MARQUEE_EXTRAS];
+
+  // Pages below change height when the lists arrive or open up: measure the scroll positions again
+  useEffect(() => {
+    const timers = [setTimeout(() => ScrollTrigger.refresh(), 80), setTimeout(() => ScrollTrigger.refresh(), 800)];
+    return () => timers.forEach(clearTimeout);
+  }, [services, vehicles, filter, expanded]);
+
+  // The fleet strip scrolls at about the same speed however many vehicles the admin has
+  useEffect(() => {
+    fleetLoop.current?.duration(Math.max(40, fleetList.length * 4.5) * (reduceMotion ? 3 : 1));
+  }, [fleetList.length, reduceMotion]);
 
   const { scrollY, scrollYProgress } = useScroll();
   const progress = useSpring(scrollYProgress, { stiffness: 120, damping: 28, mass: 0.3 });
@@ -569,7 +670,7 @@ function LandingPage() {
   // ---------------------------------------------------------------------------------------------- GSAP
   useGSAP(
     () => {
-      if (loading || !servicesReady) return undefined;
+      if (loading) return undefined;
       const mm = gsap.matchMedia();
 
       // Journeys: pinned horizontal scroll on large screens; swipe on small ones.
@@ -708,16 +809,6 @@ function LandingPage() {
           },
         });
 
-        // Service cards pop in
-        gsap.from('.lp-svc', {
-          y: 50,
-          autoAlpha: 0,
-          duration: 0.8,
-          ease: 'back.out(1.4)',
-          stagger: 0.08,
-          scrollTrigger: { trigger: '.lp-svc-grid', start: 'top 85%' },
-        });
-
         // Why section: the glow drifts with scroll, items stagger in
         gsap.to('.lp-why-glow', {
           xPercent: 40,
@@ -854,7 +945,7 @@ function LandingPage() {
 
       return () => mm.revert();
     },
-    { scope: rootRef, dependencies: [loading, servicesReady] },
+    { scope: rootRef, dependencies: [loading] },
   );
 
   const pauseFleet = () => fleetLoop.current?.pause();
@@ -1041,29 +1132,67 @@ function LandingPage() {
       </section>
 
       {/* ------------------------------------------------------------------------------------ services */}
-      <section id="services" className="lp-section lp-services">
+      <section id="services" ref={servicesRef} className="lp-section lp-services">
         <div className="lp-container">
-          <SectionHead index="01" kicker="What we move" title="Our Services" />
-          <div className="lp-svc-grid">
-            {serviceList.map(({ image, fallbackImage, title, text }) => (
-              <TiltCard key={title} className="lp-svc">
-                <span className="lp-svc-shine" aria-hidden="true" />
-                <span className="lp-svc-img">
-                  <img
-                    src={image}
-                    alt=""
-                    loading="lazy"
-                    onError={(event) => {
-                      // an icon path that no longer exists on the server: show our own picture instead
-                      if (fallbackImage && !event.currentTarget.src.endsWith(fallbackImage)) event.currentTarget.src = fallbackImage;
-                    }}
-                  />
-                </span>
-                <h3>{title}</h3>
-                <p>{text}</p>
-              </TiltCard>
+          <SectionHead index="01" kicker="What we move" title="Choose your ride">
+            <p className="lp-lead lp-reveal">
+              Cabs, autos, bikes, trucks and more. Pick a category to see every vehicle you can book in the app.
+            </p>
+          </SectionHead>
+
+          <div className="lp-chips" role="tablist" aria-label="Service categories">
+            {chips.map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                role="tab"
+                aria-selected={filter === chip.key}
+                className={`lp-chip ${filter === chip.key ? 'is-active' : ''}`}
+                onClick={() => selectFilter(chip.key)}
+              >
+                {chip.label}
+                {services !== null && <b>{chip.count}</b>}
+              </button>
             ))}
           </div>
+
+          <div className="lp-svc-grid" key={filter}>
+            {services === null
+              ? Array.from({ length: FIRST_CARDS }, (_, index) => (
+                  <div className="lp-svc is-skeleton" key={index} aria-hidden="true">
+                    <span className="lp-svc-img" />
+                    <h3 />
+                    <p />
+                  </div>
+                ))
+              : shownServices.map(({ id, category, image, fallbackImage, title, text }, index) => (
+                  <TiltCard key={id} index={index} className="lp-svc">
+                    <span className="lp-svc-shine" aria-hidden="true" />
+                    <span className="lp-svc-tag">{CATEGORY_LABEL[category]}</span>
+                    <span className="lp-svc-img">
+                      <img
+                        src={image}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        onError={(event) => {
+                          // an icon path that no longer exists on the server: show our own picture instead
+                          if (fallbackImage && !event.currentTarget.src.endsWith(fallbackImage)) event.currentTarget.src = fallbackImage;
+                        }}
+                      />
+                    </span>
+                    <h3>{title}</h3>
+                    <p>{text}</p>
+                  </TiltCard>
+                ))}
+          </div>
+
+          {services !== null && filteredServices.length > FIRST_CARDS && (
+            <button type="button" className="lp-btn lp-btn-dark lp-more" onClick={() => setExpanded((open) => !open)} aria-expanded={expanded}>
+              {expanded ? 'Show fewer' : `Show all ${filteredServices.length} services`}
+              <ChevronDown size={18} className={expanded ? 'is-flipped' : ''} />
+            </button>
+          )}
         </div>
       </section>
 
@@ -1087,18 +1216,20 @@ function LandingPage() {
       </section>
 
       {/* ------------------------------------------------------------------------------------ fleet */}
-      <section id="fleet" className="lp-section lp-fleet">
+      <section id="fleet" ref={fleetRef} className="lp-section lp-fleet">
         <div className="lp-container">
-          <SectionHead index="03" kicker="The fleet" title="Popular Vehicles" />
+          <SectionHead index="03" kicker="The fleet" title="Popular Vehicles">
+            <p className="lp-lead lp-reveal">Every vehicle type you can book in the {APP_NAME} app, with the fare shown before you confirm.</p>
+          </SectionHead>
         </div>
         <div className="lp-fleet-viewport" onMouseEnter={pauseFleet} onMouseLeave={playFleet}>
           <div className="lp-fleet-track">
             {[0, 1].map((copy) => (
               <div className="lp-fleet-group" key={copy} aria-hidden={copy === 1 ? 'true' : undefined}>
-                {FLEET.map(({ tag, name, image, icon: Icon, spec }) => (
-                  <motion.article key={`${copy}-${name}`} className="lp-car" whileHover={{ y: -8 }}>
+                {fleetList.map(({ id, tag, name, image, icon: Icon, spec }) => (
+                  <motion.article key={`${copy}-${id}`} className="lp-car" whileHover={{ y: -8 }}>
                     <div className="lp-car-img">
-                      <img src={image} alt={copy === 0 ? name : ''} loading="lazy" />
+                      <img src={image} alt={copy === 0 ? name : ''} loading="lazy" decoding="async" />
                       <span className="lp-car-tag">{tag}</span>
                     </div>
                     <div className="lp-car-body">
@@ -1372,8 +1503,17 @@ function LandingPage() {
 
             <div>
               <h4>Services</h4>
-              {serviceList.map(({ title }) => (
-                <a key={title} href="#services" onClick={goTo('#services')}>{title}</a>
+              {CATEGORIES.map((category) => (
+                <a
+                  key={category.key}
+                  href="#services"
+                  onClick={(event) => {
+                    selectFilter(category.key);
+                    goTo('#services')(event);
+                  }}
+                >
+                  {category.label}
+                </a>
               ))}
             </div>
 
