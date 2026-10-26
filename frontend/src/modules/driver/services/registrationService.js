@@ -645,10 +645,12 @@ export const getDriverRegistrationSession = ({ registrationId, phone }) =>
 
 export const getDriverServiceLocations = () =>
   api.get("/drivers/service-locations");
-export const getDriverDocumentTemplates = (role = "driver") =>
+// `vehicleTypeId` limits the list to the documents the admin picked for that vehicle type (all when none picked).
+export const getDriverDocumentTemplates = (role = "driver", vehicleTypeId = "") =>
   api.get("/drivers/document-templates", {
     params: {
       role,
+      ...(vehicleTypeId ? { vehicleTypeId } : {}),
     },
   });
 

@@ -10,6 +10,7 @@ import { randomBytes, randomInt } from 'node:crypto';
 import { ApiError } from '../../../../utils/ApiError.js';
 import { env } from '../../../../config/env.js';
 import { createDefaultAdminState } from '../data/defaultAdminState.js';
+import { normalizeVehicleDocumentIds } from './vehicleDocumentRules.js';
 import { Admin } from '../models/Admin.js';
 import { User } from '../../user/models/User.js';
 import { UserWallet } from '../../user/models/UserWallet.js';
@@ -3033,7 +3034,7 @@ const MIN_BOOTSTRAP_ADMIN_PASSWORD_LENGTH = 10;
 // Creates the first superadmin from ADMIN_BOOTSTRAP_EMAIL / ADMIN_BOOTSTRAP_PASSWORD, and only while the database has
 // no admin at all. It never touches an existing account (this used to keep a hardcoded admin@gmail.com
 // superadmin alive, re-activating it and resetting its password).
-const bootstrapFirstAdmin = async () => {
+export const bootstrapFirstAdmin = async () => {
   const email = String(process.env.ADMIN_BOOTSTRAP_EMAIL || '').trim().toLowerCase();
   const password = String(process.env.ADMIN_BOOTSTRAP_PASSWORD || '');
 
@@ -6828,6 +6829,7 @@ export const listVehicleCatalog = async () => {
     supported_vehicles: Array.isArray(item.supported_other_vehicle_types)
       ? item.supported_other_vehicle_types.map((v) => String(v)).join(',')
       : '',
+    required_document_ids: normalizeVehicleDocumentIds(item.required_document_ids),
     icon_types_for: item.icon_types,
     trip_dispatch_type: item.dispatch_type,
     created_at: item.createdAt,
@@ -6893,6 +6895,7 @@ export const getVehicleTypeById = async (id) => {
     supported_vehicles: Array.isArray(item.supported_other_vehicle_types)
       ? item.supported_other_vehicle_types.map((v) => String(v)).join(',')
       : '',
+    required_document_ids: normalizeVehicleDocumentIds(item.required_document_ids),
     icon_types_for: item.icon_types,
     trip_dispatch_type: item.dispatch_type,
     created_at: item.createdAt,
@@ -6964,6 +6967,7 @@ export const listPublicVehicleCatalog = async () => {
     ...normalizeVehicleCommissionConfig(item),
     ...normalizeVehicleDisplayFields(item),
     capacity: Number(item.capacity || 0),
+    required_document_ids: normalizeVehicleDocumentIds(item.required_document_ids),
     // URLs only: a base64 image here made the catalog ~41 MB
     image: withoutInlineImage(item.image),
     map_icon: withoutInlineImage(item.map_icon) || withoutInlineImage(item.icon) || withoutInlineImage(item.image),
@@ -7061,6 +7065,7 @@ export const createVehicleType = async (payload) => {
     vehicle_preference: Array.isArray(payload.vehicle_preference)
       ? payload.vehicle_preference.filter(Boolean).map(toObjectId)
       : [],
+    required_document_ids: normalizeVehicleDocumentIds(payload.required_document_ids).map(toObjectId),
   });
 
   publicVehicleCatalogCache = { value: null, expiresAt: 0 };
@@ -7178,6 +7183,9 @@ export const updateVehicleType = async (id, payload) => {
     vehicle.vehicle_preference = Array.isArray(payload.vehicle_preference)
       ? payload.vehicle_preference.filter(Boolean).map(toObjectId)
       : [];
+  }
+  if (payload.required_document_ids !== undefined) {
+    vehicle.required_document_ids = normalizeVehicleDocumentIds(payload.required_document_ids).map(toObjectId);
   }
 
   await vehicle.save();

@@ -282,6 +282,13 @@ const vehicleSchema = new mongoose.Schema(
       ref: 'TaxiPreference',
       default: [],
     },
+    // Driver documents (Driver Needed Documents) this vehicle asks for during onboarding.
+    // Empty = every active document, as before.
+    required_document_ids: {
+      type: [ObjectId],
+      ref: 'TaxiDriverNeededDocument',
+      default: [],
+    },
   },
   { timestamps: true },
 );
