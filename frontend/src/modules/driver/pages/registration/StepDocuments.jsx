@@ -359,7 +359,7 @@ const StepDocuments = () => {
       setTemplatesLoading(true);
 
       try {
-        const response = await getDriverDocumentTemplates(normalizedRole);
+        const response = await getDriverDocumentTemplates(normalizedRole, session.vehicleTypeId);
         const results = response?.data?.data?.results || response?.data?.results || [];
         setTemplates(normalizeDriverDocumentTemplates(results));
       } catch {
@@ -370,7 +370,7 @@ const StepDocuments = () => {
     };
 
     loadTemplates();
-  }, [normalizedRole]);
+  }, [normalizedRole, session.vehicleTypeId]);
 
   const documentTemplates = useMemo(
     () =>

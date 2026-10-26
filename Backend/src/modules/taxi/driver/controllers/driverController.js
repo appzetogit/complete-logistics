@@ -21,6 +21,7 @@ import { ServiceLocation } from "../../admin/models/ServiceLocation.js";
 import { ServiceStore } from "../../admin/models/ServiceStore.js";
 import { ServiceCenterStaff } from "../../admin/models/ServiceCenterStaff.js";
 import { Vehicle } from "../../admin/models/Vehicle.js";
+import { filterDocumentsForVehicle } from "../../admin/services/vehicleDocumentRules.js";
 import { RentalVehicleType } from "../../admin/models/RentalVehicleType.js";
 import { RentalBookingRequest } from "../../admin/models/RentalBookingRequest.js";
 import { CustomerBiometricProfile } from "../../admin/models/CustomerBiometricProfile.js";
@@ -7810,6 +7811,7 @@ export const getServiceLocations = async (_req, res) => {
 
 export const getDriverDocumentTemplates = async (_req, res) => {
   const requestedRole = String(_req.query?.role || "driver").trim().toLowerCase();
+  const requestedVehicleTypeId = String(_req.query?.vehicleTypeId || _req.query?.vehicle_type_id || "").trim();
   const isOwnerRequest = requestedRole === "owner";
   const isFleetRequest =
     requestedRole === "fleet" ||
@@ -7864,9 +7866,19 @@ export const getDriverDocumentTemplates = async (_req, res) => {
       }))
       : isFleetRequest
         ? results
-      : results,
+      : await filterDriverDocumentTemplatesByVehicleId(results, requestedVehicleTypeId),
     },
   });
+};
+
+// The documents the admin picked for a vehicle type (Vehicle Type form); no picks or an unknown id = all of them.
+const filterDriverDocumentTemplatesByVehicleId = async (templates, vehicleTypeId) => {
+  if (!/^[a-f\d]{24}$/i.test(String(vehicleTypeId || ""))) {
+    return templates;
+  }
+
+  const vehicle = await Vehicle.findById(vehicleTypeId).select("required_document_ids").lean();
+  return filterDocumentsForVehicle(templates, vehicle);
 };
 
 export const getDriverVehicleFieldTemplates = async (req, res) => {

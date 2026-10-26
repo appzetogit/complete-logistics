@@ -11,6 +11,7 @@ import { ServiceCenterStaff } from '../../admin/models/ServiceCenterStaff.js';
 import { ServiceLocation } from '../../admin/models/ServiceLocation.js';
 import { BusService } from '../../admin/models/BusService.js';
 import { Vehicle } from '../../admin/models/Vehicle.js';
+import { filterDocumentsForVehicle } from '../../admin/services/vehicleDocumentRules.js';
 import { AdminBusinessSetting } from '../../admin/models/AdminBusinessSetting.js';
 import {
   createBusService,
@@ -1561,14 +1562,24 @@ const completeDriverOnboardingInternal = async ({ registrationId, phone, documen
     normalizedDocuments[documentKey] = normalizeStoredDocument(value);
   }
 
-  const configuredUploadFields =
-    String(session.role || '').toLowerCase() === 'owner'
-      ? await listOwnerDocumentUploadFields({ activeOnly: true })
-      : await listDriverDocumentUploadFields({ activeOnly: true });
-  const configuredTemplates =
-    String(session.role || '').toLowerCase() === 'owner'
-      ? (await listOwnerNeededDocuments()).filter((item) => item.active !== false)
-      : await listDriverNeededDocuments({ activeOnly: true, includeFields: true });
+  const selectedVehicle =
+    session.vehicle.vehicleTypeId && /^[a-f\d]{24}$/i.test(String(session.vehicle.vehicleTypeId))
+      ? await Vehicle.findById(session.vehicle.vehicleTypeId).lean()
+      : null;
+  const isOwnerRole = String(session.role || '').toLowerCase() === 'owner';
+  // Drivers only owe the documents the admin picked for this vehicle type (all of them when none are picked).
+  const configuredTemplates = isOwnerRole
+    ? (await listOwnerNeededDocuments()).filter((item) => item.active !== false)
+    : filterDocumentsForVehicle(
+        await listDriverNeededDocuments({ activeOnly: true, includeFields: true }),
+        selectedVehicle,
+      );
+  const vehicleTemplateIds = new Set(configuredTemplates.map((item) => String(item.id ?? item._id ?? '')));
+  const configuredUploadFields = isOwnerRole
+    ? await listOwnerDocumentUploadFields({ activeOnly: true })
+    : (await listDriverDocumentUploadFields({ activeOnly: true })).filter((field) =>
+        vehicleTemplateIds.has(String(field.template_id || '')),
+      );
   const requiredDocuments = configuredUploadFields
     .filter((field) => Boolean(field.required) && matchesDocumentRole(field.account_type, session.role))
     .map((field) => field.key);
@@ -1624,10 +1635,6 @@ const completeDriverOnboardingInternal = async ({ registrationId, phone, documen
   }
 
   const zone = serviceLocationCoordinates ? await findZoneByPickup(serviceLocationCoordinates) : null;
-  const selectedVehicle =
-    session.vehicle.vehicleTypeId && /^[a-f\d]{24}$/i.test(String(session.vehicle.vehicleTypeId))
-      ? await Vehicle.findById(session.vehicle.vehicleTypeId).lean()
-      : null;
   const vehicleType = selectedVehicle
     ? getGenericVehicleTypeFromCatalog(selectedVehicle)
     : getVehicleType(session.vehicle.vehicleTypeId, session.vehicle.registerFor);

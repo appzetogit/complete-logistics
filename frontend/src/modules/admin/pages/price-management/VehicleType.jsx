@@ -215,6 +215,9 @@ const buildVehicleFormData = (selectedVehicle = {}) => ({
   vehicle_preference: Array.isArray(selectedVehicle.vehicle_preference)
     ? selectedVehicle.vehicle_preference.map((item) => String(item?._id || item))
     : [],
+  required_document_ids: Array.isArray(selectedVehicle.required_document_ids)
+    ? selectedVehicle.required_document_ids.map((item) => String(item?._id || item))
+    : [],
 });
 
 const sanitizeObjectIdList = (items = []) =>
@@ -267,6 +270,16 @@ const defaultFormData = {
   active: true,
   supported_other_vehicle_types: [],
   vehicle_preference: [],
+  required_document_ids: [],
+};
+
+const EMPTY_NEW_DOCUMENT = {
+  name: '',
+  account_type: 'individual',
+  image_type: 'front_back',
+  has_expiry_date: false,
+  has_identify_number: false,
+  is_required: true,
 };
 
 const DELIVERY_CATEGORY_OPTIONS = [
@@ -423,6 +436,11 @@ const VehicleType = ({ mode: propMode }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [isTransportTypeMenuOpen, setIsTransportTypeMenuOpen] = useState(false);
   const [vehiclePreferences, setVehiclePreferences] = useState([]);
+  const [driverDocuments, setDriverDocuments] = useState([]);
+  const [showNewDocument, setShowNewDocument] = useState(false);
+  const [newDocument, setNewDocument] = useState(EMPTY_NEW_DOCUMENT);
+  const [isSavingDocument, setIsSavingDocument] = useState(false);
+  const [newDocumentError, setNewDocumentError] = useState('');
   const [pagination, setPagination] = useState({ total: 0, current_page: 1 });
   const [errorMessage, setErrorMessage] = useState('');
   const [formData, setFormData] = useState({ ...defaultFormData, transport_type: '' });
@@ -462,6 +480,27 @@ const VehicleType = ({ mode: propMode }) => {
         const vehicleCatalogPromise = api.get(isEditor ? '/admin/types/vehicle-types' : '/admin/types/vehicle-types/list');
         const preferencePromise = isEditor ? api.get('/admin/vehicle_preference') : Promise.resolve(null);
         const detailPromise = isEditor && id ? api.get(`/admin/types/vehicle-types/${id}`) : Promise.resolve(null);
+
+        if (isEditor) {
+          api
+            .get('/admin/owner-management/driver-needed-document?template_type=document')
+            .then((response) => {
+              if (!mounted) {
+                return;
+              }
+
+              const docPayload = unwrap(response);
+              const docResults = Array.isArray(docPayload?.results)
+                ? docPayload.results
+                : Array.isArray(docPayload?.data)
+                  ? docPayload.data
+                  : Array.isArray(docPayload)
+                    ? docPayload
+                    : [];
+              setDriverDocuments(docResults);
+            })
+            .catch(() => {});
+        }
 
         if (!id && propMode === 'create') {
           setFormData(defaultFormData);
@@ -582,6 +621,62 @@ const VehicleType = ({ mode: propMode }) => {
     [vehiclePreferences],
   );
 
+  // Inactive documents are hidden from drivers anyway, so they are not offered here.
+  const documentOptions = useMemo(
+    () =>
+      driverDocuments
+        .filter((item) => item.active !== false)
+        .map((item) => ({ ...item, id: String(item._id || item.id) })),
+    [driverDocuments],
+  );
+
+  // Creates a new Driver Needed Document without leaving this form, and picks it for this vehicle.
+  const handleCreateDocument = async () => {
+    const name = newDocument.name.trim();
+    if (!name) {
+      setNewDocumentError('Document name is required');
+      return;
+    }
+
+    setIsSavingDocument(true);
+    setNewDocumentError('');
+
+    try {
+      const response = await api.post('/admin/owner-management/driver-needed-document', {
+        name,
+        account_type: newDocument.account_type,
+        image_type: newDocument.image_type,
+        has_expiry_date: newDocument.has_expiry_date ? 1 : 0,
+        has_identify_number: newDocument.has_identify_number ? 1 : 0,
+        identify_number_key: newDocument.has_identify_number
+          ? `${name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'document'}_no`
+          : '',
+        is_required: newDocument.is_required ? 1 : 0,
+        active: 1,
+      });
+      const created = unwrap(response);
+      const createdId = String(created?._id || created?.id || '');
+
+      if (!createdId) {
+        throw new Error('The document was saved but its id was not returned');
+      }
+
+      setDriverDocuments((prev) => [...prev, { ...created, id: createdId }]);
+      setFormData((prev) => ({
+        ...prev,
+        required_document_ids: [...new Set([...(prev.required_document_ids || []), createdId])],
+      }));
+      setNewDocument(EMPTY_NEW_DOCUMENT);
+      setShowNewDocument(false);
+    } catch (error) {
+      setNewDocumentError(
+        error?.response?.data?.message || error?.message || 'Could not create the document',
+      );
+    } finally {
+      setIsSavingDocument(false);
+    }
+  };
+
   const showsDeliveryCategorySelector = useMemo(
     () => ['delivery', 'both'].includes(normalizeTransportType(formData.transport_type)),
     [formData.transport_type],
@@ -684,6 +779,7 @@ const VehicleType = ({ mode: propMode }) => {
         active: formData.active,
         supported_other_vehicle_types: sanitizeObjectIdList(formData.supported_other_vehicle_types),
         vehicle_preference: sanitizeObjectIdList(formData.vehicle_preference),
+        required_document_ids: sanitizeObjectIdList(formData.required_document_ids),
       };
 
       if (id) {
@@ -1649,6 +1745,119 @@ const VehicleType = ({ mode: propMode }) => {
               placeholder="No preferences selected"
             />
           </div>
+
+          {formData.transport_type ? (
+            <div className="lg:col-span-2">
+              <VehicleMultiSelect
+                label="Required Driver Documents"
+                options={documentOptions}
+                value={formData.required_document_ids}
+                onChange={(next) => updateForm('required_document_ids', next)}
+                placeholder="No documents picked: drivers of this vehicle upload every active document"
+              />
+              <p className="mt-2 text-[12px] text-slate-500">
+                Pick the documents drivers must upload when they register with this vehicle (for example, a bike does not
+                need a Vehicle Permit). Leave empty to ask for every active document.
+              </p>
+
+              {showNewDocument ? (
+                <div className="mt-3 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-800">New document</p>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <div className="md:col-span-1">
+                      <label className={labelClass}>Document name *</label>
+                      <input
+                        value={newDocument.name}
+                        onChange={(e) => setNewDocument((prev) => ({ ...prev, name: e.target.value }))}
+                        className={inputClass}
+                        placeholder="e.g. Fitness Certificate"
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Photos to upload</label>
+                      <select
+                        value={newDocument.image_type}
+                        onChange={(e) => setNewDocument((prev) => ({ ...prev, image_type: e.target.value }))}
+                        className={inputClass}
+                      >
+                        <option value="front_back">Front and back</option>
+                        <option value="front">Front only</option>
+                        <option value="back">Back only</option>
+                        <option value="image">Single image</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelClass}>For</label>
+                      <select
+                        value={newDocument.account_type}
+                        onChange={(e) => setNewDocument((prev) => ({ ...prev, account_type: e.target.value }))}
+                        className={inputClass}
+                      >
+                        <option value="individual">Individual drivers</option>
+                        <option value="fleet_drivers">Fleet drivers</option>
+                        <option value="both">Both</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-700">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={newDocument.is_required}
+                        onChange={(e) => setNewDocument((prev) => ({ ...prev, is_required: e.target.checked }))}
+                      />
+                      Mandatory
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={newDocument.has_expiry_date}
+                        onChange={(e) => setNewDocument((prev) => ({ ...prev, has_expiry_date: e.target.checked }))}
+                      />
+                      Has expiry date
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={newDocument.has_identify_number}
+                        onChange={(e) => setNewDocument((prev) => ({ ...prev, has_identify_number: e.target.checked }))}
+                      />
+                      Has ID number
+                    </label>
+                  </div>
+                  {newDocumentError ? <p className="text-sm text-red-600">{newDocumentError}</p> : null}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCreateDocument}
+                      disabled={isSavingDocument}
+                      className="rounded-lg bg-yellow-400 px-4 py-2 text-sm font-semibold text-slate-900 disabled:opacity-60"
+                    >
+                      {isSavingDocument ? 'Saving...' : 'Save document'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowNewDocument(false);
+                        setNewDocumentError('');
+                      }}
+                      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowNewDocument(true)}
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-yellow-400"
+                >
+                  + Add new document
+                </button>
+              )}
+            </div>
+          ) : null}
         </div>
 
         <div className="grid grid-cols-1 gap-4 border-t border-slate-100 bg-slate-50/50 p-6 lg:grid-cols-[1fr_auto] lg:items-center">

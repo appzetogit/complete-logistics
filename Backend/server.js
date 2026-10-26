@@ -30,10 +30,13 @@ const ensureDispatchGeoIndexes = async () => {
   console.log('[indexes] dispatch geo indexes checked');
 };
 import { restoreScheduledDispatches, startDispatchRecoveryLoop } from './src/modules/taxi/services/dispatchService.js';
+import { bootstrapFirstAdmin } from './src/modules/taxi/admin/services/adminService.js';
 
 const bootstrap = async () => {
   await connectDatabase();
   await ensureDispatchGeoIndexes();
+  // First superadmin from ADMIN_BOOTSTRAP_EMAIL / ADMIN_BOOTSTRAP_PASSWORD, only while no admin exists.
+  await bootstrapFirstAdmin();
   if (!env.redis.enabled || !env.redis.url) {
     console.warn('[redis] disabled or not configured, falling back to in-memory rate limiting');
   } else {
