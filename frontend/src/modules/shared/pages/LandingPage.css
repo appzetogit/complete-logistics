@@ -1022,11 +1022,49 @@
   font-size: 17px;
 }
 
+.lp-app-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: 26px;
+}
+
+.lp-play-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 22px 12px 16px;
+  border-radius: 16px;
+  background: #14110a;
+  color: #fff;
+  text-decoration: none;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.lp-play-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(60, 35, 0, 0.35);
+}
+
+.lp-play-btn span {
+  display: flex;
+  flex-direction: column;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.lp-play-btn small {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
 .lp-app-qr {
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  margin-top: 26px;
   padding: 10px 18px 10px 10px;
   border-radius: 16px;
   background: #14110a;
@@ -2416,7 +2454,8 @@
     font-size: 28px;
   }
 
-  .lp-app-qr {
+  .lp-app-qr,
+  .lp-play-btn {
     width: 100%;
   }
 
