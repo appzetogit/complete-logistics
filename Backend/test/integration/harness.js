@@ -123,6 +123,7 @@ export const bootstrap = async ({ smtpPort = 1 } = {}) => {
     SMS_INDIA_HUB_PE_ID: '',
     SMS_INDIA_HUB_ROUTE: '',
     SMS_INDIA_HUB_POWERED_BY: '',
+    SMS_INDIA_HUB_TEMPLATE_TEXT: '',
     // OTP: static code so signup can be driven without an SMS provider
     USE_DEFAULT_OTP: 'true',
     STATIC_OTP_CODE: '1234',

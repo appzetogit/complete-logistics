@@ -3,11 +3,12 @@ import { ApiError } from '../../../utils/ApiError.js';
 import { AdminBusinessSetting } from '../admin/models/AdminBusinessSetting.js';
 
 const SMS_INDIA_HUB_ENDPOINT = 'http://cloud.smsindiahub.in/api/mt/SendSMS';
-// The OTP message must match the registered DLT template ("App Login", sender BGADPL) word for word;
-// only the three ##var## slots change: app name, "powered by" name, OTP. Operators reject anything else.
+// The OTP message must match the registered DLT template word for word; only the three ##var## slots change
+// (app name, "powered by" name, OTP) and ##sender## becomes the sender header. Operators reject anything else.
+// If the registered text differs, set SMS_INDIA_HUB_TEMPLATE_TEXT instead of changing code.
 const DLT_TEMPLATE_TEXT =
-  'Welcome to ##var##, powered by ##var##. Your OTP for registration ##var##. This OTP is valid for 10 minutes. Please do not share it with anyone.BGADPL';
-const DEFAULT_TEMPLATE_ID = '1077104580057767222';
+  'Welcome to ##var##, powered by ##var##. Your OTP for registration ##var##. This OTP is valid for 10 minutes. Please do not share it with anyone.##sender##';
+const DEFAULT_TEMPLATE_ID = '1007282516644508833';
 const DEFAULT_BRAND_NAME = 'Rentol';
 const DEFAULT_POWERED_BY = 'Rentol Logistics';
 const TEMPLATE_VALID_MINUTES = 10;
@@ -75,6 +76,7 @@ const getSmsIndiaHubConfig = () => {
   const peId = readValue(env.sms?.indiaHub?.peId, process.env.SMS_INDIA_HUB_PE_ID);
   const route = readValue(env.sms?.indiaHub?.route, process.env.SMS_INDIA_HUB_ROUTE);
   const poweredBy = readValue(env.sms?.indiaHub?.poweredBy, process.env.SMS_INDIA_HUB_POWERED_BY, DEFAULT_POWERED_BY);
+  const templateText = readValue(env.sms?.indiaHub?.templateText, process.env.SMS_INDIA_HUB_TEMPLATE_TEXT, DLT_TEMPLATE_TEXT);
 
   return {
     user,
@@ -85,6 +87,7 @@ const getSmsIndiaHubConfig = () => {
     peId,
     route,
     poweredBy,
+    templateText,
   };
 };
 
@@ -139,10 +142,16 @@ const getConfiguredBrandName = async () => {
 
 const clampVar = (value) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_VAR_LENGTH);
 
-export const renderOtpMessage = ({ appName, poweredBy = DEFAULT_POWERED_BY, otp }) => {
+export const renderOtpMessage = ({
+  appName,
+  poweredBy = DEFAULT_POWERED_BY,
+  otp,
+  senderId = '',
+  templateText = DLT_TEMPLATE_TEXT,
+}) => {
   const values = [clampVar(appName) || DEFAULT_BRAND_NAME, clampVar(poweredBy) || DEFAULT_POWERED_BY, clampVar(otp)];
   let index = 0;
-  return DLT_TEMPLATE_TEXT.replace(/##var##/g, () => values[index++]);
+  return templateText.replace(/##var##/g, () => values[index++] ?? '').replace(/##sender##/g, senderId);
 };
 
 const isSuccessfulProviderResponse = (response, responseText) => {
@@ -198,7 +207,13 @@ export const buildSmsPayload = ({ phone, otp, appName, authMode = 'apiKey' }) =>
     DCS: '0',
     flashsms: '0',
     number: normalizedPhone,
-    text: renderOtpMessage({ appName, poweredBy: config.poweredBy, otp }),
+    text: renderOtpMessage({
+      appName,
+      poweredBy: config.poweredBy,
+      otp,
+      senderId: config.senderId,
+      templateText: config.templateText,
+    }),
     TemplateId: config.templateId,
     DLTTemplateId: config.templateId,
   });

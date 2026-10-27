@@ -104,6 +104,8 @@ export const env = {
       peId: readEnv('SMS_INDIA_HUB_PE_ID'),
       route: readEnv('SMS_INDIA_HUB_ROUTE'),
       poweredBy: readEnv('SMS_INDIA_HUB_POWERED_BY'),
+      // Full registered DLT template text with ##var## slots (and ##sender## for the header); optional
+      templateText: readEnv('SMS_INDIA_HUB_TEMPLATE_TEXT'),
     },
   },
   driverWallet: {
