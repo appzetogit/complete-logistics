@@ -3,9 +3,16 @@ import { ApiError } from '../../../utils/ApiError.js';
 import { AdminBusinessSetting } from '../admin/models/AdminBusinessSetting.js';
 
 const SMS_INDIA_HUB_ENDPOINT = 'http://cloud.smsindiahub.in/api/mt/SendSMS';
+// The OTP message must match the registered DLT template ("App Login", sender BGADPL) word for word;
+// only the three ##var## slots change: app name, "powered by" name, OTP. Operators reject anything else.
 const DLT_TEMPLATE_TEXT =
-  'Welcome to the ##var## powered by SMSINDIAHUB. Your OTP for registration is ##var##';
-const DEFAULT_BRAND_NAME = 'App';
+  'Welcome to ##var##, powered by ##var##. Your OTP for registration ##var##. This OTP is valid for 10 minutes. Please do not share it with anyone.BGADPL';
+const DEFAULT_TEMPLATE_ID = '1077104580057767222';
+const DEFAULT_BRAND_NAME = 'Rentol';
+const DEFAULT_POWERED_BY = 'Rentol Logistics';
+const TEMPLATE_VALID_MINUTES = 10;
+// DLT variables are limited to 30 characters
+const MAX_VAR_LENGTH = 30;
 
 const isTruthy = (value) => ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 
@@ -63,8 +70,11 @@ const getSmsIndiaHubConfig = () => {
   const templateId = readValue(
     env.sms?.indiaHub?.dltTemplateId,
     process.env.SMS_INDIA_HUB_DLT_TEMPLATE_ID,
-    '1007801291964877107',
+    DEFAULT_TEMPLATE_ID,
   );
+  const peId = readValue(env.sms?.indiaHub?.peId, process.env.SMS_INDIA_HUB_PE_ID);
+  const route = readValue(env.sms?.indiaHub?.route, process.env.SMS_INDIA_HUB_ROUTE);
+  const poweredBy = readValue(env.sms?.indiaHub?.poweredBy, process.env.SMS_INDIA_HUB_POWERED_BY, DEFAULT_POWERED_BY);
 
   return {
     user,
@@ -72,6 +82,9 @@ const getSmsIndiaHubConfig = () => {
     apiKey,
     senderId,
     templateId,
+    peId,
+    route,
+    poweredBy,
   };
 };
 
@@ -124,8 +137,13 @@ const getConfiguredBrandName = async () => {
   }
 };
 
-const renderOtpMessage = ({ appName, otp }) =>
-  DLT_TEMPLATE_TEXT.replace('##var##', String(appName)).replace('##var##', String(otp));
+const clampVar = (value) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_VAR_LENGTH);
+
+export const renderOtpMessage = ({ appName, poweredBy = DEFAULT_POWERED_BY, otp }) => {
+  const values = [clampVar(appName) || DEFAULT_BRAND_NAME, clampVar(poweredBy) || DEFAULT_POWERED_BY, clampVar(otp)];
+  let index = 0;
+  return DLT_TEMPLATE_TEXT.replace(/##var##/g, () => values[index++]);
+};
 
 const isSuccessfulProviderResponse = (response, responseText) => {
   const parsed = parseProviderResponse(responseText);
@@ -145,7 +163,7 @@ const isAuthParsingError = (response, responseText) => {
   return !response.ok || errorCode === '1' || errorCode === '2' || errorMessage.includes('login details cannot be blank');
 };
 
-const buildSmsPayload = ({ phone, otp, appName, authMode = 'apiKey' }) => {
+export const buildSmsPayload = ({ phone, otp, appName, authMode = 'apiKey' }) => {
   const config = getSmsIndiaHubConfig();
 
   logSmsConfigDebug(config);
@@ -180,9 +198,18 @@ const buildSmsPayload = ({ phone, otp, appName, authMode = 'apiKey' }) => {
     DCS: '0',
     flashsms: '0',
     number: normalizedPhone,
-    text: renderOtpMessage({ appName, otp }),
+    text: renderOtpMessage({ appName, poweredBy: config.poweredBy, otp }),
     TemplateId: config.templateId,
+    DLTTemplateId: config.templateId,
   });
+
+  if (config.peId) {
+    payload.set('PEId', config.peId);
+  }
+
+  if (config.route) {
+    payload.set('route', config.route);
+  }
 
   if (useApiKey) {
     payload.set('APIKey', config.apiKey);
@@ -205,6 +232,10 @@ export const sendOtpSms = async ({ phone, otp, purpose = 'otp' }) => {
   }
 
   const config = getSmsIndiaHubConfig();
+  if (env.sms.otpExpiryMinutes !== TEMPLATE_VALID_MINUTES) {
+    // the registered template promises "valid for 10 minutes"
+    console.warn(`[smsService] OTP_EXPIRY_MINUTES is ${env.sms.otpExpiryMinutes} but the SMS template says ${TEMPLATE_VALID_MINUTES} minutes`);
+  }
   const brandName = await getConfiguredBrandName();
   const authModes = config.apiKey ? ['apiKey', 'credentials'] : ['credentials'];
   let finalResponse = null;
