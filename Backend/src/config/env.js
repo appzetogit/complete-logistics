@@ -88,6 +88,8 @@ export const env = {
   sms: {
     useDefaultOtp: process.env.USE_DEFAULT_OTP || 'false',
     staticOtpPhone: readEnv('STATIC_OTP_PHONE'),
+    staticOtpUserPhones: readEnv('STATIC_OTP_USER_PHONE', 'STATIC_OTP_USER_PHONES'),
+    staticOtpDriverPhones: readEnv('STATIC_OTP_DRIVER_PHONE', 'STATIC_OTP_DRIVER_PHONES'),
     staticOtpCode: readEnv('STATIC_OTP_CODE'),
     otpExpiryMinutes:
       Number.isFinite(Number(process.env.OTP_EXPIRY_MINUTES)) && Number(process.env.OTP_EXPIRY_MINUTES) > 0

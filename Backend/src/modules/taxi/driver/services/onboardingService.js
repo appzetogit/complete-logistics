@@ -32,6 +32,7 @@ import {
 } from './loginOtpService.js';
 import { findZoneByPickup } from './locationService.js';
 import { sendOtpSms } from '../../services/smsService.js';
+import { getStaticOtpCode, normalizeOtpInput, staticOtpFor } from '../../services/staticOtp.js';
 import {
   verifyDrivingLicenseWithRecharge,
   verifyRcWithRecharge,
@@ -368,33 +369,20 @@ const generateOtp = () => String(Math.floor(1000 + Math.random() * 9000));
 
 const hashOtp = (otp) => crypto.createHash('sha256').update(String(otp)).digest('hex');
 const isTruthy = (value) => ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
-const getStaticDriverOtpConfig = () => ({
-  phone: normalizePhone(env.sms?.staticOtpPhone || ''),
-  otp: String(env.sms?.staticOtpCode || '').trim(),
-});
 const resolveDriverOnboardingOtpForPhone = (phone) => {
   const normalizedPhone = normalizePhone(phone);
-  const staticOtpConfig = getStaticDriverOtpConfig();
-  const defaultOtpEnabled = isTruthy(env.sms?.useDefaultOtp);
+  const staticOtp = staticOtpFor('driver', normalizedPhone);
 
-  if (defaultOtpEnabled && staticOtpConfig.otp) {
-    return {
-      otp: staticOtpConfig.otp,
-      isStatic: true,
-    };
+  if (staticOtp) {
+    return { otp: staticOtp, isStatic: true };
   }
 
-  if (staticOtpConfig.phone && staticOtpConfig.otp && normalizedPhone === staticOtpConfig.phone) {
-    return {
-      otp: staticOtpConfig.otp,
-      isStatic: true,
-    };
+  // development switch: every number gets the fixed code (never turn this on in production)
+  if (isTruthy(env.sms?.useDefaultOtp) && getStaticOtpCode()) {
+    return { otp: getStaticOtpCode(), isStatic: true };
   }
 
-  return {
-    otp: generateOtp(),
-    isStatic: false,
-  };
+  return { otp: generateOtp(), isStatic: false };
 };
 
 const getVehicleType = (vehicleTypeId, registerFor = '') => {
@@ -770,7 +758,9 @@ export const startDriverOnboarding = async ({ phone, role }) => {
 export const verifyDriverOtp = async ({ registrationId, phone, otp }) => {
   const session = await getSession(registrationId, phone);
 
-  if (!otp || String(otp).trim().length !== 4) {
+  const { otp: enteredOtp, valid: otpFormatOk } = normalizeOtpInput('driver', session.phone || phone, otp);
+
+  if (!otpFormatOk) {
     throw new ApiError(400, 'A valid 4-digit OTP is required');
   }
 
@@ -778,7 +768,7 @@ export const verifyDriverOtp = async ({ registrationId, phone, otp }) => {
     throw new ApiError(410, 'OTP has expired');
   }
 
-  if (session.otpHash !== hashOtp(otp)) {
+  if (session.otpHash !== hashOtp(enteredOtp)) {
     throw new ApiError(401, 'Invalid OTP');
   }
 
