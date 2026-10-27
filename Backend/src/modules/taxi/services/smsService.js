@@ -3,11 +3,12 @@ import { ApiError } from '../../../utils/ApiError.js';
 import { AdminBusinessSetting } from '../admin/models/AdminBusinessSetting.js';
 
 const SMS_INDIA_HUB_ENDPOINT = 'http://cloud.smsindiahub.in/api/mt/SendSMS';
-// The OTP message must match the registered DLT template word for word; only the three ##var## slots change
-// (app name, "powered by" name, OTP) and ##sender## becomes the sender header. Operators reject anything else.
-// If the registered text differs, set SMS_INDIA_HUB_TEMPLATE_TEXT instead of changing code.
+// The OTP message must match the registered DLT template word for word (template 1007282516644508833,
+// sender BGADEC): only the ##var## slots change (app name, OTP) and ##sender## becomes the sender header.
+// Operators silently drop anything else. If the registered text changes, set SMS_INDIA_HUB_TEMPLATE_TEXT
+// instead of changing code. A template with three slots gets app name, "powered by" name, OTP.
 const DLT_TEMPLATE_TEXT =
-  'Welcome to ##var##, powered by ##var##. Your OTP for registration ##var##. This OTP is valid for 10 minutes. Please do not share it with anyone.##sender##';
+  'Welcome to the ##var## powered by Appzeto.Your OTP for registration is ##var##.##sender##';
 const DEFAULT_TEMPLATE_ID = '1007282516644508833';
 const DEFAULT_BRAND_NAME = 'Rentol';
 const DEFAULT_POWERED_BY = 'Rentol Logistics';
@@ -149,7 +150,11 @@ export const renderOtpMessage = ({
   senderId = '',
   templateText = DLT_TEMPLATE_TEXT,
 }) => {
-  const values = [clampVar(appName) || DEFAULT_BRAND_NAME, clampVar(poweredBy) || DEFAULT_POWERED_BY, clampVar(otp)];
+  const brand = clampVar(appName) || DEFAULT_BRAND_NAME;
+  const slots = (templateText.match(/##var##/g) || []).length;
+  // which values fill the slots, by how many slots the registered template has
+  const values =
+    slots >= 3 ? [brand, clampVar(poweredBy) || DEFAULT_POWERED_BY, clampVar(otp)] : slots === 2 ? [brand, clampVar(otp)] : [clampVar(otp)];
   let index = 0;
   return templateText.replace(/##var##/g, () => values[index++] ?? '').replace(/##sender##/g, senderId);
 };
