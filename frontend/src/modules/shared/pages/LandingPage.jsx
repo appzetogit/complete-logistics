@@ -1471,9 +1471,26 @@ function LandingPage() {
             <div className="lp-app-copy">
               <h2>Download the {APP_NAME} App</h2>
               <p>Book rides, send parcels and track every trip live, anytime, anywhere.</p>
-              <div className="lp-app-qr">
-                <img src={qrImg} alt={`QR code to find ${APP_NAME} on Google`} loading="lazy" />
-                <span>Scan to<br />find us</span>
+              <div className="lp-app-actions">
+                <a
+                  className="lp-play-btn"
+                  href="https://play.google.com/store/apps/details?id=com.rentol.user"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Get ${APP_NAME} on Google Play`}
+                >
+                  <svg viewBox="0 0 512 512" width="26" height="26" aria-hidden="true">
+                    <path fill="#00d2ff" d="M48 40c-6 6-9 14-9 25v382c0 11 3 19 9 25l2 2 214-214v-5L50 38z" />
+                    <path fill="#ffce00" d="M335 328l-71-71v-5l71-71 2 1 85 48c24 14 24 36 0 50l-85 48z" />
+                    <path fill="#f43c5a" d="M337 327l-73-73L50 468c8 8 21 9 36 1z" />
+                    <path fill="#00e07a" d="M337 181L86 40c-15-8-28-7-36 1l214 213z" />
+                  </svg>
+                  <span><small>GET IT ON</small>Google Play</span>
+                </a>
+                <div className="lp-app-qr">
+                  <img src={qrImg} alt={`QR code to find ${APP_NAME} on Google`} loading="lazy" />
+                  <span>Scan to<br />find us</span>
+                </div>
               </div>
             </div>
             <div className="lp-phone" aria-hidden="true">
