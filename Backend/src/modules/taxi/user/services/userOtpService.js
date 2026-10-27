@@ -5,6 +5,7 @@ import { UserAuthSession } from '../models/UserAuthSession.js';
 import { User } from '../models/User.js';
 import { signAccessToken } from './authService.js';
 import { sendOtpSms } from '../../services/smsService.js';
+import { getStaticOtpCode, normalizeOtpInput, staticOtpFor } from '../../services/staticOtp.js';
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const VERIFIED_SESSION_TTL_MS = 10 * 60 * 1000;
@@ -25,35 +26,20 @@ const generateOtp = () => String(Math.floor(1000 + Math.random() * 9000));
 const hashOtp = (otp) => crypto.createHash('sha256').update(String(otp)).digest('hex');
 const getVisibleOtp = (otp) => (process.env.NODE_ENV !== 'production' ? String(otp) : null);
 const isTruthy = (value) => ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
-const TEST_LOGIN_OTP_PHONE = '7610416911';
-const TEST_LOGIN_OTP_CODE = '0000';
-const getStaticUserOtpConfig = () => ({
-  phone: normalizeUserPhone(env.sms?.staticOtpPhone || TEST_LOGIN_OTP_PHONE),
-  otp: String(env.sms?.staticOtpCode || TEST_LOGIN_OTP_CODE).trim(),
-});
 const resolveUserOtpForPhone = (phone) => {
   const normalizedPhone = normalizeUserPhone(phone);
-  const staticOtpConfig = getStaticUserOtpConfig();
-  const defaultOtpEnabled = isTruthy(env.sms?.useDefaultOtp);
+  const staticOtp = staticOtpFor('user', normalizedPhone);
 
-  if (defaultOtpEnabled && staticOtpConfig.otp) {
-    return {
-      otp: staticOtpConfig.otp,
-      isStatic: true,
-    };
+  if (staticOtp) {
+    return { otp: staticOtp, isStatic: true };
   }
 
-  if (staticOtpConfig.phone && staticOtpConfig.otp && normalizedPhone === staticOtpConfig.phone) {
-    return {
-      otp: staticOtpConfig.otp,
-      isStatic: true,
-    };
+  // development switch: every number gets the fixed code (never turn this on in production)
+  if (isTruthy(env.sms?.useDefaultOtp) && getStaticOtpCode()) {
+    return { otp: getStaticOtpCode(), isStatic: true };
   }
 
-  return {
-    otp: generateOtp(),
-    isStatic: false,
-  };
+  return { otp: generateOtp(), isStatic: false };
 };
 
 const ensureUserCanLogin = (user) => {
@@ -150,9 +136,9 @@ export const startUserOtp = async ({ phone }) => {
 
 export const verifyUserOtp = async ({ phone, otp }) => {
   const session = await getOtpSession(phone);
-  const normalizedOtp = String(otp || '').trim();
+  const { otp: normalizedOtp, valid: otpFormatOk } = normalizeOtpInput('user', session.phone || phone, otp);
 
-  if (!/^\d{4}$/.test(normalizedOtp)) {
+  if (!otpFormatOk) {
     throw new ApiError(400, 'A valid 4-digit OTP is required');
   }
 

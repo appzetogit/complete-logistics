@@ -100,7 +100,7 @@ export const startFakeSmtp = async () => {
 
 // ---- app bootstrap ----------------------------------------------------------
 
-export const bootstrap = async ({ smtpPort = 1 } = {}) => {
+export const bootstrap = async ({ smtpPort = 1, env: extraEnv = {} } = {}) => {
   const dbName = `rentol_it_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
 
   Object.assign(process.env, {
@@ -127,6 +127,8 @@ export const bootstrap = async ({ smtpPort = 1 } = {}) => {
     // OTP: static code so signup can be driven without an SMS provider
     USE_DEFAULT_OTP: 'true',
     STATIC_OTP_CODE: '1234',
+    STATIC_OTP_USER_PHONE: '',
+    STATIC_OTP_DRIVER_PHONE: '',
     STATIC_OTP_PHONE: '9000000000',
     // mail: local fake SMTP sink
     EMAIL_HOST: '127.0.0.1',
@@ -136,6 +138,8 @@ export const bootstrap = async ({ smtpPort = 1 } = {}) => {
     EMAIL_FROM: '"Rentol Test" <test@example.com>',
     PUBLIC_BACKEND_URL: 'http://127.0.0.1:0',
   });
+  // a test may set its own values (for example the OTP settings) before the app loads
+  Object.assign(process.env, extraEnv);
 
   const mongoose = (await import('mongoose')).default;
   const { connectDatabase } = await import('../../src/config/database.js');
