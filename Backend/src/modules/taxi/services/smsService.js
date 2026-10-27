@@ -3,9 +3,18 @@ import { ApiError } from '../../../utils/ApiError.js';
 import { AdminBusinessSetting } from '../admin/models/AdminBusinessSetting.js';
 
 const SMS_INDIA_HUB_ENDPOINT = 'http://cloud.smsindiahub.in/api/mt/SendSMS';
+// The OTP message must match the registered DLT template word for word (template 1007282516644508833,
+// sender BGADEC): only the ##var## slots change (app name, OTP) and ##sender## becomes the sender header.
+// Operators silently drop anything else. If the registered text changes, set SMS_INDIA_HUB_TEMPLATE_TEXT
+// instead of changing code. A template with three slots gets app name, "powered by" name, OTP.
 const DLT_TEMPLATE_TEXT =
-  'Welcome to the ##var## powered by SMSINDIAHUB. Your OTP for registration is ##var##';
-const DEFAULT_BRAND_NAME = 'App';
+  'Welcome to the ##var## powered by Appzeto.Your OTP for registration is ##var##.##sender##';
+const DEFAULT_TEMPLATE_ID = '1007282516644508833';
+const DEFAULT_BRAND_NAME = 'Rentol';
+const DEFAULT_POWERED_BY = 'Rentol Logistics';
+const TEMPLATE_VALID_MINUTES = 10;
+// DLT variables are limited to 30 characters
+const MAX_VAR_LENGTH = 30;
 
 const isTruthy = (value) => ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 
@@ -63,8 +72,12 @@ const getSmsIndiaHubConfig = () => {
   const templateId = readValue(
     env.sms?.indiaHub?.dltTemplateId,
     process.env.SMS_INDIA_HUB_DLT_TEMPLATE_ID,
-    '1007801291964877107',
+    DEFAULT_TEMPLATE_ID,
   );
+  const peId = readValue(env.sms?.indiaHub?.peId, process.env.SMS_INDIA_HUB_PE_ID);
+  const route = readValue(env.sms?.indiaHub?.route, process.env.SMS_INDIA_HUB_ROUTE);
+  const poweredBy = readValue(env.sms?.indiaHub?.poweredBy, process.env.SMS_INDIA_HUB_POWERED_BY, DEFAULT_POWERED_BY);
+  const templateText = readValue(env.sms?.indiaHub?.templateText, process.env.SMS_INDIA_HUB_TEMPLATE_TEXT, DLT_TEMPLATE_TEXT);
 
   return {
     user,
@@ -72,6 +85,10 @@ const getSmsIndiaHubConfig = () => {
     apiKey,
     senderId,
     templateId,
+    peId,
+    route,
+    poweredBy,
+    templateText,
   };
 };
 
@@ -124,8 +141,23 @@ const getConfiguredBrandName = async () => {
   }
 };
 
-const renderOtpMessage = ({ appName, otp }) =>
-  DLT_TEMPLATE_TEXT.replace('##var##', String(appName)).replace('##var##', String(otp));
+const clampVar = (value) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_VAR_LENGTH);
+
+export const renderOtpMessage = ({
+  appName,
+  poweredBy = DEFAULT_POWERED_BY,
+  otp,
+  senderId = '',
+  templateText = DLT_TEMPLATE_TEXT,
+}) => {
+  const brand = clampVar(appName) || DEFAULT_BRAND_NAME;
+  const slots = (templateText.match(/##var##/g) || []).length;
+  // which values fill the slots, by how many slots the registered template has
+  const values =
+    slots >= 3 ? [brand, clampVar(poweredBy) || DEFAULT_POWERED_BY, clampVar(otp)] : slots === 2 ? [brand, clampVar(otp)] : [clampVar(otp)];
+  let index = 0;
+  return templateText.replace(/##var##/g, () => values[index++] ?? '').replace(/##sender##/g, senderId);
+};
 
 const isSuccessfulProviderResponse = (response, responseText) => {
   const parsed = parseProviderResponse(responseText);
@@ -145,7 +177,7 @@ const isAuthParsingError = (response, responseText) => {
   return !response.ok || errorCode === '1' || errorCode === '2' || errorMessage.includes('login details cannot be blank');
 };
 
-const buildSmsPayload = ({ phone, otp, appName, authMode = 'apiKey' }) => {
+export const buildSmsPayload = ({ phone, otp, appName, authMode = 'apiKey' }) => {
   const config = getSmsIndiaHubConfig();
 
   logSmsConfigDebug(config);
@@ -180,9 +212,24 @@ const buildSmsPayload = ({ phone, otp, appName, authMode = 'apiKey' }) => {
     DCS: '0',
     flashsms: '0',
     number: normalizedPhone,
-    text: renderOtpMessage({ appName, otp }),
+    text: renderOtpMessage({
+      appName,
+      poweredBy: config.poweredBy,
+      otp,
+      senderId: config.senderId,
+      templateText: config.templateText,
+    }),
     TemplateId: config.templateId,
+    DLTTemplateId: config.templateId,
   });
+
+  if (config.peId) {
+    payload.set('PEId', config.peId);
+  }
+
+  if (config.route) {
+    payload.set('route', config.route);
+  }
 
   if (useApiKey) {
     payload.set('APIKey', config.apiKey);
@@ -205,8 +252,19 @@ export const sendOtpSms = async ({ phone, otp, purpose = 'otp' }) => {
   }
 
   const config = getSmsIndiaHubConfig();
+  if (env.sms.otpExpiryMinutes !== TEMPLATE_VALID_MINUTES) {
+    // the registered template promises "valid for 10 minutes"
+    console.warn(`[smsService] OTP_EXPIRY_MINUTES is ${env.sms.otpExpiryMinutes} but the SMS template says ${TEMPLATE_VALID_MINUTES} minutes`);
+  }
   const brandName = await getConfiguredBrandName();
-  const authModes = config.apiKey ? ['apiKey', 'credentials'] : ['credentials'];
+  // Only try a login mode that is actually configured: otherwise a provider error on the first attempt is
+  // replaced by "user is not configured" and the real reason is lost.
+  const authModes = [];
+  if (config.apiKey) authModes.push('apiKey');
+  if (config.user && config.password) authModes.push('credentials');
+  if (!authModes.length) {
+    throw new ApiError(500, 'SMS India Hub API key (or user and password) is not configured');
+  }
   let finalResponse = null;
   let finalResponseText = '';
   let delivered = false;

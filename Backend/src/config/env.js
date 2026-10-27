@@ -100,6 +100,12 @@ export const env = {
       apiKeyOverride: readEnv('SMS_INDIA_HUB_API_KEY_OVERRIDE'),
       senderId: readEnv('SMS_INDIA_HUB_SENDER_ID'),
       dltTemplateId: readEnv('SMS_INDIA_HUB_DLT_TEMPLATE_ID'),
+      // DLT Principal Entity ID, the account's route id and the "powered by" name used inside the OTP template
+      peId: readEnv('SMS_INDIA_HUB_PE_ID'),
+      route: readEnv('SMS_INDIA_HUB_ROUTE'),
+      poweredBy: readEnv('SMS_INDIA_HUB_POWERED_BY'),
+      // Full registered DLT template text with ##var## slots (and ##sender## for the header); optional
+      templateText: readEnv('SMS_INDIA_HUB_TEMPLATE_TEXT'),
     },
   },
   driverWallet: {
