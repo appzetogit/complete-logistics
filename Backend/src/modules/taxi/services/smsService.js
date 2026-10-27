@@ -237,7 +237,14 @@ export const sendOtpSms = async ({ phone, otp, purpose = 'otp' }) => {
     console.warn(`[smsService] OTP_EXPIRY_MINUTES is ${env.sms.otpExpiryMinutes} but the SMS template says ${TEMPLATE_VALID_MINUTES} minutes`);
   }
   const brandName = await getConfiguredBrandName();
-  const authModes = config.apiKey ? ['apiKey', 'credentials'] : ['credentials'];
+  // Only try a login mode that is actually configured: otherwise a provider error on the first attempt is
+  // replaced by "user is not configured" and the real reason is lost.
+  const authModes = [];
+  if (config.apiKey) authModes.push('apiKey');
+  if (config.user && config.password) authModes.push('credentials');
+  if (!authModes.length) {
+    throw new ApiError(500, 'SMS India Hub API key (or user and password) is not configured');
+  }
   let finalResponse = null;
   let finalResponseText = '';
   let delivered = false;
