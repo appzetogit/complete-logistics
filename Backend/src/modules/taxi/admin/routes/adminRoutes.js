@@ -248,6 +248,15 @@ import {
   uploadImage,
 } from '../controllers/poolingController.js';
 import { promotionsRouter } from '../promotions/routes/index.js';
+import { hasAdminPermission } from '../services/adminAccessService.js';
+import {
+  getLegal,
+  listLegal,
+  publishLegal,
+  removeLegal,
+  saveLegal,
+  unpublishLegal,
+} from '../controllers/legalController.js';
 import { listSafetyAlerts, resolveSafetyAlert } from '../../safety/controllers/safetyController.js';
 import {
   listRidePaymentRefunds,
@@ -282,6 +291,21 @@ adminRouter.get('/admin/push/status', getPushDiagnostics);
 adminRouter.post('/admin/push/test', sendTestPush);
 
 adminRouter.get('/admin/permissions', getAdminPermissions);
+
+// About / Privacy / Terms / Refund ... shown in the apps and on the website. Needs the `legal.manage` permission.
+const requireLegalAccess = (req, _res, next) => {
+  if (!hasAdminPermission(req.auth?.admin, 'legal.manage')) {
+    next(new ApiError(403, 'You do not have permission to manage legal content'));
+    return;
+  }
+  next();
+};
+adminRouter.get('/admin/legal', requireLegalAccess, listLegal);
+adminRouter.get('/admin/legal/:id', requireLegalAccess, getLegal);
+adminRouter.put('/admin/legal/:type', requireLegalAccess, saveLegal);
+adminRouter.post('/admin/legal/:id/publish', requireLegalAccess, publishLegal);
+adminRouter.post('/admin/legal/:id/unpublish', requireLegalAccess, unpublishLegal);
+adminRouter.delete('/admin/legal/:id', requireLegalAccess, removeLegal);
 adminRouter.get('/admin/admin-management/admins', getAdmins);
 adminRouter.post('/admin/admin-management/admins', createAdminAccount);
 adminRouter.patch('/admin/admin-management/admins/:id', updateAdminAccount);

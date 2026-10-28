@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft, FileText, IndianRupee, Mail, Phone, ReceiptText, Scale, ScrollText, ShieldCheck } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { SUPPORT_INFO } from '../content/supportInfo';
 import termsRawText from '../content/terms-content.txt?raw';
 import privacyRawText from '../content/privacy-content.txt?raw';
+import { fetchLegalDocument, renameCompany } from '../services/legalContentService';
 
 const ownerContact = {
   phone: SUPPORT_INFO.phone,
@@ -158,7 +159,41 @@ const isLegalHeadingLine = (line = '') => {
 const LegalPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const content = legalContent[getDocumentType(location.pathname)];
+  const documentType = getDocumentType(location.pathname);
+  const [remote, setRemote] = useState(null);
+
+  // The text written in the admin panel wins; the built-in text below is only the fallback.
+  useEffect(() => {
+    let alive = true;
+    setRemote(null);
+    fetchLegalDocument(documentType, 'user').then((doc) => {
+      if (alive) setRemote(doc);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [documentType]);
+
+  const base = legalContent[documentType];
+  const content = remote
+    ? {
+      ...base,
+      title: remote.title || base.title,
+      rawText: remote.body,
+      // keep the indicative price table of the refund page under the admin text
+      extraSections: documentType === 'refund'
+        ? (base.sections || []).filter((section) => section.table || section.title === 'Important pricing note')
+        : [],
+    }
+    : {
+      ...base,
+      rawText: base.rawText ? renameCompany(base.rawText) : undefined,
+      sections: base.sections?.map((section) => ({
+        ...section,
+        body: section.body ? renameCompany(section.body) : section.body,
+        bullets: section.bullets?.map(renameCompany),
+      })),
+    };
   const Icon = content.icon || FileText;
   const rawParagraphs = content.rawText
     ? content.rawText
@@ -192,7 +227,7 @@ const LegalPage = () => {
             {content.title}
           </h1>
           <p className="mt-6 max-w-3xl text-lg leading-relaxed text-stone-300">
-            {content.intro}
+            {renameCompany(content.intro)}
           </p>
           <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:flex-wrap">
             <a
@@ -235,7 +270,9 @@ const LegalPage = () => {
                 ))}
               </div>
             </div>
-          ) : content.sections.map((section) => (
+          ) : null}
+
+          {(content.rawText ? (content.extraSections || []) : content.sections).map((section) => (
             <div key={section.title} className="rounded-[28px] border border-stone-200 bg-white p-8 shadow-sm">
               <h2 className="text-xl font-black tracking-tight text-slate-900 md:text-2xl">
                 {section.title}

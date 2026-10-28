@@ -1060,6 +1060,7 @@ const AdminLayout = () => {
               // { label: 'Notification Channel', path: '/admin/settings/third-party/notification-channel' },
             ],
           },
+          { icon: FileText, label: 'Legal & About Pages', path: '/admin/cms', permission: 'legal.manage' },
           // {
           //   icon: PlusCircle,
           //   label: 'Addons',

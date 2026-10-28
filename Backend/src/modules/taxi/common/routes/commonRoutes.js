@@ -12,6 +12,9 @@ commonRouter.post(
   commonController.uploadImage,
 );
 commonRouter.get('/common/referrals/translation', commonController.getReferralTranslation);
+// About / Privacy / Terms / Refund ... (no login: shown before sign-in).
+commonRouter.get('/common/legal', commonController.listLegalContent);
+commonRouter.get('/common/legal/:type', commonController.getLegalContent);
 // Help-center contact for both apps (no login).
 commonRouter.get('/app-settings/support', commonController.getSupportContact);
 commonRouter.get('/common/referrals/settings', commonController.getReferralSettingsContent);

@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   AlertCircle
 } from 'lucide-react';
+import LegalDocumentsPanel from './LegalDocumentsPanel';
 
 const CMSBuilder = () => {
   const [activeTab, setActiveTab] = useState('Banners');
@@ -30,9 +31,6 @@ const CMSBuilder = () => {
            <button className="bg-white border border-gray-200 text-gray-600 px-4 py-2 rounded-lg text-[13px] font-bold hover:bg-gray-50 flex items-center gap-2">
              <Eye size={16} /> Preview App
            </button>
-           <button className="bg-black text-white px-6 py-2 rounded-lg text-[13px] font-bold hover:opacity-90 transition-all shadow-sm flex items-center gap-2">
-             <Save size={16} /> Publish Changes
-           </button>
         </div>
       </div>
 
@@ -42,7 +40,7 @@ const CMSBuilder = () => {
             {[
                { id: 'Banners', icon: <ImageIcon size={18} />, count: 3 },
                { id: 'FAQ', icon: <HelpCircle size={18} />, count: 12 },
-               { id: 'Legal', icon: <FileText size={18} />, count: 4 },
+               { id: 'Legal', icon: <FileText size={18} />, count: null },
                { id: 'Settings', icon: <Settings size={18} />, count: null },
             ].map((tab) => (
                <button
@@ -72,7 +70,7 @@ const CMSBuilder = () => {
                   <Globe size={16} /> Sync Status
                </div>
                <p className="text-[11px] font-bold text-blue-800 leading-relaxed">
-                  Content automatically syncs to User & Driver mobile apps upon publishing.
+                  Published legal documents appear in the User & Driver apps and on the website.
                </p>
             </div>
          </div>
@@ -122,32 +120,7 @@ const CMSBuilder = () => {
                </div>
             )}
 
-            {activeTab === 'Legal' && (
-               <div className="space-y-6 animate-in fade-in duration-500">
-                  <div className="flex items-center justify-between">
-                     <h3 className="text-lg font-black text-gray-900 tracking-tight">Legal & Policy Documents</h3>
-                  </div>
-
-                  <div className="space-y-4">
-                     {['Privacy Policy', 'Terms of Service', 'Driver Agreement (SLA)', 'Refund Policy'].map((doc, i) => (
-                        <div key={i} className="bg-white rounded-2xl border border-gray-100 p-5 flex items-center justify-between shadow-sm hover:border-gray-300 transition-all cursor-pointer">
-                           <div className="flex items-center gap-4">
-                              <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400">
-                                 <FileText size={20} className={i === 0 ? 'text-primary' : ''} />
-                              </div>
-                              <div>
-                                 <h4 className="text-[14px] font-black text-gray-900">{doc}</h4>
-                                 <p className="text-[11px] font-bold text-gray-400 mt-0.5 uppercase tracking-widest">Last updated: 14th Feb 2024</p>
-                              </div>
-                           </div>
-                           <button className="px-4 py-2 border border-gray-200 rounded-lg text-[12px] font-bold text-gray-600 hover:bg-gray-50 flex items-center gap-2">
-                              <Edit2 size={14} /> Edit Content
-                           </button>
-                        </div>
-                     ))}
-                  </div>
-               </div>
-            )}
+            {activeTab === 'Legal' && <LegalDocumentsPanel />}
 
             {activeTab === 'FAQ' && (
                <div className="space-y-6 animate-in fade-in duration-500">

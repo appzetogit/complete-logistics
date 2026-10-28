@@ -15,6 +15,16 @@ export const adminService = {
   getAdminPermissions: () => api.get('/admin/permissions'),
 
   /**
+   * Legal & About content (apps + website)
+   */
+  getLegalDocuments: (params = {}) => api.get('/admin/legal', { params }),
+  getLegalDocument: (id) => api.get(`/admin/legal/${id}`),
+  saveLegalDraft: (type, data) => api.put(`/admin/legal/${type}`, data),
+  publishLegalDocument: (id) => api.post(`/admin/legal/${id}/publish`),
+  unpublishLegalDocument: (id) => api.post(`/admin/legal/${id}/unpublish`),
+  deleteLegalDocument: (id) => api.delete(`/admin/legal/${id}`),
+
+  /**
    * User Management
    */
   getUsers: (page = 1, limit = 50, search = '', filters = {}) => {
