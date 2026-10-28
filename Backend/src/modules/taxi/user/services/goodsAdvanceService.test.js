@@ -14,6 +14,7 @@ const {
   isDispatchBlockedByAdvance,
   payGoodsAdvanceWithWallet,
   refundGoodsAdvance,
+  splitAdvanceOnRiderCancel,
   resolveGoodsAdvanceForNewRide,
   verifyGoodsAdvancePayment,
 } = await import('./goodsAdvanceService.js');
@@ -328,53 +329,210 @@ test('a failed Razorpay refund puts the advance back to paid so it can be retrie
   assert.equal(Ride.store.get('ride1').goodsAdvance.status, 'paid');
 });
 
-test('rider cancel forfeits the advance: no refund, now or later', async () => {
-  const Ride = makeRideModel([paidRide({ driverId: 'driver1' })]);
-  const UserWallet = makeWalletModel();
-
-  const forfeit = await forfeitGoodsAdvance({ rideId: 'ride1', deps: { Ride } });
-  assert.equal(forfeit.forfeited, true);
-  assert.equal(Ride.store.get('ride1').goodsAdvance.status, 'forfeited');
-
-  const refund = await refundGoodsAdvance({ rideId: 'ride1', deps: { Ride, UserWallet, getConfig: async () => ({ refundTo: 'refund_wallet' }) } });
-  assert.equal(refund.refunded, false);
-  assert.equal(UserWallet.wallet.refundWallet, 0);
-  assert.equal((await forfeitGoodsAdvance({ rideId: 'ride1', deps: { Ride } })).forfeited, false);
+// A rider cancel: 15% of the FARE (fare 1000 -> 150) is kept, the rest of the advance (200 -> 50) goes back.
+const cancelDeps = (Ride, UserWallet, extra = {}) => ({
+  Ride,
+  UserWallet,
+  runInTransaction: rollbackTxn(Ride),
+  getConfig: async () => ({ cancelKeepPercent: 15, refundTo: 'refund_wallet' }),
+  ...extra,
 });
 
-test('forfeited advance can go to the driver when the pricing rule says so', async () => {
+test('rider cancel keeps 15% of the fare and refunds the rest to the refund wallet, once', async () => {
   const Ride = makeRideModel([paidRide({ driverId: 'driver1' })]);
+  const UserWallet = makeWalletModel();
+  const deps = cancelDeps(Ride, UserWallet);
+
+  const result = await forfeitGoodsAdvance({ rideId: 'ride1', deps });
+  assert.equal(result.forfeited, true);
+  assert.equal(result.status, 'forfeited');
+  assert.equal(result.keptAmount, 150);
+  assert.equal(result.refundedAmount, 50);
+  assert.equal(result.refundDestination, 'refund_wallet');
+  assert.equal(result.creditedToDriver, false);
+
+  const advance = Ride.store.get('ride1').goodsAdvance;
+  assert.equal(advance.status, 'forfeited');
+  assert.equal(advance.keptAmount, 150);
+  assert.equal(advance.refundedAmount, 50);
+  assert.equal(advance.refundDestination, 'refund_wallet');
+  assert.ok(advance.refundedAt && advance.forfeitedAt);
+  assert.equal(UserWallet.wallet.refundWallet, 50);
+  assert.equal(UserWallet.wallet.balance, 0);
+
+  // a repeat settles nothing and refunds nothing more, and a later normal refund finds nothing to refund
+  assert.equal((await forfeitGoodsAdvance({ rideId: 'ride1', deps })).forfeited, false);
+  assert.equal((await refundGoodsAdvance({ rideId: 'ride1', deps })).refunded, false);
+  assert.equal(UserWallet.wallet.refundWallet, 50);
+});
+
+test('rider cancel after paying in full: 15% of the fare kept, 850 refunded', async () => {
+  const Ride = makeRideModel([paidRide({ goodsAdvance: { percent: 100, amount: 1000, status: 'paid', provider: 'wallet' } })]);
+  const UserWallet = makeWalletModel();
+  const result = await forfeitGoodsAdvance({ rideId: 'ride1', deps: cancelDeps(Ride, UserWallet) });
+  assert.equal(result.keptAmount, 150);
+  assert.equal(result.refundedAmount, 850);
+  assert.equal(UserWallet.wallet.refundWallet, 850);
+});
+
+test('rider cancel can refund to the spendable wallet', async () => {
+  const Ride = makeRideModel([paidRide()]);
+  const UserWallet = makeWalletModel();
+  const result = await forfeitGoodsAdvance({
+    rideId: 'ride1',
+    deps: cancelDeps(Ride, UserWallet, { getConfig: async () => ({ cancelKeepPercent: 15, refundTo: 'wallet' }) }),
+  });
+  assert.equal(result.refundDestination, 'wallet');
+  assert.equal(UserWallet.wallet.balance, 50);
+  assert.equal(UserWallet.wallet.refundWallet, 0);
+});
+
+test('the kept part goes to the driver when the pricing rule says so: only the kept part, not the whole advance', async () => {
+  const Ride = makeRideModel([paidRide({ driverId: 'driver1' })]);
+  const UserWallet = makeWalletModel();
   const credits = [];
   const result = await forfeitGoodsAdvance({
     rideId: 'ride1',
     creditDriver: true,
-    deps: { Ride, runInTransaction: rollbackTxn(Ride), applyDriverWalletAdjustment: async (args) => { credits.push(args); } },
+    deps: cancelDeps(Ride, UserWallet, { applyDriverWalletAdjustment: async (args) => { credits.push(args); } }),
   });
   assert.equal(result.creditedToDriver, true);
-  assert.equal(credits[0].amount, 200);
+  assert.equal(credits.length, 1);
+  assert.equal(credits[0].amount, 150);
   assert.equal(credits[0].driverId, 'driver1');
+  assert.equal(UserWallet.wallet.refundWallet, 50, 'the rider still gets the rest');
 });
 
-test('if crediting the driver fails, the advance is still forfeited (platform keeps it)', async () => {
+test('if crediting the driver fails, the rider still gets the refund and the platform keeps the kept part', async () => {
   const Ride = makeRideModel([paidRide({ driverId: 'driver1' })]);
+  const UserWallet = makeWalletModel();
   const originalError = console.error;
   console.error = () => {};
   try {
     const result = await forfeitGoodsAdvance({
       rideId: 'ride1',
       creditDriver: true,
-      deps: {
-        Ride,
-        runInTransaction: rollbackTxn(Ride),
+      deps: cancelDeps(Ride, UserWallet, {
+        // like a real transaction, a failure undoes the ride change AND the rider's wallet credit
+        runInTransaction: async (work) => {
+          const rides = new Map([...Ride.store].map(([key, value]) => [key, structuredClone(value)]));
+          const wallet = structuredClone(UserWallet.wallet);
+          try {
+            return await work(undefined);
+          } catch (error) {
+            Ride.store.clear();
+            rides.forEach((value, key) => Ride.store.set(key, value));
+            Object.assign(UserWallet.wallet, wallet);
+            throw error;
+          }
+        },
         applyDriverWalletAdjustment: async () => { throw new Error('wallet down'); },
-      },
+      }),
     });
     assert.equal(result.forfeited, true);
     assert.equal(result.creditedToDriver, false);
+    assert.equal(result.keptAmount, 150);
+    assert.equal(result.refundedAmount, 50);
     assert.equal(Ride.store.get('ride1').goodsAdvance.status, 'forfeited');
+    assert.equal(UserWallet.wallet.refundWallet, 50, 'refunded exactly once even though the first attempt rolled back');
   } finally {
     console.error = originalError;
   }
+});
+
+test('a keep share at or above the advance share refunds nothing and never goes negative', async () => {
+  const Ride = makeRideModel([paidRide()]);
+  const UserWallet = makeWalletModel();
+  const result = await forfeitGoodsAdvance({
+    rideId: 'ride1',
+    deps: cancelDeps(Ride, UserWallet, { getConfig: async () => ({ cancelKeepPercent: 30, refundTo: 'refund_wallet' }) }),
+  });
+  assert.equal(result.keptAmount, 200);
+  assert.equal(result.refundedAmount, 0);
+  assert.equal(result.refundDestination, '');
+  assert.equal(Ride.store.get('ride1').goodsAdvance.status, 'forfeited');
+  assert.equal(Ride.store.get('ride1').goodsAdvance.refundedAt ?? null, null);
+  assert.equal(UserWallet.wallet.refundWallet, 0);
+});
+
+test('keep percent 0 is an ordinary full refund', async () => {
+  const Ride = makeRideModel([paidRide()]);
+  const UserWallet = makeWalletModel();
+  const result = await forfeitGoodsAdvance({
+    rideId: 'ride1',
+    deps: cancelDeps(Ride, UserWallet, { getConfig: async () => ({ cancelKeepPercent: 0, refundTo: 'refund_wallet' }) }),
+  });
+  assert.equal(result.forfeited, false);
+  assert.equal(result.status, 'refunded');
+  assert.equal(result.refundedAmount, 200);
+  assert.equal(Ride.store.get('ride1').goodsAdvance.status, 'refunded');
+  assert.equal(UserWallet.wallet.refundWallet, 200);
+});
+
+test('if the settings cannot be loaded the defaults apply (15%, refund wallet) and the advance is not left unsettled', async () => {
+  const Ride = makeRideModel([paidRide()]);
+  const UserWallet = makeWalletModel();
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const result = await forfeitGoodsAdvance({
+      rideId: 'ride1',
+      deps: cancelDeps(Ride, UserWallet, { getConfig: async () => { throw new Error('settings down'); } }),
+    });
+    assert.equal(result.keptAmount, 150);
+    assert.equal(result.refundedAmount, 50);
+    assert.equal(UserWallet.wallet.refundWallet, 50);
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test('rider cancel refunding to the original Razorpay payment: only the refunded part is sent; a gateway failure puts the advance back to paid', async () => {
+  const Ride = makeRideModel([paidRide()]);
+  const UserWallet = makeWalletModel();
+  const sourceConfig = async () => ({ cancelKeepPercent: 15, refundTo: 'source' });
+
+  await assert.rejects(
+    forfeitGoodsAdvance({
+      rideId: 'ride1',
+      deps: cancelDeps(Ride, UserWallet, {
+        getConfig: sourceConfig,
+        resolveCredentials: async () => ({ keyId: 'k', keySecret: 's' }),
+        razorpayRequest: async () => { throw new Error('gateway down'); },
+      }),
+    }),
+    /gateway down/,
+  );
+  const reverted = Ride.store.get('ride1').goodsAdvance;
+  assert.equal(reverted.status, 'paid');
+  assert.equal(reverted.keptAmount, 0);
+  assert.equal(reverted.refundedAmount, 0);
+  assert.equal(reverted.refundedAt, null);
+
+  const requests = [];
+  const result = await forfeitGoodsAdvance({
+    rideId: 'ride1',
+    deps: cancelDeps(Ride, UserWallet, {
+      getConfig: sourceConfig,
+      resolveCredentials: async () => ({ keyId: 'k', keySecret: 's' }),
+      razorpayRequest: async (request) => { requests.push(request); return { id: 'rfnd_1' }; },
+    }),
+  });
+  assert.equal(result.forfeited, true);
+  assert.equal(result.refundDestination, 'source');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].path, '/payments/pay_1/refund');
+  assert.equal(requests[0].body.amount, 5000, '50 rupees in paise, not the whole 200');
+  assert.equal(UserWallet.wallet.refundWallet, 0);
+  assert.equal(Ride.store.get('ride1').goodsAdvance.status, 'forfeited');
+});
+
+test('splitAdvanceOnRiderCancel: a share of the fare, capped at the advance', () => {
+  assert.deepEqual(splitAdvanceOnRiderCancel({ fare: 1000, advanceAmount: 200, keepPercent: 15 }), { keptAmount: 150, refundAmount: 50 });
+  assert.deepEqual(splitAdvanceOnRiderCancel({ fare: 1000, advanceAmount: 1000, keepPercent: 15 }), { keptAmount: 150, refundAmount: 850 });
+  assert.deepEqual(splitAdvanceOnRiderCancel({ fare: 1000, advanceAmount: 200, keepPercent: 25 }), { keptAmount: 200, refundAmount: 0 });
+  assert.deepEqual(splitAdvanceOnRiderCancel({ fare: 1000, advanceAmount: 200, keepPercent: 0 }), { keptAmount: 0, refundAmount: 200 });
+  assert.deepEqual(splitAdvanceOnRiderCancel({ fare: 1000, advanceAmount: 200, keepPercent: 'x' }), { keptAmount: 0, refundAmount: 200 });
 });
 
 test('nothing to refund before the advance is paid, or on a non-goods ride', async () => {

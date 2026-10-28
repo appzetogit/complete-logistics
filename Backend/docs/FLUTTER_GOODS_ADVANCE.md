@@ -38,7 +38,7 @@ Quote me `advanceOptions` aata hai, jaise `[20, 100]`. **"Pay in full" chip tabh
 - Server sirf allowed values maanta hai (`advanceOptions` me se); koi aur value ya full band ho to default % lagta hai.
 - 100% par `goodsAdvance.percent = 100`, `amount = fare`, `remainingFare = 0`. Payment endpoints wahi (`/advance/wallet`, `/advance/razorpay/...`).
 - Completion par kuch due nahi: `complete-payment/*` `400 "No payable amount remains"` dete hain (Razorpay ka ₹0 order nahi banta) – app ye calls skip kare aur seedha `PATCH /rides/:id/feedback` kare. Driver ko "Collect ₹0" / collect step hide.
-- Cancel/refund rules same: user cancel = forfeited, driver/no driver/admin = poora amount refund.
+- Cancel/refund rules same: user cancel = fare ka 15% kata (advance se zyada nahi), baaki refund; driver/no driver/admin = poora amount refund.
 - Admin switch: `goods_advance_allow_full` (`true`/`false`, default `true`).
 
 ### Important rules
@@ -67,20 +67,49 @@ Quote me `advanceOptions` aata hai, jaise `[20, 100]`. **"Pay in full" chip tabh
 
 | Kaun / kab | Advance |
 |---|---|
-| **User cancel** (driver assign hone se pehle ya baad) | **Refund nahi** (forfeited) |
+| **User cancel** (driver assign hone se pehle ya baad) | **Fare ka 15% kata, baaki advance refund** (status `forfeited`, `keptAmount` + `refundedAmount`) |
 | **Driver cancel** (scheduled ride) | **Refund** |
 | **Koi driver nahi mila** (unmatched) | **Refund** |
 | **Admin cancel** | **Refund** |
 | User ne advance diya hi nahi (`pending`) | Kuch charge nahi hua, kuch refund nahi |
 
-### Cancel API – `PATCH /rides/:rideId/cancel`
-Response `data` me naye fields:
-```json
-{ "rideId": "...", "status": "cancelled", "advanceRefunded": false, "advanceStatus": "forfeited" }
+### User cancel – kitna kat-ta hai, kitna wapas aata hai
+Admin setting `goods_advance_cancel_keep_percent` (default **15**) = **fare ka %** (advance ka nahi):
+
 ```
-- User cancel par hamesha `advanceRefunded: false`; paid advance ho to `advanceStatus: "forfeited"`.
-- **Cancel dialog me warning dikhao** jab `goodsAdvance.status == "paid"`:
-  "Cancel karne par ₹{amount} advance refund nahi hoga."
+kept     = min(advance, fare × keepPercent / 100)
+refunded = advance − kept
+```
+
+| Fare | Advance | Kata | Wapas |
+|---|---|---|---|
+| ₹1000 | ₹200 (20%) | ₹150 | ₹50 |
+| ₹1000 | ₹1000 (full pay) | ₹150 | ₹850 |
+| ₹1000 | ₹200, keep% = 20 ya zyada | ₹200 | ₹0 |
+| ₹1000 | ₹200, keep% = 0 | ₹0 | ₹200 (status `refunded`) |
+
+- Refund wahi jaata hai jahan normal refund jaata hai (`goods_advance_refund_to`: `refund_wallet` / `wallet` / `source`).
+- `cancellation_fee_goes_to = driver` ho to driver ko sirf **kata hua hissa** milta hai (poora advance nahi).
+- Double cancel / repeat call par refund sirf ek baar hota hai.
+
+### Cancel API – `PATCH /rides/:rideId/cancel`
+Response `data` me fields:
+```json
+{
+  "rideId": "...", "status": "cancelled",
+  "advanceStatus": "forfeited",
+  "advanceRefunded": true,
+  "advanceKeptAmount": 150,
+  "advanceRefundedAmount": 50,
+  "advanceRefundDestination": "refund_wallet"
+}
+```
+- Paid advance par `advanceStatus: "forfeited"`; `advanceRefunded` tab `true` jab `advanceRefundedAmount > 0`.
+- Kuch kata nahi (keep% = 0) to `advanceStatus: "refunded"`.
+- Result dikhao: "₹150 charged, ₹50 refunded".
+- **Cancel dialog (cancel se pehle)**: booking quote me `advanceCancelKeepPercent` aata hai (abhi 15). Dialog me dikhao jab `goodsAdvance.status == "paid"`:
+  `kept = min(goodsAdvance.amount, fare × advanceCancelKeepPercent / 100)`, `refund = goodsAdvance.amount − kept`
+  -> "Cancel karne par ₹{kept} kat-ega, ₹{refund} wapas milega." (percent hardcode mat karo.)
 
 ### Refund kahan jaata hai
 Admin setting (`goods_advance_refund_to`): `refund_wallet` (default), `wallet`, ya `source` (original Razorpay payment).
@@ -88,9 +117,11 @@ Admin setting (`goods_advance_refund_to`): `refund_wallet` (default), `wallet`, 
   ```json
   // event: goodsAdvance:refunded
   { "rideId": "...", "amount": 200, "destination": "refund_wallet|wallet|source", "reason": "no_driver_found|cancelled_by_driver|cancelled_by_admin" }
+  // user cancel par bhi aata hai (sirf wapas hone wale hisse ke saath, + keptAmount):
+  { "rideId": "...", "amount": 50, "keptAmount": 150, "destination": "refund_wallet", "reason": "cancelled_by_rider" }
   ```
-  User ko toast/notification dikhao ("₹200 advance refunded to your wallet").
-- Ride payload me `goodsAdvance.status = "refunded"`.
+  User ko toast/notification dikhao ("₹200 advance refunded to your wallet" / "₹50 refunded, ₹150 cancellation charge").
+- Ride payload me `goodsAdvance.status = "refunded"` (poora refund) ya `"forfeited"` (user cancel, `keptAmount` + `refundedAmount` ke saath).
 - `destination: "refund_wallet"` wala paisa `GET /users/wallet` me `refundWallet` field me dikhta hai
   (abhi yeh normal wallet balance se alag hai).
 
@@ -104,7 +135,10 @@ Admin setting (`goods_advance_refund_to`): `refund_wallet` (default), `wallet`, 
 | `pending` | Advance baaki, **dispatch nahi hua** | "Pay ₹X advance to confirm" button/screen |
 | `paid` | Advance mil gaya, request chal rahi hai | "Advance ₹X paid • Pay ₹remaining on delivery" |
 | `refunded` | Wapas mil gaya | "₹X refunded" |
-| `forfeited` | User cancel ke baad kata | "Advance not refundable" |
+| `forfeited` | User cancel ke baad kuch hissa kata (`keptAmount`), baaki wapas (`refundedAmount`, 0 bhi ho sakta hai) | "₹{keptAmount} charged, ₹{refundedAmount} refunded" |
+
+`goodsAdvance` payload me ab `keptAmount` aur `refundedAmount` bhi hain (`refundDestination`, `refundedAt` pehle se). Purani
+rows (jinme ye fields nahi the): `forfeited` = poora `amount` kata, `refunded` = poora `amount` wapas.
 
 Active delivery restore (`GET /deliveries/active/me`, `GET /rides/active/me`) par `status == "pending"` mile to seedha
 payment screen kholo.
@@ -129,9 +163,10 @@ payment screen kholo.
 
 `PATCH /admin/general-settings/transport_ride`
 ```json
-{ "goods_advance_percent": "20", "goods_advance_refund_to": "refund_wallet" }
+{ "goods_advance_percent": "20", "goods_advance_refund_to": "refund_wallet", "goods_advance_cancel_keep_percent": "15" }
 ```
 - `goods_advance_percent`: `0` = advance band (off).
+- `goods_advance_cancel_keep_percent`: user cancel par **fare ka** kitna % kata jaye (default `15`, `0` = poora refund). Admin panel: Settings > Transport Ride.
 - App me % hardcode na karein – quote ke `advancePercent` se lein.
 
 ---
@@ -145,7 +180,10 @@ payment screen kholo.
 - [ ] Verify dobara call → double charge nahi.
 - [ ] 30 min bina payment → booking auto-cancel.
 - [ ] Koi driver nahi mila → `goodsAdvance:refunded` event, status `refunded`.
-- [ ] User cancel (paid) → `advanceRefunded: false`, status `forfeited`, warning dialog.
+- [ ] User cancel (paid, 20% advance) → `advanceKeptAmount` = fare ka 15%, `advanceRefundedAmount` = baaki, `advanceRefunded: true`, status `forfeited`, `goodsAdvance:refunded` event.
+- [ ] User cancel (full pay) → fare ka 15% kata, baaki refund.
+- [ ] Cancel dialog quote ke `advanceCancelKeepPercent` se amounts dikhata hai (hardcode nahi).
+- [ ] Cancel dobara/double-tap → refund ek hi baar.
 - [ ] Admin cancel → refund.
 - [ ] Completion: user se sirf `remainingFare` charge; driver ko wahi collect karna.
 - [ ] Free ride / subscription wali goods booking → advance nahi.

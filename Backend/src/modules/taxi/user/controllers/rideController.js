@@ -49,6 +49,7 @@ import { Vehicle } from '../../admin/models/Vehicle.js';
 import { Ride } from '../models/Ride.js';
 import { UserWallet } from '../models/UserWallet.js';
 import { getFreeRidesSummaryForUser } from '../services/freeRideService.js';
+import { serializeGoodsAdvance } from '../services/goodsAdvanceService.js';
 import {
   afterRidePaymentApplied,
   applyRidePayment,
@@ -1082,6 +1083,26 @@ export const getRideAppTipSettings = async (_req, res) => {
   });
 };
 
+// What the cancel response says about the goods advance. Right after the cancel it comes from this request's
+// settlement; on a repeated cancel (the ride is already settled) it is read back from what is stored.
+// kept + refunded = the advance.
+const advanceCancelSummary = (ride) => {
+  const stored = serializeGoodsAdvance(ride);
+  const settled = ride.$locals?.advance;
+  const keptAmount = settled ? Number(settled.keptAmount || 0) : stored.status === 'forfeited' ? stored.keptAmount : 0;
+  const refundedAmount = settled
+    ? Number(settled.refundedAmount || 0)
+    : ['forfeited', 'refunded'].includes(stored.status) ? stored.refundedAmount : 0;
+
+  return {
+    advanceRefunded: refundedAmount > 0,
+    advanceStatus: settled?.status || stored.status,
+    advanceKeptAmount: keptAmount,
+    advanceRefundedAmount: refundedAmount,
+    advanceRefundDestination: settled?.refundDestination || stored.refundDestination || '',
+  };
+};
+
 export const cancelRide = async (req, res) => {
   const ride = await cancelRideByUser({
     rideId: req.params.rideId,
@@ -1099,9 +1120,8 @@ export const cancelRide = async (req, res) => {
       rideId: String(ride._id),
       status: ride.status,
       liveStatus: ride.liveStatus,
-      // Goods advance: a rider cancel never refunds it (forfeited).
-      advanceRefunded: Boolean(ride.$locals?.advance?.refunded),
-      advanceStatus: ride.$locals?.advance?.status || ride.goodsAdvance?.status || 'none',
+      // Goods advance: a rider cancel keeps a share of the fare and refunds the rest ("₹150 charged, ₹50 refunded").
+      ...advanceCancelSummary(ride),
       cancellation: serializeRideCancellation(ride),
     },
   });

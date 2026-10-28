@@ -12,14 +12,17 @@ import { UserWallet } from '../models/UserWallet.js';
 //
 //   pending  -> rider has not paid yet; the ride must NOT be dispatched
 //   paid     -> advance held by the platform; ride is dispatched
-//   refunded -> driver cancelled / no driver found / admin cancelled
-//   forfeited-> rider cancelled; advance is kept (not refunded)
+//   refunded -> driver cancelled / no driver found / admin cancelled: the whole advance goes back
+//   forfeited-> rider cancelled: `keptAmount` (a share of the FARE, goods_advance_cancel_keep_percent,
+//               default 15%, never more than the advance) is kept and the rest, `refundedAmount`, goes back
 //
 // Every state change is an atomic compare-and-set on the ride, so a repeated
 // verify/refund/forfeit call can never pay or refund twice.
 
 export const GOODS_ADVANCE_PAYMENT_WINDOW_MS = 30 * 60 * 1000;
 const REFUND_DESTINATIONS = ['refund_wallet', 'wallet', 'source'];
+// Share of the fare that is kept when the rider cancels after paying the advance.
+export const DEFAULT_CANCEL_KEEP_PERCENT = 15;
 
 
 // Money moves and the ride's advance status change together or not at all.
@@ -67,12 +70,31 @@ export const getGoodsAdvanceConfig = async () => {
   const refundTo = String(settings.goods_advance_refund_to || 'refund_wallet').trim().toLowerCase();
   const rawAllowFull = String(settings.goods_advance_allow_full ?? 'true').trim().toLowerCase();
   const allowFull = !['false', '0', 'no', 'off'].includes(rawAllowFull);
+  const rawKeep = settings.goods_advance_cancel_keep_percent;
+  const cancelKeepPercent = Number.isFinite(Number(rawKeep)) && String(rawKeep ?? '').trim() !== ''
+    ? Math.min(100, Math.max(0, Number(rawKeep)))
+    : DEFAULT_CANCEL_KEEP_PERCENT;
 
   return {
     percent,
     allowFull,
+    cancelKeepPercent,
     refundTo: REFUND_DESTINATIONS.includes(refundTo) ? refundTo : 'refund_wallet',
   };
+};
+
+/**
+ * How a paid advance is split when the rider cancels: `keepPercent` of the FARE is kept, but never more
+ * than the advance itself; everything else goes back. A keep share at or above the advance share
+ * refunds nothing. Returns { keptAmount, refundAmount } (both >= 0, together the advance).
+ */
+export const splitAdvanceOnRiderCancel = ({ fare, advanceAmount, keepPercent }) => {
+  const advance = Math.max(0, roundMoney(advanceAmount));
+  const safeKeep = Math.min(100, Math.max(0, Number.isFinite(Number(keepPercent)) ? Number(keepPercent) : 0));
+  const share = roundMoney((Math.max(0, roundMoney(fare)) * safeKeep) / 100);
+  const keptAmount = Math.min(advance, share);
+
+  return { keptAmount, refundAmount: roundMoney(advance - keptAmount) };
 };
 
 /**
@@ -108,17 +130,35 @@ export const getRemainingFare = (ride) => {
   return Math.max(0, roundMoney(fare - amount));
 };
 
-export const serializeGoodsAdvance = (ride) => ({
-  percent: Number(ride?.goodsAdvance?.percent || 0),
-  amount: Number(ride?.goodsAdvance?.amount || 0),
-  status: ride?.goodsAdvance?.status || 'none',
-  // "Advance paid ₹54 · Online · 03:46 PM": how and when it was paid, and what happened to it.
-  provider: ride?.goodsAdvance?.provider || '',
-  paidAt: ride?.goodsAdvance?.paidAt || null,
-  refundDestination: ride?.goodsAdvance?.refundDestination || '',
-  refundedAt: ride?.goodsAdvance?.refundedAt || null,
-  forfeitedAt: ride?.goodsAdvance?.forfeitedAt || null,
-});
+export const serializeGoodsAdvance = (ride) => {
+  const advance = ride?.goodsAdvance || {};
+  const amount = Number(advance.amount || 0);
+  let keptAmount = roundMoney(advance.keptAmount);
+  let refundedAmount = roundMoney(advance.refundedAmount);
+
+  // Advances settled before the split was stored: a rider-cancelled one was kept whole, a refunded one went back whole.
+  if (advance.status === 'forfeited' && !keptAmount && !refundedAmount) {
+    keptAmount = roundMoney(amount);
+  }
+  if (advance.status === 'refunded' && !refundedAmount) {
+    refundedAmount = roundMoney(amount);
+  }
+
+  return {
+    percent: Number(advance.percent || 0),
+    amount,
+    status: advance.status || 'none',
+    // "Advance paid ₹54 · Online · 03:46 PM": how and when it was paid, and what happened to it.
+    provider: advance.provider || '',
+    paidAt: advance.paidAt || null,
+    refundDestination: advance.refundDestination || '',
+    refundedAt: advance.refundedAt || null,
+    forfeitedAt: advance.forfeitedAt || null,
+    // After a rider cancel: "₹150 charged, ₹50 refunded".
+    keptAmount,
+    refundedAmount,
+  };
+};
 
 // ---------------------------------------------------------------- Razorpay
 
@@ -605,6 +645,18 @@ export const payGoodsAdvanceWithWallet = async ({ rideId, userId, deps = {} }) =
 
 // ------------------------------------------------------- Refund / forfeit
 
+/** 'source' only when asked for AND the advance was paid through Razorpay; otherwise one of the wallets. */
+const resolveRefundDestination = (ride, config) => {
+  const canRefundToSource =
+    ride.goodsAdvance.provider === 'razorpay' && Boolean(ride.goodsAdvance.providerPaymentId);
+
+  if (config.refundTo === 'source' && canRefundToSource) {
+    return 'source';
+  }
+
+  return config.refundTo === 'refund_wallet' ? 'refund_wallet' : 'wallet';
+};
+
 /**
  * Refunds a paid advance (driver cancelled, no driver found, admin cancelled).
  * Safe to call repeatedly: only the first call that finds the advance `paid`
@@ -627,13 +679,7 @@ export const refundGoodsAdvance = async ({ rideId, reason = '', deps = {} }) => 
 
   const amount = roundMoney(ride.goodsAdvance.amount);
   const config = await (deps.getConfig || getGoodsAdvanceConfig)();
-  const canRefundToSource =
-    ride.goodsAdvance.provider === 'razorpay' && Boolean(ride.goodsAdvance.providerPaymentId);
-  const destination = config.refundTo === 'source' && canRefundToSource
-    ? 'source'
-    : config.refundTo === 'refund_wallet'
-      ? 'refund_wallet'
-      : 'wallet';
+  const destination = resolveRefundDestination(ride, config);
 
   const claimFilter = { _id: ride._id, serviceType: 'parcel', 'goodsAdvance.status': 'paid' };
   const claimUpdate = {
@@ -641,6 +687,8 @@ export const refundGoodsAdvance = async ({ rideId, reason = '', deps = {} }) => 
       'goodsAdvance.status': 'refunded',
       'goodsAdvance.refundedAt': new Date(),
       'goodsAdvance.refundDestination': destination,
+      'goodsAdvance.refundedAmount': amount,
+      'goodsAdvance.keptAmount': 0,
     },
   };
 
@@ -660,7 +708,14 @@ export const refundGoodsAdvance = async ({ rideId, reason = '', deps = {} }) => 
     } catch (error) {
       await RideModel.updateOne(
         { _id: claimed._id, 'goodsAdvance.status': 'refunded' },
-        { $set: { 'goodsAdvance.status': 'paid', 'goodsAdvance.refundedAt': null, 'goodsAdvance.refundDestination': '' } },
+        {
+          $set: {
+            'goodsAdvance.status': 'paid',
+            'goodsAdvance.refundedAt': null,
+            'goodsAdvance.refundDestination': '',
+            'goodsAdvance.refundedAmount': 0,
+          },
+        },
       ).catch(() => null);
       throw error;
     }
@@ -697,20 +752,162 @@ export const refundGoodsAdvance = async ({ rideId, reason = '', deps = {} }) => 
 };
 
 /**
- * Rider cancelled: the advance is kept. Optionally passes it to the assigned
- * driver (when the pricing rule says cancellation fees go to the driver); in
- * that case the status change and the driver credit are one transaction.
- * Returns { forfeited, amount, creditedToDriver }.
+ * The rider cancelled after paying the advance. `goods_advance_cancel_keep_percent` of the FARE (default 15%,
+ * never more than the advance) is kept; the rest of the advance goes back to the rider, to the same place
+ * a normal refund goes (refund wallet / wallet / the original Razorpay payment).
+ *
+ *   fare 1000, advance 200 (20%)  -> kept 150, refunded 50
+ *   fare 1000, paid in full 1000  -> kept 150, refunded 850
+ *
+ * The kept part goes to the assigned driver when the pricing rule sends cancellation fees to the driver
+ * (`creditDriver`), otherwise the platform keeps it. The driver gets only the kept part.
+ *
+ * Safe to call repeatedly: every state change is a compare-and-set on `paid`, so only one call settles it.
+ * A wallet refund, the driver credit and the status change are one transaction. A Razorpay refund is an
+ * external call: the status is claimed first and put back to `paid` if the gateway fails, so it can be retried.
+ *
+ * Returns { forfeited, status, amount, keptAmount, refundedAmount, refundDestination, creditedToDriver };
+ * `amount` is the kept part. When nothing is kept (keep percent 0) the advance is simply refunded in full.
  */
+const loadConfigOrDefaults = async (deps) => {
+  try {
+    return await (deps.getConfig || getGoodsAdvanceConfig)();
+  } catch (error) {
+    // The rider already cancelled: settle with the defaults rather than leave the advance unsettled.
+    console.error('Goods advance settings could not be loaded; using the defaults', error?.message || error);
+    return { cancelKeepPercent: DEFAULT_CANCEL_KEEP_PERCENT, refundTo: 'refund_wallet' };
+  }
+};
+
 export const forfeitGoodsAdvance = async ({ rideId, creditDriver = false, deps = {} }) => {
   const RideModel = deps.Ride || Ride;
+  const WalletModel = deps.UserWallet || UserWallet;
   const applyDriverCredit = deps.applyDriverWalletAdjustment || applyDriverWalletAdjustment;
   const runInTransaction = deps.runInTransaction || defaultRunInTransaction;
 
-  const filter = { _id: rideId, serviceType: 'parcel', 'goodsAdvance.status': 'paid' };
-  const update = { $set: { 'goodsAdvance.status': 'forfeited', 'goodsAdvance.forfeitedAt': new Date() } };
+  const notSettled = {
+    forfeited: false,
+    status: '',
+    amount: 0,
+    keptAmount: 0,
+    refundedAmount: 0,
+    refundDestination: '',
+    creditedToDriver: false,
+  };
 
-  const run = async (session, withDriverCredit = creditDriver) => {
+  const ride = await RideModel.findOne({ _id: rideId, serviceType: 'parcel', 'goodsAdvance.status': 'paid' });
+  if (!ride) {
+    return notSettled;
+  }
+
+  const config = await loadConfigOrDefaults(deps);
+  const { keptAmount, refundAmount } = splitAdvanceOnRiderCancel({
+    fare: ride.fare,
+    advanceAmount: ride.goodsAdvance.amount,
+    keepPercent: config.cancelKeepPercent,
+  });
+
+  if (keptAmount <= 0) {
+    // Nothing to keep (keep percent 0, or no fare): it is an ordinary full refund.
+    const result = await refundGoodsAdvance({ rideId, reason: 'cancelled_by_rider', deps });
+    return result.refunded
+      ? { ...notSettled, status: 'refunded', refundedAmount: result.amount, refundDestination: result.destination }
+      : notSettled;
+  }
+
+  const destination = refundAmount > 0 ? resolveRefundDestination(ride, config) : '';
+  const settledAt = new Date();
+  const filter = { _id: ride._id, serviceType: 'parcel', 'goodsAdvance.status': 'paid' };
+  const update = {
+    $set: {
+      'goodsAdvance.status': 'forfeited',
+      'goodsAdvance.forfeitedAt': settledAt,
+      'goodsAdvance.keptAmount': keptAmount,
+      'goodsAdvance.refundedAmount': refundAmount,
+      ...(refundAmount > 0
+        ? { 'goodsAdvance.refundedAt': settledAt, 'goodsAdvance.refundDestination': destination }
+        : {}),
+    },
+  };
+
+  // Only the kept part goes to the driver.
+  const creditDriverWithKept = async (claimed, session) => {
+    if (!claimed.driverId || keptAmount <= 0) {
+      return false;
+    }
+
+    await applyDriverCredit({
+      driverId: claimed.driverId,
+      rideId: claimed._id,
+      amount: keptAmount,
+      type: 'adjustment',
+      description: `Advance received for rider-cancelled goods booking ${String(claimed._id).slice(-6)}`,
+      metadata: { source: 'goods_advance_forfeit', rideId: String(claimed._id) },
+      session,
+    });
+    return true;
+  };
+
+  const settled = (creditedToDriver) => ({
+    forfeited: true,
+    status: 'forfeited',
+    amount: keptAmount,
+    keptAmount,
+    refundedAmount: refundAmount,
+    refundDestination: destination,
+    creditedToDriver,
+  });
+
+  // ---- refund back to the original Razorpay payment (external call)
+  if (destination === 'source') {
+    const claimed = await RideModel.findOneAndUpdate(filter, update, { returnDocument: 'before' });
+    if (!claimed) {
+      return notSettled;
+    }
+
+    try {
+      await refundRazorpayPayment({
+        paymentId: claimed.goodsAdvance.providerPaymentId,
+        amount: refundAmount,
+        notes: { rideId: String(claimed._id), reason: 'cancelled_by_rider' },
+        deps,
+      });
+    } catch (error) {
+      await RideModel.updateOne(
+        { _id: claimed._id, 'goodsAdvance.status': 'forfeited' },
+        {
+          $set: {
+            'goodsAdvance.status': 'paid',
+            'goodsAdvance.forfeitedAt': null,
+            'goodsAdvance.keptAmount': 0,
+            'goodsAdvance.refundedAmount': 0,
+            'goodsAdvance.refundedAt': null,
+            'goodsAdvance.refundDestination': '',
+          },
+        },
+      ).catch(() => null);
+      throw error;
+    }
+
+    let creditedToDriver = false;
+    if (creditDriver) {
+      try {
+        creditedToDriver = await creditDriverWithKept(claimed, undefined);
+      } catch (error) {
+        // The rider's refund already went through; the platform keeps the kept part.
+        console.error('Goods advance driver credit failed; platform keeps it', String(rideId), error?.message || error);
+      }
+    }
+
+    return settled(creditedToDriver);
+  }
+
+  // ---- refund to a wallet (or nothing to refund): status, rider credit and driver credit are one transaction
+  if (refundAmount > 0) {
+    await ensureUserWallet(ride.userId, WalletModel);
+  }
+
+  const settle = async (session, withDriverCredit) => {
     const options = session ? { session } : {};
     const claimed = await RideModel.findOneAndUpdate(filter, update, { returnDocument: 'before', ...options });
 
@@ -718,39 +915,38 @@ export const forfeitGoodsAdvance = async ({ rideId, creditDriver = false, deps =
       return null;
     }
 
-    const amount = roundMoney(claimed.goodsAdvance.amount);
-    let creditedToDriver = false;
-
-    if (withDriverCredit && claimed.driverId && amount > 0) {
-      await applyDriverCredit({
-        driverId: claimed.driverId,
-        rideId: claimed._id,
-        amount,
-        type: 'adjustment',
-        description: `Advance received for rider-cancelled goods booking ${String(claimed._id).slice(-6)}`,
-        metadata: { source: 'goods_advance_forfeit', rideId: String(claimed._id) },
+    if (refundAmount > 0) {
+      await creditUserWallet({
+        userId: claimed.userId,
+        amount: refundAmount,
+        field: destination === 'refund_wallet' ? 'refundWallet' : 'balance',
+        title: `Goods advance refund for cancelled booking ${String(claimed._id).slice(-6)}`,
+        provider: 'goods_advance_refund',
+        WalletModel,
         session,
       });
-      creditedToDriver = true;
     }
 
-    return { forfeited: true, amount, creditedToDriver };
+    return { creditedToDriver: withDriverCredit ? await creditDriverWithKept(claimed, session) : false };
   };
 
   let outcome;
 
-  if (creditDriver) {
+  if (creditDriver || refundAmount > 0) {
     try {
-      outcome = await runInTransaction((session) => run(session, true));
+      outcome = await runInTransaction((session) => settle(session, creditDriver));
     } catch (error) {
-      // The driver credit failed and the transaction rolled back. The rider
-      // still cancelled, so forfeit anyway and let the platform keep the advance.
-      console.error('Goods advance driver credit failed; forfeiting to platform', String(rideId), error?.message || error);
-      outcome = await run(undefined, false);
+      if (!creditDriver) {
+        throw error;
+      }
+      // The driver credit failed and the transaction rolled back. The rider still cancelled, so settle again
+      // without it: the rider still gets the refund and the platform keeps the kept part.
+      console.error('Goods advance driver credit failed; platform keeps it', String(rideId), error?.message || error);
+      outcome = await runInTransaction((session) => settle(session, false));
     }
   } else {
-    outcome = await run(undefined, false);
+    outcome = await settle(undefined, false);
   }
 
-  return outcome || { forfeited: false, amount: 0, creditedToDriver: false };
+  return outcome ? settled(outcome.creditedToDriver) : notSettled;
 };

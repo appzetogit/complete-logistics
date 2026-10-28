@@ -128,15 +128,20 @@ test('fully prepaid ride: pay -> dispatch -> completes with nothing due; driver 
   assert.equal(round2(total), round2(fare - round2(fare * 0.1)));
 });
 
-test('paid in full: user cancel forfeits it, admin cancel refunds the full fare', async () => {
+test('paid in full: user cancel keeps 15% of the fare and refunds the rest, admin cancel refunds the full fare', async () => {
   await reset();
   const a = await setup();
   const forfeited = await book(a, { advancePercent: 100 });
   await payWithWallet(a.rider, forfeited.rideId);
   const cancel = await t.api('PATCH', `/rides/${forfeited.rideId}/cancel`, { token: a.rider.token });
   assert.equal(cancel.status, 200, cancel.text);
-  assert.equal(cancel.body.data.advanceRefunded, false);
-  assert.equal((await t.m.Ride.findById(forfeited.rideId).lean()).goodsAdvance.status, 'forfeited');
+  const keptShare = round2(forfeited.fare * 0.15);
+  assert.equal(cancel.body.data.advanceRefunded, true);
+  assert.equal(cancel.body.data.advanceKeptAmount, keptShare);
+  assert.equal(cancel.body.data.advanceRefundedAmount, round2(forfeited.fare - keptShare));
+  const settled = await t.m.Ride.findById(forfeited.rideId).lean();
+  assert.equal(settled.goodsAdvance.status, 'forfeited');
+  assert.equal(settled.goodsAdvance.keptAmount, keptShare);
 
   const b = await setup();
   const refunded = await book(b, { advancePercent: 100 });

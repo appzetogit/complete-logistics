@@ -20,7 +20,6 @@ import { consumeUserSubscriptionRide, resolveApplicableUserSubscription } from '
 import { consumeFreeRide, resolveFreeRideForNewRide } from '../user/services/freeRideService.js';
 import { assertDriverNotCancelBlocked } from '../driver/services/driverCancelService.js';
 import {
-  forfeitGoodsAdvance,
   getRemainingFare,
   resolveGoodsAdvanceForNewRide,
   serializeGoodsAdvance,
@@ -115,15 +114,14 @@ const clearUserActiveRideIfPresent = async (user) => {
   // Drivers must stop seeing the old offer. A booking nobody had accepted yet is not a
   // real rider cancel, so its paid advance is refunded; one a driver already took keeps
   // the forfeit rule.
-  const { releaseReplacedRide } = await import('./dispatchService.js');
+  const { releaseReplacedRide, settleGoodsAdvanceOnRiderCancel } = await import('./dispatchService.js');
   const released = await releaseReplacedRide(activeRide).catch((error) => {
     console.error('Failed to release replaced ride', String(activeRide._id), error?.message || error);
     return { refunded: false };
   });
   if (!released.refunded) {
-    await forfeitGoodsAdvance({ rideId: activeRide._id }).catch((error) => {
-      console.error('Failed to forfeit goods advance', String(activeRide._id), error?.message || error);
-    });
+    // the platform keeps its share here (no driver credit), the rest goes back to the rider
+    await settleGoodsAdvanceOnRiderCancel(activeRide, { allowDriverCredit: false });
   }
 
   await Promise.all([

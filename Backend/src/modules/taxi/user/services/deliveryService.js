@@ -353,6 +353,8 @@ export const quoteDeliveryFare = async ({
     advanceAmount: coveredBy ? 0 : advance.amount,
     remainingAmount: coveredBy ? 0 : advance.remainingAmount,
     advanceOptions: coveredBy ? [] : getAdvanceOptions(advanceConfig),
+    // Rider cancels after paying: this % of the fare is kept, the rest of the advance is refunded.
+    advanceCancelKeepPercent: coveredBy ? 0 : advanceConfig.cancelKeepPercent,
   };
 };
 

@@ -213,27 +213,34 @@ test('completion with a cash remainder: driver wallet = advance - commission, ri
   assert.equal(round2(totalWallet), round2(fare - commission));
 });
 
-test('rider cancels after the advance is paid: advance forfeited, no refund, repeat cancel is harmless', async () => {
+test('rider cancels after the advance is paid: 15% of the fare is kept, the rest refunded, repeat cancel is harmless', async () => {
   const { vehicle, rider, driver } = await setup();
   const delivery = await book({ vehicle, rider });
   await payWithWallet(rider, delivery.rideId);
   await t.acceptRide(delivery.rideId, driver.driver._id);
   const walletBefore = await walletOf(rider.user._id);
+  const kept = Math.min(delivery.goodsAdvance.amount, round2(delivery.fare * 0.15));
+  const refunded = round2(delivery.goodsAdvance.amount - kept);
 
   const cancel = await t.api('PATCH', `/rides/${delivery.rideId}/cancel`, { token: rider.token });
   assert.equal(cancel.status, 200, cancel.text);
-  assert.equal(cancel.body.data.advanceRefunded, false);
+  assert.equal(cancel.body.data.advanceRefunded, true);
   assert.equal(cancel.body.data.advanceStatus, 'forfeited');
+  assert.equal(cancel.body.data.advanceKeptAmount, kept);
+  assert.equal(cancel.body.data.advanceRefundedAmount, refunded);
 
   const ride = await loadRide(delivery.rideId);
   assert.equal(ride.goodsAdvance.status, 'forfeited');
+  assert.equal(ride.goodsAdvance.keptAmount, kept);
+  assert.equal(ride.goodsAdvance.refundedAmount, refunded);
   const walletAfter = await walletOf(rider.user._id);
   assert.equal(walletAfter.balance, walletBefore.balance);
-  assert.equal(walletAfter.refundWallet, walletBefore.refundWallet, 'nothing refunded');
+  assert.equal(round2(walletAfter.refundWallet - walletBefore.refundWallet), refunded, 'only the refunded part came back');
 
   const again = await t.api('PATCH', `/rides/${delivery.rideId}/cancel`, { token: rider.token });
   assert.equal(again.status, 200);
   assert.equal((await loadRide(delivery.rideId)).goodsAdvance.status, 'forfeited');
+  assert.equal((await walletOf(rider.user._id)).refundWallet, walletAfter.refundWallet, 'a repeat refunds nothing more');
 });
 
 test('rider cancels before paying: nothing was charged, nothing to refund', async () => {

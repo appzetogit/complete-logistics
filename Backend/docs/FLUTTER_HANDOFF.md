@@ -68,7 +68,7 @@ Cancel / refund:
 
 | Kab | Advance |
 |---|---|
-| User cancel | **Refund nahi** → cancel dialog me warning dikhao jab `goodsAdvance.status == "paid"` |
+| User cancel | **Fare ka 15% kata, baaki advance refund** → cancel dialog me "₹{kept} kat-ega, ₹{refund} wapas" dikhao jab `goodsAdvance.status == "paid"` (percent quote ke `advanceCancelKeepPercent` se; details `FLUTTER_GOODS_ADVANCE.md` §3) |
 | Driver cancel (scheduled) / koi driver nahi mila / admin cancel | **Refund** (`goodsAdvance:refunded` socket event) |
 | Advance diya hi nahi (`pending`) | Kuch charge/refund nahi |
 
@@ -145,7 +145,7 @@ App ko kuch nahi karna. Email galat ho ya mail server down ho to bhi signup chal
 - [ ] Pay kiye bina back: booking pending rehti hai, wapas aakar pay ho sakti hai ya cancel.
 - [ ] Quote total == booking fare; `priced: false` vehicle book nahi hoti.
 - [ ] Completion par user se sirf `remainingFare`; driver ko wahi collect.
-- [ ] User cancel (paid advance) → warning, refund nahi. No driver found / admin cancel → refund event.
+- [ ] User cancel (paid advance) → "kata/wapas" dialog, phir `advanceKeptAmount`/`advanceRefundedAmount`. No driver found / admin cancel → poora refund event.
 - [ ] Free ride: badge sirf `covered == true` par; payment skip.
 - [ ] Driver cancel: warning, 3rd cancel par block + toggle OFF; user ko `rideDriverCancelled`.
 - [ ] User app me `acceptSelfie` kahin nahi; driver card me profile photo/placeholder.

@@ -72,6 +72,9 @@ export const createDefaultBusinessSettings = () => ({
     goods_advance_percent: '20',
     // Where a refunded advance goes: refund_wallet | wallet (spendable balance) | source (original Razorpay payment).
     goods_advance_refund_to: 'refund_wallet',
+    // Rider cancels after paying the advance: this % of the FARE is kept (never more than the advance) and the
+    // rest of the advance is refunded. 0 = refund everything.
+    goods_advance_cancel_keep_percent: '15',
     // Where a rider's compensation goes when a driver cancels with a fine: wallet (spendable) | refund_wallet.
     driver_cancel_compensation_to: 'wallet',
     // An ONLINE booking the rider has not paid this many hours after completion: the platform credits the driver
