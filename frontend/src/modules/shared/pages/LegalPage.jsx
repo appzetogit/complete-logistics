@@ -160,20 +160,20 @@ const LegalPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const documentType = getDocumentType(location.pathname);
-  const [remote, setRemote] = useState(null);
+  const [loaded, setLoaded] = useState({ type: null, doc: null });
 
   // The text written in the admin panel wins; the built-in text below is only the fallback.
   useEffect(() => {
     let alive = true;
-    setRemote(null);
     fetchLegalDocument(documentType, 'user').then((doc) => {
-      if (alive) setRemote(doc);
+      if (alive) setLoaded({ type: documentType, doc });
     });
     return () => {
       alive = false;
     };
   }, [documentType]);
 
+  const remote = loaded.type === documentType ? loaded.doc : null;
   const base = legalContent[documentType];
   const content = remote
     ? {
