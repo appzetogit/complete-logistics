@@ -535,7 +535,8 @@ const rideSchema = new mongoose.Schema(
     },
     // Goods (parcel) bookings only: advance paid online before dispatch.
     // pending = not yet paid (ride must not be dispatched), paid = held,
-    // refunded = returned to the rider, forfeited = kept after a rider cancel.
+    // refunded = returned to the rider; forfeited = the rider cancelled: keptAmount was kept and
+    // refundedAmount (the rest of the advance, possibly 0) went back to the rider.
     /// Who cancelled the ride, when, why, and the cancellation fee charged. Empty (`by: ''`) until cancelled.
     cancellation: {
       by: { type: String, enum: ['', 'user', 'driver', 'admin', 'system'], default: '' },
@@ -564,6 +565,9 @@ const rideSchema = new mongoose.Schema(
       providerOrderIds: { type: [String], default: [] },
       providerPaymentId: { type: String, default: '', trim: true },
       refundDestination: { type: String, default: '', trim: true },
+      // How the advance was settled: kept + refunded = amount. Rows settled before this existed have both at 0.
+      keptAmount: { type: Number, default: 0, min: 0 },
+      refundedAmount: { type: Number, default: 0, min: 0 },
       paidAt: { type: Date, default: null },
       refundedAt: { type: Date, default: null },
       forfeitedAt: { type: Date, default: null },

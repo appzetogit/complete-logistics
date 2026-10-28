@@ -498,9 +498,10 @@ const settleDriverCancellationFee = async (ride, session) => {
   };
 };
 
-// Goods advance: refunded when the booking falls through for a reason that is
-// not the rider's (no driver, driver cancel, admin cancel); kept when the
-// rider cancels. Both are idempotent and never throw into the cancel flow.
+// Goods advance: refunded in full when the booking falls through for a reason that is
+// not the rider's (no driver, driver cancel, admin cancel); when the rider cancels a
+// share of the fare is kept and the rest refunded. Both are idempotent and never throw
+// into the cancel flow.
 const refundGoodsAdvanceForRide = async (rideId, reason) => {
   try {
     const result = await refundGoodsAdvance({ rideId, reason });
@@ -524,21 +525,48 @@ const refundGoodsAdvanceForRide = async (rideId, reason) => {
   }
 };
 
-const forfeitGoodsAdvanceForRide = async (ride) => {
+// The rider cancelled a goods booking whose advance is paid: keep the cancellation share of the fare,
+// refund the rest (and tell the rider app about the refunded part).
+export const settleGoodsAdvanceOnRiderCancel = async (ride, { allowDriverCredit = true } = {}) => {
+  const notSettled = {
+    forfeited: false,
+    status: '',
+    amount: 0,
+    keptAmount: 0,
+    refundedAmount: 0,
+    refundDestination: '',
+    creditedToDriver: false,
+  };
+
   if (ride?.serviceType !== 'parcel' || ride?.goodsAdvance?.status !== 'paid') {
-    return { forfeited: false, amount: 0, creditedToDriver: false };
+    return notSettled;
   }
 
   try {
-    const pricing = await resolveCancellationPricing(ride);
-    const creditDriver =
-      String(pricing?.cancellation_fee_goes_to || 'admin').trim().toLowerCase() === 'driver' &&
-      Boolean(ride.driverId);
+    let creditDriver = false;
+    if (allowDriverCredit) {
+      const pricing = await resolveCancellationPricing(ride);
+      creditDriver =
+        String(pricing?.cancellation_fee_goes_to || 'admin').trim().toLowerCase() === 'driver' &&
+        Boolean(ride.driverId);
+    }
 
-    return await forfeitGoodsAdvance({ rideId: ride._id, creditDriver });
+    const outcome = await forfeitGoodsAdvance({ rideId: ride._id, creditDriver });
+
+    if (outcome.refundedAmount > 0) {
+      emitToRoom(getUserRoom(ride.userId), 'goodsAdvance:refunded', {
+        rideId: String(ride._id),
+        amount: outcome.refundedAmount,
+        keptAmount: outcome.keptAmount,
+        destination: outcome.refundDestination,
+        reason: 'cancelled_by_rider',
+      });
+    }
+
+    return outcome;
   } catch (error) {
-    console.error('Goods advance forfeit failed', String(ride._id), error?.message || error);
-    return { forfeited: false, amount: 0, creditedToDriver: false, failed: true };
+    console.error('Goods advance settlement on rider cancel failed', String(ride._id), error?.message || error);
+    return { ...notSettled, failed: true };
   }
 };
 
@@ -1241,6 +1269,13 @@ export const releaseReplacedRide = async (ride) => {
   return { refunded: Boolean(result.refunded) };
 };
 
+// Overlapping cancels of one ride collide on the ride document and the server aborts the loser's transaction with
+// a transient error. Everything in the transaction is rolled back, so retrying is safe: the retry re-reads the
+// ride, finds it already cancelled and returns it, so the cancel (fee, refund) still happens exactly once.
+const CANCEL_TRANSACTION_ATTEMPTS = 4;
+const isTransientTransactionError = (error) =>
+  Boolean(error?.hasErrorLabel?.('TransientTransactionError')) || error?.code === 112;
+
 export const cancelRideByUser = async ({ rideId, userId, reason = '' }) => {
   const dispatchState = getDispatchState(rideId);
   stopDispatchFlow(rideId, { releaseLease: false });
@@ -1249,77 +1284,95 @@ export const cancelRideByUser = async ({ rideId, userId, reason = '' }) => {
   let cancellationSettlement = null;
 
   try {
-    session.startTransaction();
+    for (let attempt = 1; ; attempt += 1) {
+      ride = null;
+      cancellationSettlement = null;
 
-    ride = await Ride.findOne({ _id: rideId, userId }).session(session);
+      try {
+        session.startTransaction();
 
-    if (!ride) {
-      await session.abortTransaction();
-      stopDispatchFlow(rideId);
-      return null;
+        ride = await Ride.findOne({ _id: rideId, userId }).session(session);
+
+        if (!ride) {
+          await session.abortTransaction();
+          stopDispatchFlow(rideId);
+          return null;
+        }
+
+        if (ride.status === RIDE_STATUS.COMPLETED || ride.liveStatus === RIDE_LIVE_STATUS.COMPLETED) {
+          throw new Error('Completed rides cannot be cancelled');
+        }
+
+        if (ride.status === RIDE_STATUS.CANCELLED || ride.liveStatus === RIDE_LIVE_STATUS.CANCELLED) {
+          await session.commitTransaction();
+          stopDispatchFlow(rideId);
+          return ride;
+        }
+
+        // Wallet ride: give the hold back first (same transaction); a cancellation fee is then charged from the
+        // balance exactly as for any other ride.
+        await releaseRideWalletHold({ rideId: ride._id, reason: 'you cancelled', session });
+        cancellationSettlement = await settleUserCancellationFee(ride, session);
+
+        ride.status = RIDE_STATUS.CANCELLED;
+        ride.liveStatus = RIDE_LIVE_STATUS.CANCELLED;
+        if (ride.bookingMode === 'bidding') {
+          ride.biddingStatus = 'cancelled';
+        }
+        const userFeeCharged = ['applied', 'existing'].includes(cancellationSettlement?.userDebitStatus);
+        ride.cancellation = buildRideCancellation({
+          by: 'user',
+          code: 'cancelled_by_user',
+          reason: reason || 'Cancelled by rider',
+          // The fee decided for this cancel; feeCharged is false when the wallet could not cover it.
+          fee: cancellationSettlement?.feeAmount || 0,
+          feeCharged: userFeeCharged,
+          // 'driver' only when the driver's wallet really received it; otherwise the platform kept it.
+          feeGoesTo: ['applied', 'existing'].includes(cancellationSettlement?.driverCreditStatus) ? 'driver' : 'admin',
+        });
+        await ride.save({ session });
+
+        if (ride.deliveryId) {
+          await Delivery.findByIdAndUpdate(ride.deliveryId, {
+            driverId: ride.driverId || null,
+            status: ride.status,
+            liveStatus: ride.liveStatus,
+          }, { session });
+        }
+
+        await Promise.all([
+          User.findByIdAndUpdate(ride.userId, { currentRideId: null }, { session }),
+          ride.driverId ? Driver.findByIdAndUpdate(ride.driverId, { isOnRide: false }, { session }) : Promise.resolve(),
+        ]);
+
+        await session.commitTransaction();
+        break;
+      } catch (error) {
+        await session.abortTransaction().catch(() => null);
+        if (isTransientTransactionError(error) && attempt < CANCEL_TRANSACTION_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * 20 + Math.floor(Math.random() * 30)));
+          continue;
+        }
+        stopDispatchFlow(rideId);
+        throw error;
+      }
     }
-
-    if (ride.status === RIDE_STATUS.COMPLETED || ride.liveStatus === RIDE_LIVE_STATUS.COMPLETED) {
-      throw new Error('Completed rides cannot be cancelled');
-    }
-
-    if (ride.status === RIDE_STATUS.CANCELLED || ride.liveStatus === RIDE_LIVE_STATUS.CANCELLED) {
-      await session.commitTransaction();
-      stopDispatchFlow(rideId);
-      return ride;
-    }
-
-    // Wallet ride: give the hold back first (same transaction); a cancellation fee is then charged from the
-    // balance exactly as for any other ride.
-    await releaseRideWalletHold({ rideId: ride._id, reason: 'you cancelled', session });
-    cancellationSettlement = await settleUserCancellationFee(ride, session);
-
-    ride.status = RIDE_STATUS.CANCELLED;
-    ride.liveStatus = RIDE_LIVE_STATUS.CANCELLED;
-    if (ride.bookingMode === 'bidding') {
-      ride.biddingStatus = 'cancelled';
-    }
-    const userFeeCharged = ['applied', 'existing'].includes(cancellationSettlement?.userDebitStatus);
-    ride.cancellation = buildRideCancellation({
-      by: 'user',
-      code: 'cancelled_by_user',
-      reason: reason || 'Cancelled by rider',
-      // The fee decided for this cancel; feeCharged is false when the wallet could not cover it.
-      fee: cancellationSettlement?.feeAmount || 0,
-      feeCharged: userFeeCharged,
-      // 'driver' only when the driver's wallet really received it; otherwise the platform kept it.
-      feeGoesTo: ['applied', 'existing'].includes(cancellationSettlement?.driverCreditStatus) ? 'driver' : 'admin',
-    });
-    await ride.save({ session });
-
-    if (ride.deliveryId) {
-      await Delivery.findByIdAndUpdate(ride.deliveryId, {
-        driverId: ride.driverId || null,
-        status: ride.status,
-        liveStatus: ride.liveStatus,
-      }, { session });
-    }
-
-    await Promise.all([
-      User.findByIdAndUpdate(ride.userId, { currentRideId: null }, { session }),
-      ride.driverId ? Driver.findByIdAndUpdate(ride.driverId, { isOnRide: false }, { session }) : Promise.resolve(),
-    ]);
-
-    await session.commitTransaction();
-  } catch (error) {
-    await session.abortTransaction();
-    stopDispatchFlow(rideId);
-    throw error;
   } finally {
     session.endSession();
   }
   await persistDispatchTrackingProgress({ rideId, reset: true }).catch(() => null);
-  // Rider cancelled: the goods advance is kept, not refunded.
-  const advanceOutcome = await forfeitGoodsAdvanceForRide(ride);
-  ride.$locals.advance = {
-    status: advanceOutcome.forfeited ? 'forfeited' : (ride.goodsAdvance?.status || 'none'),
-    refunded: false,
-  };
+  // Rider cancelled: part of the goods advance is kept, the rest refunded.
+  const advanceOutcome = await settleGoodsAdvanceOnRiderCancel(ride);
+  if (advanceOutcome.status) {
+    // settled by this request; otherwise the response reads what is stored on the ride
+    ride.$locals.advance = {
+      status: advanceOutcome.status,
+      refunded: Number(advanceOutcome.refundedAmount || 0) > 0,
+      keptAmount: advanceOutcome.keptAmount || 0,
+      refundedAmount: advanceOutcome.refundedAmount || 0,
+      refundDestination: advanceOutcome.refundDestination || '',
+    };
+  }
 
   emitToRoom(getUserRoom(ride.userId), 'rideCancelled', {
     rideId: String(ride._id),

@@ -196,6 +196,14 @@ const TransportRideSettings = () => {
                       </select>
                    </div>
 
+                   <InputField 
+                      label="Goods Advance Kept When Rider Cancels (% of fare, 0 = refund all)" 
+                      name="goods_advance_cancel_keep_percent" 
+                      value={settings.goods_advance_cancel_keep_percent ?? '15'} 
+                      onChange={handleChange} 
+                      type="number" 
+                   />
+
                    <div className="space-y-1.5">
                       <label className="text-sm font-medium text-gray-700 block ml-0.5">Driver Cancel Compensation Goes To</label>
                       <select
