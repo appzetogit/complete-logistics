@@ -207,11 +207,14 @@ Detail: `DISPATCH_RELIABILITY.md` aur `SELFIES_FREE_RIDES_SUBSCRIPTIONS.md`.
 Cancel confirm dialog se pehle: `GET /rides/:rideId/cancel-preview`
 ```json
 { "data": { "rideId": "…", "fee": 25, "feeGoesTo": "admin|driver|null", "walletCoversFee": true,
-            "advanceForfeited": false, "advanceAmount": 0, "advanceRefundable": false } }
+            "advanceAmount": 200, "advanceKeptAmount": 150, "advanceRefundAmount": 50,
+            "advanceRefundDestination": "refund_wallet", "advanceCancelKeepPercent": 15,
+            "advanceForfeited": true, "advanceRefundable": true } }
 ```
 - `fee > 0` -> "Cancellation fee ₹{fee} aapke wallet se katega".
 - `walletCoversFee == false` -> wallet me paisa kam hai, fee nahi kat sakti (user ko batao).
-- `advanceForfeited == true` -> "₹{advanceAmount} advance wapas nahi milega".
+- Goods advance paid ho to `advanceKeptAmount` (kat-ega) aur `advanceRefundAmount` (wapas aayega) dikhao: "₹{advanceKeptAmount} kat-ega, ₹{advanceRefundAmount} wapas milega".
+  Khud calculate mat karo, preview ke numbers hi dikhao. `advanceForfeited` / `advanceRefundable` purane flags hain (dono ek saath `true` ho sakte hain).
 - `404` = ride aapki nahi, `409` = ride pehle hi complete/cancel. Ye call kuch badalti nahi.
 
 ## 13. Free rides (User app)

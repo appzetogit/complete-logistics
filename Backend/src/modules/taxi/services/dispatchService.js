@@ -34,6 +34,7 @@ import {
   forfeitGoodsAdvance,
   getRemainingFare,
   isDispatchBlockedByAdvance,
+  previewAdvanceOnRiderCancel,
   refundGoodsAdvance,
   serializeGoodsAdvance,
 } from '../user/services/goodsAdvanceService.js';
@@ -426,6 +427,7 @@ export const previewUserCancellation = async (ride) => {
     feeValue: pricing?.user_cancellation_fee,
   });
   const advancePaid = ride?.serviceType === 'parcel' && ride?.goodsAdvance?.status === 'paid';
+  const advance = await previewAdvanceOnRiderCancel(ride);
   const wallet = fee > 0
     ? await UserWallet.findOne({ userId: ride.userId }).select('balance').lean()
     : null;
@@ -439,9 +441,14 @@ export const previewUserCancellation = async (ride) => {
       : null,
     // The fee is taken from the rider's wallet; with too little balance the cancel cannot take it.
     walletCoversFee: fee <= 0 ? true : roundMoney(Number(wallet?.balance || 0) + heldForRide) >= fee,
-    advanceForfeited: advancePaid,
     advanceAmount: advancePaid ? roundMoney(ride.goodsAdvance.amount) : 0,
-    advanceRefundable: false,
+    advanceKeptAmount: advance.keptAmount,
+    advanceRefundAmount: advance.refundAmount,
+    advanceRefundDestination: advance.refundDestination,
+    advanceCancelKeepPercent: advance.keepPercent,
+    // Old flags for old app builds; a rider cancel now keeps part and refunds part, so both can be true.
+    advanceForfeited: advance.keptAmount > 0,
+    advanceRefundable: advance.refundAmount > 0,
   };
 };
 

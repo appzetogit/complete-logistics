@@ -61,6 +61,8 @@ Do **not** hard-code 15. Use one of these (in this order):
 2. **App start** `GET /users/bootstrap` -> `data.settings.transportRide.goods_advance_cancel_keep_percent`.
    It is a **string** (for example `"15"`). If it is missing, use `15`.
 
+(The cancel preview also returns `advanceCancelKeepPercent`; prefer the preview for the dialog.)
+
 Keep the value with the active booking (for example in your ride state), so the dialog still works after the app is
 restarted and the ride is restored from `GET /rides/active/me` or `GET /deliveries/active/me`.
 
@@ -158,7 +160,28 @@ result from the HTTP response, and use the event only to refresh the wallet. (Or
 
 ### 5.1 Cancel dialog (before the rider cancels)
 
-Show it when `goodsAdvance.status == "paid"`. Calculate a **preview** (the server does the real calculation):
+Show it when `goodsAdvance.status == "paid"`. **Do not calculate: call `GET /rides/:rideId/cancel-preview` and show its numbers.**
+It uses the same code as the real cancel, so the dialog and the result always agree:
+
+```json
+{ "success": true, "data": {
+  "rideId": "…", "fee": 0, "feeGoesTo": null, "walletCoversFee": true,
+  "advanceAmount": 200, "advanceKeptAmount": 150, "advanceRefundAmount": 50,
+  "advanceRefundDestination": "refund_wallet", "advanceCancelKeepPercent": 15,
+  "advanceForfeited": true, "advanceRefundable": true } }
+```
+
+| Field | Meaning |
+|---|---|
+| `advanceAmount` | advance paid (0 when not paid) |
+| `advanceKeptAmount` | charged on cancel |
+| `advanceRefundAmount` | comes back on cancel |
+| `advanceRefundDestination` | `refund_wallet` / `wallet` / `source`, empty when nothing comes back |
+| `advanceCancelKeepPercent` | % of the fare that is kept (0 when no paid advance) |
+| `advanceForfeited` / `advanceRefundable` | old flags for old apps: "something is kept" / "something comes back". Both can be `true`. Use the amounts instead. |
+
+`kept + refund == advanceAmount`. The preview changes nothing; `409` if the ride is already completed/cancelled.
+The formula below is only a fallback if the call fails:
 
 ```
 kept   = min(goodsAdvance.amount, fare × keepPercent / 100)

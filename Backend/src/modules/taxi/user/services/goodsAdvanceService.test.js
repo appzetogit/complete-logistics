@@ -14,6 +14,7 @@ const {
   isDispatchBlockedByAdvance,
   payGoodsAdvanceWithWallet,
   refundGoodsAdvance,
+  previewAdvanceOnRiderCancel,
   splitAdvanceOnRiderCancel,
   resolveGoodsAdvanceForNewRide,
   verifyGoodsAdvancePayment,
@@ -568,4 +569,22 @@ test('settlement: driver receives the right total for the full fare', () => {
     computeRideSettlementAmount({ paymentMethod: 'online', commissionAmount: 100, driverEarnings: 900, advancePaid: 200 }),
     { amount: 900, type: 'ride_earning' },
   );
+});
+
+test('previewAdvanceOnRiderCancel: zeros without a paid goods advance, else the same split as the cancel', async () => {
+  const zeros = { keptAmount: 0, refundAmount: 0, refundDestination: '', keepPercent: 0 };
+  const config = (cancelKeepPercent, refundTo = 'refund_wallet') => ({ getConfig: async () => ({ cancelKeepPercent, refundTo }) });
+  const paid = { serviceType: 'parcel', fare: 1000, goodsAdvance: { status: 'paid', amount: 200, provider: 'wallet' } };
+
+  assert.deepEqual(await previewAdvanceOnRiderCancel({ ...paid, goodsAdvance: { status: 'pending', amount: 200 } }, config(15)), zeros);
+  assert.deepEqual(await previewAdvanceOnRiderCancel({ ...paid, serviceType: 'taxi' }, config(15)), zeros);
+  assert.deepEqual(await previewAdvanceOnRiderCancel(null, config(15)), zeros);
+
+  assert.deepEqual(await previewAdvanceOnRiderCancel(paid, config(15)),
+    { keptAmount: 150, refundAmount: 50, refundDestination: 'refund_wallet', keepPercent: 15 });
+  assert.deepEqual(await previewAdvanceOnRiderCancel(paid, config(100)),
+    { keptAmount: 200, refundAmount: 0, refundDestination: '', keepPercent: 100 });
+  assert.equal((await previewAdvanceOnRiderCancel(paid, config(0, 'wallet'))).refundDestination, 'wallet');
+  // 'source' only when the advance was really paid through Razorpay
+  assert.equal((await previewAdvanceOnRiderCancel(paid, config(15, 'source'))).refundDestination, 'wallet');
 });

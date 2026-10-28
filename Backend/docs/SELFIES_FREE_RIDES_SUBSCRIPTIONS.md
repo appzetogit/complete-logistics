@@ -56,13 +56,20 @@ matched only inside the zone (per-driver zone check is unchanged). `zoneBoundary
 ```json
 { "success": true, "data": {
   "rideId": "…", "fee": 25, "feeGoesTo": "admin" | "driver" | null,
-  "walletCoversFee": true, "advanceForfeited": false, "advanceAmount": 0, "advanceRefundable": false } }
+  "walletCoversFee": true,
+  "advanceAmount": 200, "advanceKeptAmount": 150, "advanceRefundAmount": 50,
+  "advanceRefundDestination": "refund_wallet", "advanceCancelKeepPercent": 15,
+  "advanceForfeited": true, "advanceRefundable": true } }
 ```
 - `fee` = the Set Price user cancellation fee that `PATCH /rides/:id/cancel` really charges from the rider's wallet (tested equal).
   With too little wallet balance the fee cannot be taken: `walletCoversFee: false`.
-- `advanceForfeited: true` + `advanceAmount` when a goods advance has been paid (user cancel never refunds it).
+- Goods advance (only when it is paid; all `0` / `''` / `false` otherwise): `advanceAmount` paid, `advanceKeptAmount` charged on cancel,
+  `advanceRefundAmount` that comes back, `advanceRefundDestination` (`refund_wallet` | `wallet` | `source` | `''`),
+  `advanceCancelKeepPercent` (share of the fare that is kept). `kept + refund == advanceAmount`. The numbers come from the same
+  code as `PATCH /rides/:id/cancel`, so the cancel then returns the same amounts.
+- `advanceForfeited` (= something is kept) and `advanceRefundable` (= something comes back) are old flags for old apps; both can be `true`.
 - `404` for someone else's ride, `409` if already completed/cancelled. Nothing is changed by the call.
-- Use it in the cancel confirmation dialog: "Cancellation fee ₹25" and/or "₹X advance will not be refunded".
+- Use it in the cancel confirmation dialog: "Cancellation fee ₹25" and/or "₹{advanceKeptAmount} will be charged, ₹{advanceRefundAmount} refunded".
 
 ## C13 – subscriptions
 1. **Razorpay purchase:** `POST /users/subscriptions/razorpay/order` `{ planId }` → `{ keyId, orderId, amount, currency, plan }`;

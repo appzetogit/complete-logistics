@@ -779,6 +779,31 @@ const loadConfigOrDefaults = async (deps) => {
   }
 };
 
+/**
+ * What a rider cancel would do to a PAID goods advance, without changing anything. Uses the same split and
+ * destination rules as forfeitGoodsAdvance, so the preview always matches the real cancel.
+ * Returns zeros when the ride has no paid advance.
+ */
+export const previewAdvanceOnRiderCancel = async (ride, deps = {}) => {
+  if (ride?.serviceType !== 'parcel' || ride?.goodsAdvance?.status !== 'paid') {
+    return { keptAmount: 0, refundAmount: 0, refundDestination: '', keepPercent: 0 };
+  }
+
+  const config = await loadConfigOrDefaults(deps);
+  const { keptAmount, refundAmount } = splitAdvanceOnRiderCancel({
+    fare: ride.fare,
+    advanceAmount: ride.goodsAdvance.amount,
+    keepPercent: config.cancelKeepPercent,
+  });
+
+  return {
+    keptAmount,
+    refundAmount,
+    refundDestination: refundAmount > 0 ? resolveRefundDestination(ride, config) : '',
+    keepPercent: config.cancelKeepPercent,
+  };
+};
+
 export const forfeitGoodsAdvance = async ({ rideId, creditDriver = false, deps = {} }) => {
   const RideModel = deps.Ride || Ride;
   const WalletModel = deps.UserWallet || UserWallet;
