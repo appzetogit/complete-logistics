@@ -36,6 +36,11 @@ Sirf **goods (parcel) bookings** par lagta hai, rides par nahi.
 Quote me `advanceOptions` aata hai, jaise `[20, 100]`. **"Pay in full" chip tabhi dikhao jab list me `100` ho.**
 - User full chune to booking me `advancePercent: 100` bhejo (default 20 chuna ho to field mat bhejo).
 - Server sirf allowed values maanta hai (`advanceOptions` me se); koi aur value ya full band ho to default % lagta hai.
+
+**Payment methods (quote):** `POST /deliveries/quote` ab `allowedPaymentMethods` bhi deta hai: `cash | online | wallet` jo admin ne is vehicle ke
+delivery Set Price (Pricing > Set Price > Payment Type) me allow kiye hain (pickup zone ka rule jo fare lagata hai, wahi). Payment sheet me **sirf yahi
+options dikhao** (app ke naam: `cash`, `wallet`, `razorpay` = server `online`). Chuna hua method list me na ho to pehle allowed method pe switch karo.
+Field missing (Set Price nahi / purana server) = sab options dikhao; booking me server khud allowed method laga deta hai (`paymentMethodChanged: true`).
 - 100% par `goodsAdvance.percent = 100`, `amount = fare`, `remainingFare = 0`. Payment endpoints wahi (`/advance/wallet`, `/advance/razorpay/...`).
 - Completion par kuch due nahi: `complete-payment/*` `400 "No payable amount remains"` dete hain (Razorpay ka ₹0 order nahi banta) – app ye calls skip kare aur seedha `PATCH /rides/:id/feedback` kare. Driver ko "Collect ₹0" / collect step hide.
 - Cancel/refund rules same: user cancel = fare ka 15% kata (advance se zyada nahi), baaki refund; driver/no driver/admin = poora amount refund.
