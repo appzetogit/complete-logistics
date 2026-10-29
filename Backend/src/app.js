@@ -4,6 +4,7 @@ import morgan from 'morgan';
 import { env } from './config/env.js';
 import { errorHandler, notFoundHandler } from './modules/taxi/middlewares/errorMiddleware.js';
 import { taxiRouter } from './modules/taxi/routes/index.js';
+import { referralLinkRouter } from './modules/taxi/referral/routes/referralRoutes.js';
 
 export const createApp = () => {
   const app = express();
@@ -34,6 +35,9 @@ app.use(
   app.get('/health', (_req, res) => {
     res.json({ success: true, message: 'Taxi backend is healthy' });
   });
+
+  // The shared referral link (https://<domain>/r/<code>) lives at the site root, not under /api.
+  app.use(referralLinkRouter);
 
   // Keep both mounts during integration so existing clients using /api or /api/v1 continue to work.
   app.use('/api', taxiRouter);

@@ -297,6 +297,11 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.index({ phone: 1 }, { unique: true });
+// A referral code identifies one user. Empty codes (not issued yet) are ignored by the index.
+userSchema.index(
+  { referralCode: 1 },
+  { unique: true, partialFilterExpression: { referralCode: { $type: 'string', $gt: '' } } },
+);
 userSchema.index({ deletedAt: 1, createdAt: -1 });
 userSchema.index({ name: 1 });
 userSchema.index({ email: 1 });

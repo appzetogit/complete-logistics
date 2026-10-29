@@ -40,6 +40,16 @@ import {
 import { WalletTransaction } from '../models/WalletTransaction.js';
 import { BusDriver } from '../models/BusDriver.js';
 import { applyDriverWalletAdjustment } from './walletService.js';
+import { creditReferralReward } from '../../referral/services/referralRewardService.js';
+import {
+  bindAttributionToRegistration,
+  claimAttributionForConversion,
+  ensureReferralCode,
+  recordConversion,
+  releaseAttribution,
+  resolveBoundAttribution,
+  unbindAttributionFromRegistration,
+} from '../../referral/services/referralAttributionService.js';
 import { sendWelcomeEmail } from '../../services/welcomeEmailService.js';
 
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -235,80 +245,18 @@ const findDriverByReferralCode = async (referralCode) => {
   return Driver.findOne({ referralCode: normalizedCode });
 };
 
-const creditDriverWalletByReference = async ({ driverId, amount, title, referenceKey, metadata = {} }) => {
-  const normalizedAmount = Math.max(0, Number(amount || 0) || 0);
-  const normalizedReferenceKey = String(referenceKey || '').trim();
-
-  if (!driverId || normalizedAmount <= 0 || !normalizedReferenceKey) {
-    return 'skipped';
-  }
-
-  const existingTransaction = await WalletTransaction.findOne({
-    driverId,
-    'metadata.referenceKey': normalizedReferenceKey,
-  })
-    .select('_id')
-    .lean();
-
-  if (existingTransaction) {
-    return 'existing';
-  }
-
-  await applyDriverWalletAdjustment({
-    driverId,
-    amount: normalizedAmount,
-    type: 'adjustment',
-    description: String(title || 'Referral Reward').trim(),
-    metadata: {
-      ...metadata,
-      referenceKey: normalizedReferenceKey,
-      source: 'driver_referral',
-    },
+// Referral payouts go through the shared ledger: one row per referenceKey, paid once even under concurrent requests.
+const creditDriverWalletByReference = ({ driverId, amount, title, referenceKey, referrerId = null, referredId = null, metadata = {} }) =>
+  creditReferralReward({
+    payeeType: 'driver',
+    payeeId: driverId,
+    amount,
+    title: String(title || 'Referral Reward').trim(),
+    referenceKey: String(referenceKey || '').trim(),
+    referrerId,
+    referredId,
+    metadata,
   });
-
-  return 'credited';
-};
-
-const processDriverSignupReferralRewards = async ({ driver, referrer }) => {
-  if (!driver?._id || !referrer?._id) {
-    return;
-  }
-
-  const settings = await getDriverReferralProgramSettings();
-  if (!settings.enabled || settings.amount <= 0) {
-    return;
-  }
-
-  const referralType = settings.type;
-  const rewardBaseKey = `driver-referral:signup:${String(driver._id)}`;
-
-  if (referralType === 'instant_referrer' || referralType === 'instant_referrer_new') {
-    await creditDriverWalletByReference({
-      driverId: referrer._id,
-      amount: settings.amount,
-      title: `Referral reward for inviting driver ${driver.phone || ''}`.trim(),
-      referenceKey: `${rewardBaseKey}:referrer`,
-      metadata: {
-        invitedDriverId: String(driver._id),
-      },
-    });
-  }
-
-  if (referralType === 'instant_referrer_new') {
-    await creditDriverWalletByReference({
-      driverId: driver._id,
-      amount: settings.amount,
-      title: 'Welcome referral reward',
-      referenceKey: `${rewardBaseKey}:new-driver`,
-      metadata: {
-        referrerDriverId: String(referrer._id),
-      },
-    });
-
-    driver.referralRewardGrantedAt = driver.referralRewardGrantedAt || new Date();
-    await driver.save();
-  }
-};
 
 const matchesDocumentRole = (accountType, role) => {
   const normalizedAccountType = String(accountType || 'individual').trim().toLowerCase();
@@ -1024,17 +972,52 @@ export const saveDriverPersonalDetails = async ({ registrationId, phone, fullNam
   };
 };
 
-export const saveDriverReferral = async ({ registrationId, phone, referralCode = '', employeeCode = '' }) => {
+export const saveDriverReferral = async ({
+  registrationId,
+  phone,
+  referralCode = '',
+  employeeCode = '',
+  attributionToken = '',
+}) => {
   const session = await getSession(registrationId, phone);
 
   const normalizedReferralCode = normalizeReferralCode(referralCode);
   const normalizedEmployeeCode = normalizeEmployeeCode(employeeCode);
+  const normalizedAttributionToken = String(attributionToken || '').trim();
 
-  if (normalizedReferralCode) {
-    const referrer = await findDriverByReferralCode(normalizedReferralCode);
-    if (!referrer?._id) {
-      throw new ApiError(400, 'Invalid referral code');
+  if (normalizedAttributionToken) {
+    // a link the driver opened: bound to this onboarding now, turned into the referral when the account is created
+    const bound = await bindAttributionToRegistration({
+      attributionToken: normalizedAttributionToken,
+      referralCode: normalizedReferralCode,
+      phone: session.phone,
+      registrationId: session.registrationId,
+    });
+
+    if (session.referralAttributionId && String(session.referralAttributionId) !== String(bound._id)) {
+      await unbindAttributionFromRegistration(session.referralAttributionId, session.registrationId);
     }
+
+    session.referralAttributionId = bound._id;
+    session.referralCode = bound.referralCode;
+  } else {
+    // a typed code (older app versions) or no referral at all: drop any link bound earlier
+    if (session.referralAttributionId) {
+      await unbindAttributionFromRegistration(session.referralAttributionId, session.registrationId);
+      session.referralAttributionId = null;
+    }
+
+    if (normalizedReferralCode) {
+      const referrer = await findDriverByReferralCode(normalizedReferralCode);
+      if (!referrer?._id) {
+        throw new ApiError(400, 'Invalid referral code');
+      }
+      if (String(referrer.phone || '').replace(/\D/g, '').slice(-10) === String(session.phone || '').replace(/\D/g, '').slice(-10)) {
+        throw new ApiError(400, 'You cannot refer yourself', { code: 'self_referral' });
+      }
+    }
+
+    session.referralCode = normalizedReferralCode;
   }
 
   if (normalizedEmployeeCode) {
@@ -1044,7 +1027,6 @@ export const saveDriverReferral = async ({ registrationId, phone, referralCode =
     }
   }
 
-  session.referralCode = normalizedReferralCode;
   session.employeeCode = normalizedEmployeeCode;
   await session.save();
 
@@ -1704,18 +1686,52 @@ const completeDriverOnboardingInternal = async ({ registrationId, phone, documen
 
   const normalizedReferralCode = normalizeReferralCode(session.referralCode);
   const normalizedEmployeeCode = normalizeEmployeeCode(session.employeeCode);
-  const referrer = normalizedReferralCode
-    ? await findDriverByReferralCode(normalizedReferralCode)
-    : null;
+
+  // The attribution bound to this onboarding wins; a stale one does not block the signup.
+  let referrer = null;
+  let referralAttribution = null;
+  let referralReason = '';
+
+  if (session.referralAttributionId) {
+    const bound = await resolveBoundAttribution({
+      attributionId: session.referralAttributionId,
+      registrationId: session.registrationId,
+      phone: session.phone,
+    });
+
+    if (
+      bound.applied &&
+      (await claimAttributionForConversion(bound.attribution, {
+        referredPhone: session.phone,
+        registrationId: session.registrationId,
+      }))
+    ) {
+      referrer = bound.referrer;
+      referralAttribution = bound.attribution;
+    } else {
+      referralReason = bound.reason || 'already_attributed';
+    }
+  } else if (normalizedReferralCode) {
+    referrer = await findDriverByReferralCode(normalizedReferralCode);
+  }
   const employee = normalizedEmployeeCode
     ? await findActiveEmployeeByCode(normalizedEmployeeCode)
     : null;
 
-  if (normalizedReferralCode && !referrer?._id) {
+  if (!session.referralAttributionId && normalizedReferralCode && !referrer?._id) {
     throw new ApiError(400, 'Invalid referral code');
   }
 
+  if (
+    !referralAttribution &&
+    referrer?._id &&
+    String(referrer.phone || '').replace(/\D/g, '').slice(-10) === String(session.phone || '').replace(/\D/g, '').slice(-10)
+  ) {
+    throw new ApiError(400, 'You cannot refer yourself', { code: 'self_referral' });
+  }
+
   if (normalizedEmployeeCode && !employee?._id) {
+    await releaseAttribution(referralAttribution);
     throw new ApiError(400, 'Invalid employee code');
   }
 
@@ -1773,16 +1789,17 @@ const completeDriverOnboardingInternal = async ({ registrationId, phone, documen
         customFields: session.vehicle.customFields || {},
       },
     },
+  }).catch(async (error) => {
+    await releaseAttribution(referralAttribution);
+    throw error;
   });
 
-  if (!String(driver.referralCode || '').trim()) {
-    driver.referralCode = generateDriverReferralCode(driver);
-    await driver.save();
-  }
+  await ensureReferralCode('driver', driver, generateDriverReferralCode(driver));
 
   if (referrer?._id) {
     await Driver.updateOne({ _id: referrer._id }, { $inc: { referralCount: 1 } });
-    await processDriverSignupReferralRewards({ driver, referrer });
+    await recordConversion({ attribution: referralAttribution, referredType: 'driver', referredId: driver._id, referrerId: referrer._id });
+    // no reward at signup: it is paid when this driver completes their first ride (services/rideService.js)
   }
 
   session.finalDriverId = driver._id;

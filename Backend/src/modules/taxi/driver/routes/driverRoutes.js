@@ -120,6 +120,7 @@ import {
 import { triggerDriverSosAlert } from '../../safety/controllers/safetyController.js';
 import { getOpenRideOffersForDriver } from '../../services/dispatchService.js';
 import { getDriverPerformance } from '../services/driverPerformanceService.js';
+import { getMyReferral, getMyReferralHistory } from '../../referral/controllers/referralController.js';
 
 export const driverRouter = Router();
 
@@ -174,6 +175,16 @@ driverRouter.get(
   asyncHandler(async (req, res) => {
     res.json({ success: true, data: await getDriverPerformance(req.auth.sub) });
   }),
+);
+driverRouter.get(
+  "/referrals/me",
+  authenticate(["driver"], { allowPending: true }),
+  asyncHandler(getMyReferral("driver")),
+);
+driverRouter.get(
+  "/referrals/history",
+  authenticate(["driver"], { allowPending: true }),
+  asyncHandler(getMyReferralHistory("driver")),
 );
 driverRouter.get(
   "/me",

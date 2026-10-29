@@ -110,6 +110,26 @@ export const env = {
       templateText: readEnv('SMS_INDIA_HUB_TEMPLATE_TEXT'),
     },
   },
+  referral: {
+    // Public base of the shared link: https://<domain>/r/<code>. Falls back to the backend URL, then to the request host.
+    baseUrl: String(
+      process.env.REFERRAL_BASE_URL
+      || process.env.PUBLIC_BACKEND_URL
+      || process.env.APP_BACKEND_URL
+      || process.env.BACKEND_PUBLIC_URL
+      || process.env.BACKEND_URL
+      || '',
+    ).trim().replace(/\/+$/, ''),
+    // Where /r/<code> sends the visitor. Store links win over the landing page when set.
+    landingUrl: String(process.env.REFERRAL_LANDING_URL || '').trim(),
+    androidStoreUrl: String(process.env.REFERRAL_ANDROID_STORE_URL || '').trim(),
+    iosStoreUrl: String(process.env.REFERRAL_IOS_STORE_URL || '').trim(),
+    // How long an unused click stays valid (default 7 days).
+    attributionTtlHours:
+      Number.isFinite(Number(process.env.REFERRAL_ATTRIBUTION_TTL_HOURS)) && Number(process.env.REFERRAL_ATTRIBUTION_TTL_HOURS) > 0
+        ? Number(process.env.REFERRAL_ATTRIBUTION_TTL_HOURS)
+        : 168,
+  },
   driverWallet: {
     defaultCashLimit: Number.isFinite(Number(process.env.DRIVER_WALLET_DEFAULT_CASH_LIMIT))
       ? Number(process.env.DRIVER_WALLET_DEFAULT_CASH_LIMIT)

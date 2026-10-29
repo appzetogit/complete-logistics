@@ -30,6 +30,7 @@ const ensureDispatchGeoIndexes = async () => {
   console.log('[indexes] dispatch geo indexes checked');
 };
 import { restoreScheduledDispatches, startDispatchRecoveryLoop } from './src/modules/taxi/services/dispatchService.js';
+import { startReferralRewardRetryLoop } from './src/modules/taxi/referral/services/referralRewardService.js';
 import { bootstrapFirstAdmin } from './src/modules/taxi/admin/services/adminService.js';
 
 const bootstrap = async () => {
@@ -59,6 +60,8 @@ const bootstrap = async () => {
   await configureTaxiSocketServer(httpServer);
   await restoreScheduledDispatches();
   startDispatchRecoveryLoop();
+  // pays referral rewards that failed or were interrupted (safe to repeat: each payout happens once)
+  startReferralRewardRetryLoop();
 
   httpServer.listen(env.port, () => {
     const redisStatus = getRedisStatus();

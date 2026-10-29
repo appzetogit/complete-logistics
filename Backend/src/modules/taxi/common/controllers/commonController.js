@@ -1,7 +1,7 @@
 import { asyncHandler } from '../../../../utils/asyncHandler.js';
 import { uploadDataUrlToCloudinary } from '../../../../utils/cloudinaryUpload.js';
 import { env } from '../../../../config/env.js';
-import { getReferralSettings, getReferralTranslationContent } from '../../admin/services/adminService.js';
+import { getPublicReferralSettings, getReferralTranslationContent } from '../../admin/services/adminService.js';
 import { getPublicActivePaymentGateway } from '../../services/paymentGatewayService.js';
 import { buildPaymentRequestContext, logPaymentDiagnostic } from '../../services/paymentDiagnostics.js';
 
@@ -84,7 +84,7 @@ export const getReferralTranslation = asyncHandler(async (req, res) => {
 
 export const getReferralSettingsContent = asyncHandler(async (req, res) => {
     const type = String(req.query?.type || '').trim().toLowerCase();
-    const data = await getReferralSettings(type || undefined);
+    const data = await getPublicReferralSettings(['user', 'driver'].includes(type) ? type : undefined);
 
     return res.json({
         success: true,

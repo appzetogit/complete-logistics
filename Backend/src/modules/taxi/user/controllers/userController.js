@@ -35,6 +35,14 @@ import { emitToDriver } from '../../services/dispatchService.js';
 import { sendPushNotificationToEntities } from '../../services/pushNotificationService.js';
 import { buildRentalTrackingSnapshot, updateUserRentalTracking } from '../../services/rentalTrackingService.js';
 import { listDriverServiceLocations } from '../../driver/services/serviceLocationService.js';
+import { creditReferralReward } from '../../referral/services/referralRewardService.js';
+import {
+  claimAttributionForConversion,
+  ensureReferralCode,
+  recordConversion,
+  releaseAttribution,
+  resolveReferralForSignup,
+} from '../../referral/services/referralAttributionService.js';
 import { listServiceStores, listSetPrices, listZones } from '../../admin/services/adminService.js';
 import {
   findActiveEmployeeByCode,
@@ -1519,6 +1527,7 @@ const buildReactivatedUserPayload = async ({
   profileImage,
   governmentIdProof,
   referrer,
+  referredById = undefined,
   employee,
 }) => ({
   name,
@@ -1530,7 +1539,7 @@ const buildReactivatedUserPayload = async ({
   governmentIdProof,
   password: await hashPassword(String(req.body.password || '').trim() || crypto.randomBytes(24).toString('hex')),
   isVerified: true,
-  referredBy: referrer?._id || null,
+  referredBy: referredById !== undefined ? referredById : referrer?._id || null,
   acquiredByEmployeeId: employee?._id || null,
   acquiredByEmployeeCode: employee?.employeeCode || '',
   deletedAt: null,
@@ -1580,83 +1589,17 @@ const findUserByReferralCode = async (referralCode) => {
   return User.findOne({ referralCode: normalizedCode });
 };
 
-const creditUserWalletByReference = async ({ userId, amount, title, referenceKey }) => {
-  const normalizedAmount = Math.max(0, Number(amount || 0) || 0);
-  const normalizedReferenceKey = toCleanString(referenceKey);
-
-  if (!userId || normalizedAmount <= 0 || !normalizedReferenceKey) {
-    return 'skipped';
-  }
-
-  await ensureUserWallet(userId);
-
-  const existingTransaction = await UserWallet.findOne({
-    userId,
-    'transactions.referenceKey': normalizedReferenceKey,
-  })
-    .select('_id')
-    .lean();
-
-  if (existingTransaction) {
-    return 'existing';
-  }
-
-  await UserWallet.updateOne(
-    { userId },
-    {
-      $inc: { balance: normalizedAmount },
-      $push: {
-        transactions: {
-          $each: [
-            {
-              kind: 'credit',
-              amount: normalizedAmount,
-              title: toCleanString(title) || 'Referral Reward',
-              referenceKey: normalizedReferenceKey,
-            },
-          ],
-          $slice: -50,
-        },
-      },
-    },
-  );
-
-  return 'credited';
-};
-
-const processSignupReferralRewards = async ({ user, referrer }) => {
-  if (!user?._id || !referrer?._id) {
-    return;
-  }
-
-  const settings = await getUserReferralProgramSettings();
-  if (!settings.enabled || settings.amount <= 0) {
-    return;
-  }
-
-  const referralType = settings.type;
-  const rewardBaseKey = `user-referral:signup:${String(user._id)}`;
-
-  if (referralType === 'instant_referrer' || referralType === 'instant_referrer_new') {
-    await creditUserWalletByReference({
-      userId: referrer._id,
-      amount: settings.amount,
-      title: `Referral reward for inviting ${user.phone}`,
-      referenceKey: `${rewardBaseKey}:referrer`,
-    });
-  }
-
-  if (referralType === 'instant_referrer_new') {
-    await creditUserWalletByReference({
-      userId: user._id,
-      amount: settings.amount,
-      title: 'Welcome referral reward',
-      referenceKey: `${rewardBaseKey}:new-user`,
-    });
-    user.referralRewardGrantedAt = user.referralRewardGrantedAt || new Date();
-    await user.save();
-  }
-};
+// Referral payouts go through the shared ledger: one row per referenceKey, paid once even under concurrent requests.
+const creditUserWalletByReference = ({ userId, amount, title, referenceKey, referrerId = null, referredId = null }) =>
+  creditReferralReward({
+    payeeType: 'user',
+    payeeId: userId,
+    amount,
+    title: toCleanString(title) || 'Referral Reward',
+    referenceKey: toCleanString(referenceKey),
+    referrerId,
+    referredId,
+  });
 
 /// POST /users/register: an alias of /users/signup, so it also needs a phone verified by OTP first
 /// (it used to create an account, or restore a deleted one, and return a token without any OTP).
@@ -1726,6 +1669,8 @@ export const signupUser = async (req, res) => {
   const profileImage = toCleanString(req.body.profileImage);
   const governmentIdProof = normalizeGovernmentIdProof(req.body.governmentIdProof || {}, { required: false });
   const referralCode = normalizeReferralCode(req.body.referralCode);
+  // issued when the person opened a referral link (GET /r/:code); replaces typing a code
+  const attributionToken = toCleanString(req.body.attributionToken);
   const employeeCode = normalizeEmployeeCode(req.body.employeeCode);
 
   validateName(name);
@@ -1736,19 +1681,35 @@ export const signupUser = async (req, res) => {
 
   const existingUser = await User.findOne({ phone });
 
-  const referrer = referralCode ? await findUserByReferralCode(referralCode) : null;
   const employee = employeeCode ? await findActiveEmployeeByCode(employeeCode) : null;
-
-  if (referralCode && !referrer) {
-    throw new ApiError(400, 'Invalid referral code');
-  }
-
-  if (employeeCode && !employee) {
-    throw new ApiError(400, 'Invalid employee code');
-  }
 
   if (existingUser && !canRestoreUserForSignup(existingUser)) {
     throw new ApiError(409, 'Phone number is already registered');
+  }
+
+  // Who referred this person: the attribution token first, a typed code only for older app versions.
+  // A restored account that already has a referrer keeps it (never overwritten, never rewarded twice).
+  const keepsReferrer = Boolean(existingUser?.referredBy);
+  let referral = keepsReferrer
+    ? { applied: false, referrer: null, attribution: null, reason: 'already_attributed' }
+    : await resolveReferralForSignup({
+        attributionToken,
+        referralCode,
+        flow: 'user',
+        referredPhone: phone,
+        referredAccountId: existingUser?._id || null,
+      });
+
+  // a click can become one account only
+  if (referral.applied && !(await claimAttributionForConversion(referral.attribution, { referredPhone: phone }))) {
+    referral = { applied: false, referrer: null, attribution: null, reason: 'already_attributed' };
+  }
+
+  const referrer = referral.applied ? referral.referrer : null;
+
+  if (employeeCode && !employee) {
+    await releaseAttribution(referral.attribution);
+    throw new ApiError(400, 'Invalid employee code');
   }
 
   const userPayload = await buildReactivatedUserPayload({
@@ -1761,21 +1722,26 @@ export const signupUser = async (req, res) => {
     profileImage,
     governmentIdProof,
     referrer,
+    referredById: keepsReferrer ? existingUser.referredBy : undefined,
     employee,
   });
 
-  const user = existingUser
-    ? await User.findByIdAndUpdate(existingUser._id, { $set: userPayload }, { new: true, runValidators: true })
-    : await User.create(userPayload);
-
-  if (!String(user.referralCode || '').trim()) {
-    user.referralCode = generateUserReferralCode(user);
-    await user.save();
+  let user;
+  try {
+    user = existingUser
+      ? await User.findByIdAndUpdate(existingUser._id, { $set: userPayload }, { new: true, runValidators: true })
+      : await User.create(userPayload);
+  } catch (error) {
+    await releaseAttribution(referral.attribution);
+    throw error;
   }
+
+  await ensureReferralCode('user', user, generateUserReferralCode(user));
 
   if (referrer?._id) {
     await User.updateOne({ _id: referrer._id }, { $inc: { referralCount: 1 } });
-    await processSignupReferralRewards({ user, referrer });
+    await recordConversion({ attribution: referral.attribution, referredType: 'user', referredId: user._id, referrerId: referrer._id });
+    // no reward at signup: it is paid when this rider completes their first ride (services/rideService.js)
   }
 
   await consumeUserSignupSession(signupSession);
@@ -1784,7 +1750,11 @@ export const signupUser = async (req, res) => {
 
   res.status(201).json({
     success: true,
-    data: createUserSession(user),
+    data: {
+      ...createUserSession(user),
+      // tells the app whether the referral was applied, and why not (expired, used, self-referral...)
+      referral: { applied: Boolean(referrer), reason: referral.reason || '' },
+    },
   });
 };
 
@@ -1879,10 +1849,7 @@ export const getCurrentUser = async (req, res) => {
     throw new ApiError(404, 'User not found');
   }
 
-  if (!String(user.referralCode || '').trim()) {
-    user.referralCode = generateUserReferralCode(user);
-    await user.save();
-  }
+  await ensureReferralCode('user', user, generateUserReferralCode(user));
 
   const subscriptionSummary = await getUserSubscriptionSummary(user._id);
   const freeRides = await getFreeRidesSummaryForUser(user);

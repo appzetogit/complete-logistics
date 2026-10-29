@@ -75,6 +75,7 @@ import {
 } from '../controllers/poolingController.js';
 import { getAppBootstrap, getAppModules, getGeneralSettingsCategory, getGoodsTypes, getPublicRentalVehicleCatalog, getPublicVehicleTypeCatalog } from '../../admin/controllers/adminController.js';
 import { triggerUserSosAlert } from '../../safety/controllers/safetyController.js';
+import { getMyReferral, getMyReferralHistory } from '../../referral/controllers/referralController.js';
 
 export const userRouter = Router();
 
@@ -129,6 +130,8 @@ userRouter.post('/otp-login', otpVerifyRateLimit, asyncHandler(verifyUserPhoneFo
 userRouter.post('/fcm-token', authenticate(['user']), asyncHandler(saveUserFcmToken));
 userRouter.post('/logout', authenticate(['user']), asyncHandler(logoutUser));
 userRouter.get('/me', authenticate(['user']), asyncHandler(getCurrentUser));
+userRouter.get('/referrals/me', authenticate(['user']), asyncHandler(getMyReferral('user')));
+userRouter.get('/referrals/history', authenticate(['user']), asyncHandler(getMyReferralHistory('user')));
 userRouter.patch('/me', authenticate(['user']), asyncHandler(updateCurrentUser));
 userRouter.get('/subscriptions/plans', authenticate(['user']), asyncHandler(getAvailableSubscriptionPlans));
 userRouter.get('/subscriptions/me', authenticate(['user']), asyncHandler(getMySubscriptions));

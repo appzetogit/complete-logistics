@@ -68,6 +68,7 @@ import {
   serializeDriverWallet,
 } from '../../driver/services/walletService.js';
 import { RIDE_LIVE_STATUS, RIDE_STATUS, VEHICLE_TYPES } from '../../constants/index.js';
+import { SUPPORTED_REFERRAL_TYPES } from '../../referral/constants.js';
 import {
   cancelRideByAdmin,
   emitToDriver,
@@ -5676,6 +5677,22 @@ export const updateSubscriptionSettings = async (payload) => {
   return setting.subscription;
 };
 
+// What the apps need to show the program: no admin-only configuration (milestone and reward-feature setup).
+export const getPublicReferralSettings = async (type) => {
+  const toPublic = (value = {}) => ({
+    enabled: Boolean(value.enabled),
+    type: value.type || 'instant_referrer',
+    amount: Number(value.amount || 0),
+    ride_count: Number(value.ride_count || 0),
+    ...(value.milestone_program_enabled !== undefined
+      ? { milestone_program_enabled: Boolean(value.milestone_program_enabled) }
+      : {}),
+  });
+
+  const all = await getReferralSettings();
+  return type ? toPublic(all?.[type]) : { user: toPublic(all?.user), driver: toPublic(all?.driver) };
+};
+
 export const getReferralSettings = async (type) => {
   const setting = await AdminBusinessSetting.findOne({ scope: 'default' }).lean();
   const referral = setting?.referral || { driver: { enabled: false, type: 'instant_referrer', amount: 0 }, user: { enabled: false, type: 'instant_referrer', amount: 0 } };
@@ -5711,13 +5728,23 @@ const sanitizeReferralRewardFeatures = (items = []) =>
     .filter((item) => item.label);
 
 export const updateReferralSettings = async (type, payload) => {
+  if (!['user', 'driver'].includes(type)) {
+    throw new ApiError(400, 'Referral program must be "user" or "driver"');
+  }
+
+  const rewardType = String(payload?.type ?? 'instant_referrer').trim().toLowerCase();
+  if (!SUPPORTED_REFERRAL_TYPES.includes(rewardType)) {
+    throw new ApiError(400, `Unsupported referral type. Use one of: ${SUPPORTED_REFERRAL_TYPES.join(', ')}`);
+  }
+
   const updateKey = `referral.${type}`;
 
   // Sanitize data
   const updateData = {
     ...payload,
+    type: rewardType,
     enabled: Boolean(payload.enabled),
-    amount: Number(payload.amount || 0),
+    amount: Math.max(0, Number(payload.amount || 0) || 0),
   };
 
   if (payload.ride_count !== undefined) {

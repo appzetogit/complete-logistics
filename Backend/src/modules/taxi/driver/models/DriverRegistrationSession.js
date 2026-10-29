@@ -53,6 +53,11 @@ const driverRegistrationSessionSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    // the referral link (attribution) this onboarding was opened from; see referral/services
+    referralAttributionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
     employeeCode: {
       type: String,
       default: '',

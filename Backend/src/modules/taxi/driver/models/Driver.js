@@ -574,6 +574,11 @@ driverSchema.index({ approve: 1, deletedAt: 1, createdAt: -1 });
 driverSchema.index({ status: 1, deletedAt: 1 });
 driverSchema.index({ phone: 1, deletedAt: 1 });
 driverSchema.index({ acquiredByEmployeeCode: 1 });
+// A referral code identifies one driver. Empty codes (not issued yet) are ignored by the index.
+driverSchema.index(
+  { referralCode: 1 },
+  { unique: true, partialFilterExpression: { referralCode: { $type: 'string', $gt: '' } } },
+);
 
 driverSchema.index({ location: '2dsphere' });
 driverSchema.index({ 'routeBooking.anchorLocation': '2dsphere' });

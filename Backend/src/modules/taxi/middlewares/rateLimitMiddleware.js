@@ -344,3 +344,20 @@ export const availableDriversRateLimit = createRateLimitMiddleware({
   mode: 'ip',
   message: 'Too many driver availability requests. Please try again later.',
 });
+
+// Opening a shared referral link (public) and claiming its token from the app.
+export const referralLinkRateLimit = createRateLimitMiddleware({
+  scope: 'referral_link',
+  max: 60,
+  windowMs: 10 * 60 * 1000,
+  mode: 'ip',
+  message: 'Too many referral link requests. Please try again later.',
+});
+
+export const referralAttributeRateLimit = createRateLimitMiddleware({
+  scope: 'referral_attribute',
+  max: 30,
+  windowMs: 10 * 60 * 1000,
+  mode: 'ip',
+  message: 'Too many referral requests. Please try again later.',
+});

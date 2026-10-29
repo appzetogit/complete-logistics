@@ -11,6 +11,8 @@ import { Driver } from '../driver/models/Driver.js';
 import { WalletTransaction } from '../driver/models/WalletTransaction.js';
 import { incrementDriverTodaySummaryForCompletedRide } from '../driver/services/driverTodaySummaryService.js';
 import { applyDriverWalletAdjustment, ensureDriverWalletCanAcceptRide, settleCompletedRideWallet } from '../driver/services/walletService.js';
+import { creditReferralReward, referralRewardAlreadyPaid } from '../referral/services/referralRewardService.js';
+import { SUPPORTED_REFERRAL_TYPES } from '../referral/constants.js';
 import { Delivery } from '../user/models/Delivery.js';
 import { RideBid } from '../user/models/RideBid.js';
 import { Ride } from '../user/models/Ride.js';
@@ -206,83 +208,29 @@ const getDriverReferralProgramSettings = async () => {
   };
 };
 
-const creditUserWalletByReference = async ({ userId, amount, title, referenceKey }) => {
-  const normalizedAmount = Math.max(0, Number(amount || 0) || 0);
-  const normalizedReferenceKey = String(referenceKey || '').trim();
-
-  if (!userId || normalizedAmount <= 0 || !normalizedReferenceKey) {
-    return 'skipped';
-  }
-
-  await ensureUserWallet(userId);
-
-  const existingTransaction = await UserWallet.findOne({
-    userId,
-    'transactions.referenceKey': normalizedReferenceKey,
-  })
-    .select('_id')
-    .lean();
-
-  if (existingTransaction) {
-    return 'existing';
-  }
-
-  await UserWallet.updateOne(
-    { userId },
-    {
-      $inc: { balance: normalizedAmount },
-      $push: {
-        transactions: {
-          $each: [
-            {
-              kind: 'credit',
-              amount: normalizedAmount,
-              title: String(title || 'Referral Reward').trim(),
-              referenceKey: normalizedReferenceKey,
-            },
-          ],
-          $slice: -50,
-        },
-      },
-    },
-  );
-
-  return 'credited';
-};
-
-const creditDriverWalletByReference = async ({ driverId, amount, title, referenceKey, metadata = {} }) => {
-  const normalizedAmount = Math.max(0, Number(amount || 0) || 0);
-  const normalizedReferenceKey = String(referenceKey || '').trim();
-
-  if (!driverId || normalizedAmount <= 0 || !normalizedReferenceKey) {
-    return 'skipped';
-  }
-
-  const existingTransaction = await WalletTransaction.findOne({
-    driverId,
-    'metadata.referenceKey': normalizedReferenceKey,
-  })
-    .select('_id')
-    .lean();
-
-  if (existingTransaction) {
-    return 'existing';
-  }
-
-  await applyDriverWalletAdjustment({
-    driverId,
-    amount: normalizedAmount,
-    type: 'adjustment',
-    description: String(title || 'Referral Reward').trim(),
-    metadata: {
-      ...metadata,
-      referenceKey: normalizedReferenceKey,
-      source: 'driver_referral',
-    },
+// Referral payouts go through the shared ledger: one row per referenceKey, paid once even under concurrent requests.
+const creditUserWalletByReference = ({ userId, amount, title, referenceKey, referrerId = null, referredId = null }) =>
+  creditReferralReward({
+    payeeType: 'user',
+    payeeId: userId,
+    amount,
+    title: String(title || 'Referral Reward').trim(),
+    referenceKey: String(referenceKey || '').trim(),
+    referrerId,
+    referredId,
   });
 
-  return 'credited';
-};
+const creditDriverWalletByReference = ({ driverId, amount, title, referenceKey, referrerId = null, referredId = null, metadata = {} }) =>
+  creditReferralReward({
+    payeeType: 'driver',
+    payeeId: driverId,
+    amount,
+    title: String(title || 'Referral Reward').trim(),
+    referenceKey: String(referenceKey || '').trim(),
+    referrerId,
+    referredId,
+    metadata,
+  });
 
 const processCompletedRideReferralReward = async (ride) => {
   if (!ride?.userId) {
@@ -298,11 +246,19 @@ const processCompletedRideReferralReward = async (ride) => {
   }
 
   const settings = await getUserReferralProgramSettings();
-  const isConditionalProgram =
-    settings.enabled &&
-    ['conditional_referrer', 'conditional_referrer_new'].includes(settings.type);
+  // Nothing is paid at signup: every program type pays when the referred person completes their ride(s).
+  if (!settings.enabled || !SUPPORTED_REFERRAL_TYPES.includes(settings.type)) {
+    return;
+  }
 
-  if (!isConditionalProgram) {
+  if (
+    await referralRewardAlreadyPaid({
+      payeeType: 'user',
+      payeeId: referredUser.referredBy,
+      referenceKey: `user-referral:signup:${String(ride.userId)}:referrer`,
+    })
+  ) {
+    await User.updateOne({ _id: ride.userId }, { $set: { referralRewardGrantedAt: new Date() } });
     return;
   }
 
@@ -312,7 +268,8 @@ const processCompletedRideReferralReward = async (ride) => {
     serviceType: { $in: ['ride', 'intercity'] },
   });
 
-  const requiredRideCount = Math.max(1, settings.rideCount || 1);
+  // instant_* programs pay on the first completed ride; conditional_* after the configured ride count
+  const requiredRideCount = settings.type.startsWith('instant') ? 1 : Math.max(1, settings.rideCount || 1);
 
   await User.updateOne(
     { _id: ride.userId },
@@ -329,21 +286,25 @@ const processCompletedRideReferralReward = async (ride) => {
     amount: settings.amount,
     title: `Referral reward after ${completedRideCount} completed rides by ${referredUser.phone || 'referred user'}`,
     referenceKey: `${rewardBaseKey}:referrer`,
+    referrerId: referredUser.referredBy,
+    referredId: ride.userId,
   });
 
   let newUserResult = 'skipped';
-  if (settings.type === 'conditional_referrer_new') {
+  if (settings.type.endsWith('_new')) {
     newUserResult = await creditUserWalletByReference({
       userId: ride.userId,
       amount: settings.amount,
       title: `Referral completion reward after ${completedRideCount} rides`,
       referenceKey: `${rewardBaseKey}:new-user`,
+      referrerId: referredUser.referredBy,
+      referredId: ride.userId,
     });
   }
 
   const rewardSatisfied =
     ['credited', 'existing'].includes(referrerResult) &&
-    (settings.type !== 'conditional_referrer_new' || ['credited', 'existing'].includes(newUserResult));
+    (!settings.type.endsWith('_new') || ['credited', 'existing'].includes(newUserResult));
 
   if (rewardSatisfied) {
     await User.updateOne(
@@ -367,11 +328,19 @@ const processCompletedDriverReferralReward = async (ride) => {
   }
 
   const settings = await getDriverReferralProgramSettings();
-  const isConditionalProgram =
-    settings.enabled &&
-    ['conditional_referrer', 'conditional_referrer_new'].includes(settings.type);
+  // Nothing is paid at signup: every program type pays when the referred person completes their ride(s).
+  if (!settings.enabled || !SUPPORTED_REFERRAL_TYPES.includes(settings.type)) {
+    return;
+  }
 
-  if (!isConditionalProgram) {
+  if (
+    await referralRewardAlreadyPaid({
+      payeeType: 'driver',
+      payeeId: referredDriver.referredBy,
+      referenceKey: `driver-referral:signup:${String(ride.driverId)}:referrer`,
+    })
+  ) {
+    await Driver.updateOne({ _id: ride.driverId }, { $set: { referralRewardGrantedAt: new Date() } });
     return;
   }
 
@@ -380,7 +349,8 @@ const processCompletedDriverReferralReward = async (ride) => {
     status: RIDE_STATUS.COMPLETED,
   });
 
-  const requiredRideCount = Math.max(1, settings.rideCount || 1);
+  // instant_* programs pay on the first completed ride; conditional_* after the configured ride count
+  const requiredRideCount = settings.type.startsWith('instant') ? 1 : Math.max(1, settings.rideCount || 1);
 
   await Driver.updateOne(
     { _id: ride.driverId },
@@ -397,6 +367,8 @@ const processCompletedDriverReferralReward = async (ride) => {
     amount: settings.amount,
     title: `Referral reward after ${completedRideCount} completed rides by ${referredDriver.phone || 'referred driver'}`,
     referenceKey: `${rewardBaseKey}:referrer`,
+    referrerId: referredDriver.referredBy,
+    referredId: ride.driverId,
     metadata: {
       referredDriverId: String(ride.driverId),
       completedRideCount,
@@ -404,12 +376,14 @@ const processCompletedDriverReferralReward = async (ride) => {
   });
 
   let newDriverResult = 'skipped';
-  if (settings.type === 'conditional_referrer_new') {
+  if (settings.type.endsWith('_new')) {
     newDriverResult = await creditDriverWalletByReference({
       driverId: ride.driverId,
       amount: settings.amount,
       title: `Referral completion reward after ${completedRideCount} rides`,
       referenceKey: `${rewardBaseKey}:new-driver`,
+      referrerId: referredDriver.referredBy,
+      referredId: ride.driverId,
       metadata: {
         referrerDriverId: String(referredDriver.referredBy),
         completedRideCount,
@@ -419,7 +393,7 @@ const processCompletedDriverReferralReward = async (ride) => {
 
   const rewardSatisfied =
     ['credited', 'existing'].includes(referrerResult) &&
-    (settings.type !== 'conditional_referrer_new' || ['credited', 'existing'].includes(newDriverResult));
+    (!settings.type.endsWith('_new') || ['credited', 'existing'].includes(newDriverResult));
 
   if (rewardSatisfied) {
     await Driver.updateOne(

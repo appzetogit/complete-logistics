@@ -126,6 +126,8 @@ import {
 } from "../../services/paymentDiagnostics.js";
 import { verifyBankAccountWithRecharge, verifyDrivingLicenseWithRecharge, verifyGstinWithRecharge, verifyPanWithRecharge, verifyRcWithRecharge, verifyUpiWithRecharge } from "../../services/rechargeVerificationService.js";
 
+import { ensureReferralCode } from "../../referral/services/referralAttributionService.js";
+
 const generateDriverReferralCode = (driver) => {
   const idPart = String(driver?._id || "")
     .slice(-6)
@@ -3064,10 +3066,7 @@ export const getCurrentDriver = async (req, res) => {
     });
   }
 
-  if (!String(driver.referralCode || "").trim()) {
-    driver.referralCode = generateDriverReferralCode(driver);
-    await driver.save();
-  }
+  await ensureReferralCode("driver", driver, generateDriverReferralCode(driver));
 
   await clearDriverActiveRideIfStale(driver);
   const vehicleTypeSummary = await resolveVehicleTypeSummary(driver.vehicleTypeId);
