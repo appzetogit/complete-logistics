@@ -45,7 +45,7 @@ const supportTicketSchema = new mongoose.Schema(
     titleId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'TaxiSupportTicketTitle',
-      required: true,
+      default: null,
     },
     title: {
       type: String,
