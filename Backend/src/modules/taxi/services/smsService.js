@@ -364,6 +364,20 @@ export const sendOtpSms = async ({ phone, otp, purpose = 'otp' }) => {
   const parsedFinalResponse = parseProviderResponse(finalResponseText);
   const looksFailed = !delivered || !isSuccessfulProviderResponse(finalResponse, finalResponseText);
 
+  // One line per SMS (no OTP, no key, phone masked) so a message that never arrives can be traced to the
+  // provider's answer. ErrorCode 000 = accepted by the provider; delivery after that is up to DLT / the operator.
+  console.log('[smsService] OTP SMS', JSON.stringify({
+    purpose,
+    to: `******${String(phone || '').replace(/\D/g, '').slice(-4)}`,
+    sender: config.senderId,
+    templateId: config.templateId,
+    accepted: !looksFailed,
+    errorCode: parsedFinalResponse?.ErrorCode ?? null,
+    errorMessage: parsedFinalResponse?.ErrorMessage ?? (parsedFinalResponse ? null : String(finalResponseText || '').slice(0, 120)),
+    jobId: parsedFinalResponse?.JobId ?? null,
+    messageId: parsedFinalResponse?.MessageData?.[0]?.MessageId ?? null,
+  }));
+
   if (looksFailed) {
     throw new ApiError(
       502,
