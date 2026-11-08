@@ -180,7 +180,9 @@ export const serializeDriverWallet = async (driver) => {
     isTransferEnabled: wallet.rules.isTransferEnabled,
     minimumTopUpAmount: wallet.rules.minimumTopUpAmount,
     minimumTransferAmount: wallet.rules.minimumTransferAmount,
-    isBlocked: wallet.isBlocked || !wallet.rules.isWalletEnabled || isBelowMinimumBalance,
+    // Derived from the live settings and balance, never from the stored flag: the flag is only a cache for matching,
+    // and a stale `true` (set while the minimum was higher) would otherwise lock the driver out for good.
+    isBlocked: !wallet.rules.isWalletEnabled || isBelowMinimumBalance,
   };
 };
 
@@ -196,7 +198,7 @@ export const ensureDriverWalletCanAcceptRide = async (driverOrId, { session } = 
 
   const wallet = await getWalletSnapshot(driver);
   const isBelowMinimumBalance = wallet.balance < wallet.minimumBalanceForOrders;
-  const isBlocked = wallet.isBlocked || !wallet.rules.isWalletEnabled || isBelowMinimumBalance;
+  const isBlocked = !wallet.rules.isWalletEnabled || isBelowMinimumBalance;
 
   if (isBlocked) {
     await Driver.findByIdAndUpdate(driver._id, {
