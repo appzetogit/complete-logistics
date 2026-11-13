@@ -121,6 +121,17 @@ const driverSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Hybrid radius (km): the driver's own service radius and whether they chose to use it. Older drivers have neither
+    // field and are treated as "use the Admin default". See services/driverRadius.js.
+    serviceRadius: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    isCustomRadius: {
+      type: Boolean,
+      default: false,
+    },
     socketId: {
       type: String,
       default: null,
