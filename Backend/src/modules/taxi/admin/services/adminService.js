@@ -69,6 +69,7 @@ import {
 } from '../../driver/services/walletService.js';
 import { RIDE_LIVE_STATUS, RIDE_STATUS, VEHICLE_TYPES } from '../../constants/index.js';
 import { SUPPORTED_REFERRAL_TYPES } from '../../referral/constants.js';
+import { RADIUS_SETTING_KEYS, validateAdminRadiusSettings } from '../../services/driverRadius.js';
 import {
   cancelRideByAdmin,
   emitToDriver,
@@ -11514,13 +11515,18 @@ export const getGeneralSettings = async (category) => {
     };
   }
 
-  return {
-    settings: await getProjectedSettingsSection(
-      AdminBusinessSetting,
-      createDefaultBusinessSettings,
-      businessKey,
-    ),
-  };
+  const section = await getProjectedSettingsSection(
+    AdminBusinessSetting,
+    createDefaultBusinessSettings,
+    businessKey,
+  );
+
+  // Older saved settings lack the hybrid-radius keys: show the real defaults so the page never has to guess them.
+  if (businessKey === 'transport_ride') {
+    return { settings: { ...(createDefaultBusinessSettings().transport_ride || {}), ...section } };
+  }
+
+  return { settings: section };
 };
 
 export const updateGeneralSettings = async (category, payload) => {
@@ -11537,6 +11543,26 @@ export const updateGeneralSettings = async (category, payload) => {
     } catch (error) {
       throw new ApiError(400, error.message);
     }
+  }
+
+  // Radius settings: the switch is stored as '1'/'0', and the default must sit inside the min..max range.
+  if (category === 'transport-ride' && RADIUS_SETTING_KEYS.some((key) => Object.prototype.hasOwnProperty.call(newValues || {}, key))) {
+    const defaults = createDefaultBusinessSettings().transport_ride || {};
+    const merged = { ...defaults, ...(bizSettings.transport_ride || {}), ...newValues };
+    const problem = validateAdminRadiusSettings(merged);
+
+    if (problem) {
+      throw new ApiError(400, problem);
+    }
+
+    newValues = {
+      ...newValues,
+      allow_driver_custom_search_radius: ['1', 'true', 'yes', 'on'].includes(
+        String(merged.allow_driver_custom_search_radius ?? '').trim().toLowerCase(),
+      )
+        ? '1'
+        : '0',
+    };
   }
 
   if (appSettingsCategoryMap[category]) {

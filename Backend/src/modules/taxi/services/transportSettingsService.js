@@ -1,6 +1,7 @@
 import { createDefaultBusinessSettings } from '../admin/data/defaultBusinessSettings.js';
 import { AdminBusinessSetting } from '../admin/models/AdminBusinessSetting.js';
 import { getOrLoadCachedValue } from '../../../utils/cache.js';
+import { parseDriverRadiusConfig } from './driverRadius.js';
 
 const defaultTransportRideSettings = createDefaultBusinessSettings().transport_ride || {};
 const defaultBidRideSettings = createDefaultBusinessSettings().bid_ride || {};
@@ -69,6 +70,8 @@ export const resolveTransportDispatchConfig = async () => {
     dispatchType: String(settings.trip_dispatch_type || defaultTransportRideSettings.trip_dispatch_type) === '2'
       ? 'broadcast'
       : 'one_by_one',
+    // hybrid radius: lets matching give each driver their own radius (OFF unless the Admin turned it on)
+    driverRadius: parseDriverRadiusConfig(settings),
     baseDistanceMeters: Math.round(driverSearchRadiusKm * 1000),
     maxDistanceMeters: Math.round(driverSearchRadiusKm * 1000),
     retryWindowSeconds,

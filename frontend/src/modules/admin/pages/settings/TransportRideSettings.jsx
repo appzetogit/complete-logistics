@@ -24,6 +24,19 @@ const InputField = ({ label, name, value, onChange, placeholder, type = "text" }
   </div>
 );
 
+// Same rules the backend enforces: min > 0, max >= min, default inside min..max.
+const validateRadius = (s) => {
+  const min = Number(s.driver_min_search_radius ?? '2');
+  const max = Number(s.driver_max_search_radius ?? '15');
+  const def = Number(s.driver_search_radius);
+
+  if (!Number.isFinite(min) || min <= 0) return 'Minimum radius must be greater than 0';
+  if (!Number.isFinite(max) || max < min) return 'Maximum radius must be greater than or equal to the minimum radius';
+  if (!Number.isFinite(def) || def <= 0) return 'Default radius must be greater than 0';
+  if (def < min || def > max) return `Default radius must be between the minimum (${min}) and maximum (${max}) radius`;
+  return '';
+};
+
 const TransportRideSettings = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -46,14 +59,22 @@ const TransportRideSettings = () => {
     fetchData();
   }, []);
 
+  const radiusError = validateRadius(settings);
+  const customRadiusOn = String(settings.allow_driver_custom_search_radius ?? '0') === '1';
+
   const handleUpdate = async () => {
+    if (radiusError) {
+      toast.error(radiusError);
+      return;
+    }
+
     try {
       setSaving(true);
       await api.patch('/admin/general-settings/transport-ride', { settings });
       toast.success('Transport settings updated successfully!');
     } catch (err) {
       console.error('Update error:', err);
-      toast.error('Failed to save changes');
+      toast.error(err?.message || 'Failed to save changes');
     } finally {
       setSaving(false);
     }
@@ -101,6 +122,73 @@ const TransportRideSettings = () => {
                </p>
              </div>
              
+             <div className="mb-8 rounded-xl border border-gray-200 overflow-hidden">
+               <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-3 bg-gray-50/60">
+                 <div className="w-1 h-5 bg-yellow-400 rounded-full"></div>
+                 <h4 className="text-[13px] font-bold text-gray-700 uppercase tracking-tight">Driver Search Radius</h4>
+               </div>
+               <div className="p-5 space-y-5">
+                 <p className="text-sm text-gray-500">
+                   The default radius applies to every driver. When custom radius is on, each driver can choose their own
+                   radius between the minimum and maximum below. A driver without a valid choice, and every driver while
+                   custom radius is off, uses the default radius.
+                 </p>
+
+                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                   <InputField
+                      label="Default Radius (km)"
+                      name="driver_search_radius"
+                      value={settings.driver_search_radius}
+                      onChange={handleChange}
+                      type="number"
+                   />
+                   <InputField
+                      label="Minimum Radius (km)"
+                      name="driver_min_search_radius"
+                      value={settings.driver_min_search_radius ?? '2'}
+                      onChange={handleChange}
+                      type="number"
+                   />
+                   <InputField
+                      label="Maximum Radius (km)"
+                      name="driver_max_search_radius"
+                      value={settings.driver_max_search_radius ?? '15'}
+                      onChange={handleChange}
+                      type="number"
+                   />
+                 </div>
+
+                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50/50 px-4 py-3">
+                   <div>
+                     <p className="text-sm font-semibold text-gray-900">Enable Driver Custom Radius</p>
+                     <p className="text-xs text-gray-500 mt-0.5">
+                       {customRadiusOn
+                         ? 'On: drivers can set their own radius within the limits. Saved choices outside the limits are ignored until the driver picks a valid one.'
+                         : 'Off: all drivers use the default radius. Choices drivers saved earlier are kept and apply again when this is switched on.'}
+                     </p>
+                   </div>
+                   <button
+                     type="button"
+                     role="switch"
+                     aria-checked={customRadiusOn}
+                     onClick={() => handleChange('allow_driver_custom_search_radius', customRadiusOn ? '0' : '1')}
+                     className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${customRadiusOn ? 'bg-yellow-400' : 'bg-gray-300'}`}
+                   >
+                     <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${customRadiusOn ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                   </button>
+                 </div>
+
+                 {radiusError ? (
+                   <p role="alert" className="text-sm font-medium text-red-600">{radiusError}</p>
+                 ) : (
+                   <p className="text-xs text-gray-500">
+                     Drivers can choose between {Number(settings.driver_min_search_radius ?? '2')} and {Number(settings.driver_max_search_radius ?? '15')} km
+                     {customRadiusOn ? '' : ' (when custom radius is on)'}. Default: {Number(settings.driver_search_radius)} km.
+                   </p>
+                 )}
+               </div>
+             </div>
+
              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-6">
                 {/* Left Column */}
                 <div className="space-y-6">
@@ -135,14 +223,6 @@ const TransportRideSettings = () => {
 
                 {/* Right Column */}
                 <div className="space-y-6">
-                   <InputField 
-                      label="Driver Search Radius in Kilometer" 
-                      name="driver_search_radius" 
-                      value={settings.driver_search_radius} 
-                      onChange={handleChange} 
-                      type="number" 
-                   />
-
                    <InputField 
                       label="Arrival Radius at Pickup in Meters (0 = off)" 
                       name="arrival_radius_meters" 
@@ -248,7 +328,7 @@ const TransportRideSettings = () => {
              <div className="mt-10 flex justify-end pt-6 border-t border-gray-100">
                 <button 
                   onClick={handleUpdate}
-                  disabled={saving}
+                  disabled={saving || Boolean(radiusError)}
                   className="bg-yellow-400 text-black px-8 py-2.5 rounded-lg text-sm font-semibold shadow-sm flex items-center gap-2 hover:bg-yellow-500 active:scale-95 transition-all disabled:opacity-50"
                 >
                   {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
