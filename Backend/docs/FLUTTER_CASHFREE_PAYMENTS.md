@@ -347,3 +347,18 @@ Gateway switch
 - Keeps working if the app is closed: webhook + sweep settle the order; the app just shows the result when it next verifies or refreshes.
 
 Questions about the backend side: see `CASHFREE_INTEGRATION.md`; the end-to-end sandbox run is `test/integration/cashfreeSandbox.e2e.js`.
+
+## Goods booking advance (paid when the delivery is booked)
+
+When `GET /common/payment-gateway` returns `goodsAdvanceMode: "cashfree_checkout"`, use these instead of `/deliveries/advance/razorpay/*` (which answers `403 Razorpay gateway is disabled` while Cashfree is the active gateway). `razorpay_checkout` keeps the old calls.
+
+1. Book the delivery as before (`POST /deliveries`). The response has `rideId` and `goodsAdvance.status = "pending"`. The request is NOT dispatched until the advance is paid.
+2. `POST /deliveries/advance/cashfree/order` with `{ "rideId": "<rideId>" }` -> `201` `{ orderId, paymentSessionId, amount, advanceAmount, remainingAmount, environment, reused }`. The amount is the booking's own advance; the app cannot change it. Calling again (double tap) returns the same open order with `reused: true`.
+3. Open Cashfree checkout with `paymentSessionId` + `orderId` (same SDK call as the wallet top-up).
+4. After checkout returns, `POST /deliveries/advance/cashfree/verify` with `{ "rideId", "orderId" }` -> `200` `{ status, paid, orderId, amount, delivery }`.
+   - `paid: true`: `delivery.goodsAdvance.status` is `paid` and the request has been dispatched to drivers.
+   - `status: "pending"`: not paid yet; poll verify every 3-5 s (up to about 60 s).
+   - `409` with `code: "payment_refunded"`: the booking was cancelled/closed meanwhile; the money is refunded automatically. Show the message, do not retry.
+5. If the app is closed after paying, the webhook/reconcile loop still marks the advance paid and dispatches the request.
+
+Refunds (driver cancel, no driver found) go back to the wallet or to the original Cashfree payment, following the admin's "refund to" setting. Cashfree rental advance is still not supported.

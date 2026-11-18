@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../../../../utils/asyncHandler.js';
 import { authenticate } from '../../middlewares/authMiddleware.js';
 import { paymentConfirmRateLimit, paymentOrderRateLimit } from '../../middlewares/rateLimitMiddleware.js';
+import { createGoodsAdvanceCashfreeOrder, verifyGoodsAdvanceCashfreeOrder } from '../../payments/controllers/cashfreeController.js';
 import {
   createDelivery,
   createGoodsAdvanceRazorpayOrder,
@@ -24,6 +25,9 @@ deliveryRouter.post('/advance/razorpay/verify', authenticate(['user']), paymentC
 deliveryRouter.post('/advance/razorpay/reconcile', authenticate(['user']), paymentConfirmRateLimit, asyncHandler(reconcileGoodsAdvanceRazorpayPayment));
 // Called by Razorpay itself (no login): authenticated by the webhook signature over the raw body.
 deliveryRouter.post('/advance/razorpay/webhook', asyncHandler(razorpayAdvanceWebhook));
+// Cashfree: same job as the Razorpay pair above, used when Cashfree is the active gateway.
+deliveryRouter.post('/advance/cashfree/order', authenticate(['user']), paymentOrderRateLimit, asyncHandler(createGoodsAdvanceCashfreeOrder));
+deliveryRouter.post('/advance/cashfree/verify', authenticate(['user']), paymentConfirmRateLimit, asyncHandler(verifyGoodsAdvanceCashfreeOrder));
 deliveryRouter.post('/advance/wallet', authenticate(['user']), paymentOrderRateLimit, asyncHandler(payGoodsAdvanceFromWallet));
 deliveryRouter.get('/', authenticate(['user']), asyncHandler(listMyDeliveries));
 deliveryRouter.get('/active/me', authenticate(['user', 'driver']), asyncHandler(getMyActiveDelivery));

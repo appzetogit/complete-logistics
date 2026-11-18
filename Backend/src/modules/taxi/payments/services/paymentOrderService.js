@@ -14,7 +14,8 @@ import { applyDriverWalletAdjustment } from '../../driver/services/walletService
 import { UserWallet } from '../../user/models/UserWallet.js';
 import { Ride } from '../../user/models/Ride.js';
 import { afterRidePaymentApplied, applyRidePaymentInSession } from '../../services/ridePaymentService.js';
-import { emitToDriver } from '../../services/dispatchService.js';
+import { emitToDriver, startDispatchFlow } from '../../services/dispatchService.js';
+import { getRideDetails } from '../../services/rideService.js';
 
 /*
  * Gateway-neutral payment orders (Cashfree today). The flow for every purpose:
@@ -50,7 +51,7 @@ const runAtomically = async (fn) => {
 };
 
 const newOrderId = (purpose) => {
-  const prefix = { user_wallet_topup: 'uw', driver_wallet_topup: 'dw', ride_payment: 'rp' }[purpose] || 'po';
+  const prefix = { user_wallet_topup: 'uw', driver_wallet_topup: 'dw', ride_payment: 'rp', goods_advance: 'ga' }[purpose] || 'po';
   return `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(5).toString('hex')}`;
 };
 
@@ -185,7 +186,36 @@ const applyRidePaymentForOrder = async (order, session) => {
   return { outcome: result.status === 'applied' ? 'applied' : 'already_applied', rideResult: result };
 };
 
+// Goods advance paid at booking: pending -> paid, only while the booking is still searching and the amount matches.
+const applyGoodsAdvanceForOrder = async (order, session) => {
+  const { rideId } = order.context || {};
+  const paid = await Ride.findOneAndUpdate(
+    {
+      _id: rideId,
+      userId: order.ownerId,
+      serviceType: 'parcel',
+      status: 'searching',
+      'goodsAdvance.status': 'pending',
+      'goodsAdvance.amount': order.amount,
+    },
+    {
+      $set: {
+        'goodsAdvance.status': 'paid',
+        'goodsAdvance.provider': GATEWAY,
+        'goodsAdvance.providerOrderId': order.orderId,
+        'goodsAdvance.providerPaymentId': order.providerPaymentId,
+        'goodsAdvance.paidAt': new Date(),
+      },
+      $addToSet: { 'goodsAdvance.providerOrderIds': order.orderId },
+    },
+    session ? { session, returnDocument: 'after' } : { returnDocument: 'after' },
+  );
+  if (!paid) return { outcome: 'unusable', rideResult: { status: 'advance_not_payable' } };
+  return { outcome: 'applied', rideResult: { status: 'applied' } };
+};
+
 const APPLIERS = {
+  goods_advance: applyGoodsAdvanceForOrder,
   user_wallet_topup: applyWalletTopUpForUser,
   driver_wallet_topup: applyWalletTopUpForDriver,
   ride_payment: applyRidePaymentForOrder,
@@ -236,6 +266,15 @@ const applyPaidOrder = async (orderId) => {
     if (order.purpose === 'ride_payment') {
       await afterRidePaymentApplied(done.rideResult, { notificationId: `ride-payment-${order.providerPaymentId}` });
       await Ride.updateOne({ _id: order.context?.rideId, 'riderPaymentOrder.orderId': order.orderId }, { $unset: { riderPaymentOrder: 1 } });
+    }
+    if (order.purpose === 'goods_advance') {
+      // Same as the Razorpay path: the request is dispatched only once the advance is paid (idempotent).
+      try {
+        const detailed = await getRideDetails(order.context?.rideId);
+        if (detailed?.status === 'searching' && !detailed.driverId) await startDispatchFlow(detailed);
+      } catch (error) {
+        console.error('[payment-order] dispatch after goods advance failed', order.orderId, error?.message || error);
+      }
     }
     if (order.purpose === 'driver_wallet_topup' && done.walletResult) {
       emitToDriver(order.ownerId, 'driver:wallet:updated', {

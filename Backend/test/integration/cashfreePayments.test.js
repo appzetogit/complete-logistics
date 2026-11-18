@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test, { after, before } from 'node:test';
-import { bootstrap } from './harness.js';
+import { bootstrap, waitFor } from './harness.js';
 
 let t;
 let AdminThirdPartySetting;
@@ -348,4 +348,116 @@ test('ride payment: a payment that arrives after the ride was already paid is re
   assert.equal((await PaymentOrder.findOne({ orderId })).status, 'refunded');
   assert.equal(await driverNet(rideId), before, 'the driver is not credited twice');
   void driver;
+});
+
+// ---- goods advance at booking time -----------------------------------------------------------------------------
+
+const goodsSetup = async () => {
+  const vehicle = await t.factories.vehicle({ commission: 10 });
+  const rider = await t.factories.user();
+  const driver = await t.factories.driver({ vehicleTypeId: vehicle._id });
+  const booked = await t.api('POST', '/deliveries', {
+    token: rider.token,
+    body: {
+      pickup: t.locations.pickup,
+      drop: t.locations.drop,
+      pickupAddress: 'A',
+      dropAddress: 'B',
+      vehicleTypeId: String(vehicle._id),
+      paymentMethod: 'cash',
+      parcel: { category: 'Documents', senderName: 'S', receiverName: 'R' },
+    },
+  });
+  assert.equal(booked.status, 201, booked.text);
+  return { rider, driver, delivery: booked.body.data, rideId: booked.body.data.rideId };
+};
+const advanceOrder = (rider, rideId) => t.api('POST', '/deliveries/advance/cashfree/order', { token: rider.token, body: { rideId } });
+const advanceVerify = (rider, rideId, orderId) => t.api('POST', '/deliveries/advance/cashfree/verify', { token: rider.token, body: { rideId, orderId } });
+
+test('goods advance: order uses the booking advance, double tap reuses it, paying dispatches once', async () => {
+  const { rider, driver, delivery, rideId } = await goodsSetup();
+  const driverSocket = await t.connectSocket(driver.token);
+
+  const created = await advanceOrder(rider, rideId);
+  assert.equal(created.status, 201, created.text);
+  const { orderId, paymentSessionId, amount, reused } = created.body.data;
+  assert.equal(amount, delivery.goodsAdvance.amount, 'amount is the booking advance, not from the app');
+  assert.equal(reused, false);
+  assert.ok(paymentSessionId.startsWith('session_'));
+  assert.equal(cf.orders.get(orderId).order_amount, amount);
+
+  const again = await advanceOrder(rider, rideId);
+  assert.equal(again.body.data.orderId, orderId);
+  assert.equal(again.body.data.reused, true);
+
+  const pending = await advanceVerify(rider, rideId, orderId);
+  assert.equal(pending.status, 200, pending.text);
+  assert.equal(pending.body.data.status, 'pending');
+  assert.equal((await t.m.Ride.findById(rideId).lean()).goodsAdvance.status, 'pending');
+
+  pay(orderId);
+  const [a, b] = await Promise.all([advanceVerify(rider, rideId, orderId), advanceVerify(rider, rideId, orderId)]);
+  assert.equal(a.status, 200, a.text);
+  assert.equal(b.status, 200, b.text);
+  assert.equal(a.body.data.paid, true);
+
+  const ride = await t.m.Ride.findById(rideId).lean();
+  assert.equal(ride.goodsAdvance.status, 'paid');
+  assert.equal(ride.goodsAdvance.provider, 'cashfree');
+  assert.equal(ride.goodsAdvance.providerOrderId, orderId);
+  assert.ok(ride.goodsAdvance.providerPaymentId);
+  assert.equal((await PaymentOrder.findOne({ orderId })).status, 'applied');
+  await waitFor(() => driverSocket.of('rideRequest').length >= 1, { message: 'paid advance dispatches the request' });
+  assert.equal(cf.refunds.filter((r) => r.orderId === orderId).length, 0);
+});
+
+test('goods advance: the webhook alone (app never verifies) marks it paid and dispatches', async () => {
+  const { rider, driver, rideId } = await goodsSetup();
+  const driverSocket = await t.connectSocket(driver.token);
+  const { orderId } = (await advanceOrder(rider, rideId)).body.data;
+  pay(orderId);
+  const res = await webhook(orderId);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal((await t.m.Ride.findById(rideId).lean()).goodsAdvance.status, 'paid');
+  await waitFor(() => driverSocket.of('rideRequest').length >= 1, { message: 'webhook dispatched the request' });
+});
+
+test('goods advance: nobody else can create or verify it; a closed booking refunds the payment once', async () => {
+  const { rider, rideId } = await goodsSetup();
+  const other = await t.factories.user();
+  assert.equal((await advanceOrder(other, rideId)).status, 404);
+
+  const { orderId } = (await advanceOrder(rider, rideId)).body.data;
+  assert.equal((await advanceVerify(other, rideId, orderId)).status, 404);
+
+  // the booking is cancelled while the rider is paying
+  await t.m.Ride.updateOne({ _id: rideId }, { $set: { status: 'cancelled' } });
+  pay(orderId);
+  const res = await advanceVerify(rider, rideId, orderId);
+  assert.equal(res.status, 409, res.text);
+  assert.equal(res.body.code ?? res.body.data?.code ?? 'payment_refunded', 'payment_refunded');
+  await advanceVerify(rider, rideId, orderId);
+  assert.equal(cf.refunds.filter((r) => r.orderId === orderId).length, 1, 'refunded exactly once');
+  assert.equal((await t.m.Ride.findById(rideId).lean()).goodsAdvance.status, 'pending', 'advance was not marked paid');
+});
+
+test('goods advance paid through Cashfree is refunded to the original payment when the booking is refunded', async () => {
+  const { rider, rideId } = await goodsSetup();
+  const { orderId, amount } = (await advanceOrder(rider, rideId)).body.data;
+  pay(orderId);
+  assert.equal((await advanceVerify(rider, rideId, orderId)).status, 200);
+
+  const { refundGoodsAdvance } = await import('../../src/modules/taxi/user/services/goodsAdvanceService.js');
+  const result = await refundGoodsAdvance({ rideId, reason: 'no_driver_found', deps: { getConfig: async () => ({ refundTo: 'source' }) } });
+  assert.equal(result.refunded, true);
+  assert.equal(result.destination, 'source');
+  const refunds = cf.refunds.filter((r) => r.orderId === orderId);
+  assert.equal(refunds.length, 1);
+  assert.equal(refunds[0].refund_amount, amount);
+  assert.equal(refunds[0].refund_id, `rfga_${orderId}`);
+  assert.equal((await t.m.Ride.findById(rideId).lean()).goodsAdvance.status, 'refunded');
+
+  const second = await refundGoodsAdvance({ rideId, reason: 'again', deps: { getConfig: async () => ({ refundTo: 'source' }) } });
+  assert.equal(second.refunded, false);
+  assert.equal(cf.refunds.filter((r) => r.orderId === orderId).length, 1);
 });

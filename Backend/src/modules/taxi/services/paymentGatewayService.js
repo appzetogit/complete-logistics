@@ -190,6 +190,13 @@ export const getPublicActivePaymentGateway = async () => {
           : activeGateway.slug === 'phone_pay'
             ? 'phonepe_redirect'
             : 'unsupported',
+      // Goods booking advance (paid when the delivery is booked)
+      goodsAdvanceMode:
+        activeGateway.slug === 'razor_pay'
+          ? 'razorpay_checkout'
+          : activeGateway.slug === 'cashfree'
+            ? 'cashfree_checkout'
+            : 'unsupported',
       ridePaymentMode:
         activeGateway.slug === 'razor_pay'
           ? 'razorpay_checkout'

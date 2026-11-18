@@ -15,7 +15,7 @@ const paymentOrderSchema = new mongoose.Schema(
   {
     orderId: { type: String, required: true, unique: true, trim: true },
     gateway: { type: String, required: true, trim: true, index: true },
-    purpose: { type: String, enum: ['user_wallet_topup', 'driver_wallet_topup', 'ride_payment'], required: true },
+    purpose: { type: String, enum: ['user_wallet_topup', 'driver_wallet_topup', 'ride_payment', 'goods_advance'], required: true },
     ownerType: { type: String, enum: ['user', 'driver'], required: true },
     ownerId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
     amount: { type: Number, required: true, min: 0 },

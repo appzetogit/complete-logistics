@@ -14,6 +14,9 @@ import {
   recordOptionalRating,
   validateRideCompletionFeedback,
 } from '../../user/controllers/rideController.js';
+import { serializeDeliveryRealtime } from '../../user/services/deliveryService.js';
+import { getRemainingFare } from '../../user/services/goodsAdvanceService.js';
+import { startDispatchFlow } from '../../services/dispatchService.js';
 import { buildUserWalletPayload, ensureUserWallet, normalizeMoneyAmount } from '../../user/controllers/userController.js';
 import { PaymentOrder, PAYMENT_ORDER_STATUS } from '../models/PaymentOrder.js';
 import {
@@ -235,6 +238,93 @@ export const verifyRideCompletionOrder = async (req, res) => {
 
   await recordOptionalRating({ rideId, userId: req.auth.sub, rating, comment });
   res.json({ success: true, data: { ...statusPayload(settled), ride: await getRideDetails(rideId) } });
+};
+
+// ---- goods advance (booking time) ------------------------------------------------------------------------------
+
+const money2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+
+export const createGoodsAdvanceCashfreeOrder = async (req, res) => {
+  const rideId = String(req.body?.rideId || '').trim();
+  const notFound = () => new ApiError(404, 'Goods booking with an advance was not found');
+  if (!mongoose.isValidObjectId(rideId)) throw notFound();
+
+  const ride = await Ride.findOne({ _id: rideId, userId: req.auth.sub, serviceType: 'parcel' }).lean();
+  if (!ride || !ride.goodsAdvance || ride.goodsAdvance.status === 'none') throw notFound();
+  if (ride.goodsAdvance.status !== 'pending' || ride.status !== 'searching') {
+    throw new ApiError(409, 'The advance for this booking is not payable');
+  }
+
+  // the amount is the booking's own advance, never something the app sends
+  const amount = money2(ride.goodsAdvance.amount);
+  const remainingAmount = getRemainingFare(ride);
+
+  // A double tap (or reopening the pay sheet) gets the same open order, so the rider can never pay two.
+  const openId = ride.goodsAdvance.provider === 'cashfree' ? ride.goodsAdvance.providerOrderId : '';
+  if (openId) {
+    const existing = await PaymentOrder.findOne({ orderId: openId, gateway: 'cashfree', purpose: 'goods_advance', status: PAYMENT_ORDER_STATUS.CREATED }).lean();
+    if (existing?.paymentSessionId && Math.round(existing.amount * 100) === Math.round(amount * 100)) {
+      res.status(201).json({
+        success: true,
+        data: { orderId: existing.orderId, paymentSessionId: existing.paymentSessionId, amount: existing.amount, currency: 'INR', advanceAmount: amount, remainingAmount, reused: true },
+      });
+      return;
+    }
+  }
+
+  const user = await User.findById(req.auth.sub).select('name phone email').lean();
+  const order = await createGatewayOrder({
+    purpose: 'goods_advance',
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    amount,
+    customer: customerOf(user),
+    context: { rideId },
+    notifyUrl: notifyUrlFor(req),
+  });
+
+  // Only the latest order is the one the booking points at (older ones are still settled by webhook/reconcile).
+  await Ride.updateOne(
+    { _id: ride._id, 'goodsAdvance.status': 'pending' },
+    {
+      $set: { 'goodsAdvance.provider': 'cashfree', 'goodsAdvance.providerOrderId': order.orderId },
+      $addToSet: { 'goodsAdvance.providerOrderIds': order.orderId },
+    },
+  );
+
+  res.status(201).json({ success: true, data: { ...order, advanceAmount: amount, remainingAmount, reused: false } });
+};
+
+export const verifyGoodsAdvanceCashfreeOrder = async (req, res) => {
+  const rideId = String(req.body?.rideId || '').trim();
+  if (!mongoose.isValidObjectId(rideId)) throw new ApiError(404, 'Goods booking with an advance was not found');
+
+  const order = await loadOwnOrder({
+    orderId: req.body?.orderId,
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    purpose: 'goods_advance',
+  });
+  // An order opened for one booking can never pay another.
+  if (String(order.context?.rideId || '') !== rideId) {
+    throw new ApiError(400, 'This payment was not made for this booking');
+  }
+
+  const settled = await settlePaymentOrder(order.orderId);
+
+  if (['refunded', 'refund_pending'].includes(settled.status)) {
+    throw new ApiError(409, 'This booking is no longer open. The payment is being refunded.', {
+      code: 'payment_refunded',
+      status: settled.status,
+    });
+  }
+
+  const detailed = await getRideDetails(rideId);
+  // Idempotent: a no-op if dispatch is already running or the ride was taken.
+  if (settled.status !== 'pending' && detailed.status === 'searching' && !detailed.driverId) {
+    await startDispatchFlow(detailed);
+  }
+  res.json({ success: true, data: { ...statusPayload(settled), delivery: serializeDeliveryRealtime(detailed) } });
 };
 
 // ---- webhook ---------------------------------------------------------------------------------------------------
