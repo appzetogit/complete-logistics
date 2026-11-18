@@ -1,3 +1,4 @@
+import { tagRideArea } from './serviceAreaService.js';
 import mongoose from 'mongoose';
 import { isDataUrl } from '../../../utils/localImageStore.js';
 import { ApiError } from '../../../utils/ApiError.js';
@@ -1362,6 +1363,8 @@ export const createRideRecord = async ({
   let createdRide;
   try {
     createdRide = await createRideDocuments();
+    // state-wise admin view: remember the city of this ride (and of a rider who has none yet); never blocks a booking
+    await tagRideArea({ ride: createdRide, userId, zoneId: resolvedZoneId, serviceLocationId: resolvedServiceLocationId });
   } catch (error) {
     if (walletHold) {
       // If the ride document was saved after all, release through its claim (so a later cancel cannot release it

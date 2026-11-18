@@ -39,6 +39,8 @@ import { RentalVehicleType } from '../models/RentalVehicleType.js';
 import { RentalQuoteRequest } from '../models/RentalQuoteRequest.js';
 import { SetPrice } from '../models/SetPrice.js';
 import { ServiceLocation } from '../models/ServiceLocation.js';
+import { State } from '../models/State.js';
+import { clearAdminScopeCache, getActiveScope, getScopedLocationIds, isLocationInScope } from './adminScopeService.js';
 import { ServiceCenterStaff } from '../models/ServiceCenterStaff.js';
 import { ServiceStore } from '../models/ServiceStore.js';
 import { Vehicle } from '../models/Vehicle.js';
@@ -93,9 +95,11 @@ let publicVehicleCatalogCache = {
   value: null,
 };
 const DASHBOARD_CACHE_TTL_MS = 60 * 1000;
-let dashboardCache = {
-  expiresAt: 0,
-  value: null,
+// One snapshot per admin scope (all states, or one set of cities): a state admin must never get another view's totals.
+const dashboardCache = new Map();
+const dashboardCacheKey = () => {
+  const ids = getScopedLocationIds();
+  return ids ? `scope:${[...ids].sort().join(',')}` : 'all';
 };
 
 const deepMerge = (target, source) => {
@@ -276,11 +280,16 @@ const normalizeObjectIdList = (values = []) =>
     .map(toObjectId)
     .filter(Boolean);
 
-const getAdminScope = (admin = {}) => ({
-  adminType: normalizeAdminType(admin.admin_type || admin.role),
-  serviceLocationIds: normalizeObjectIdList(admin.service_location_ids),
-  zoneIds: normalizeObjectIdList(admin.zone_ids),
-});
+// The cities an admin request may touch. For a state/city-limited request that is the resolved scope (assigned
+// states + cities + zones, narrowed by the panel's state selector); otherwise the cities on the account.
+const getAdminScope = (admin = {}) => {
+  const active = getActiveScope();
+  return {
+    adminType: normalizeAdminType(admin.admin_type || admin.role),
+    serviceLocationIds: active ? active.locationIds : normalizeObjectIdList(admin.service_location_ids),
+    zoneIds: normalizeObjectIdList(admin.zone_ids),
+  };
+};
 
 const isSuperAdmin = (admin = {}) => getAdminScope(admin).adminType === 'superadmin';
 
@@ -303,7 +312,7 @@ const getScopedZoneIds = async (admin = {}) => {
 
   const zoneIdsFromLocations = await Zone.find({
     service_location_id: { $in: serviceLocationIds },
-  }).distinct('_id');
+  }).setOptions({ skipAdminScope: true }).distinct('_id');
 
   return zoneIdsFromLocations.map((value) => toObjectId(value)).filter(Boolean);
 };
@@ -382,7 +391,8 @@ const assertZoneAccess = async (admin = {}, zoneId) => {
   }
 };
 
-const serializeAdminSummary = (admin, serviceLocationMap = new Map(), zoneMap = new Map()) => {
+const serializeAdminSummary = (admin, serviceLocationMap = new Map(), zoneMap = new Map(), stateMap = new Map()) => {
+  const stateIds = normalizeObjectIdList(admin.state_ids).map(String);
   const serviceLocationIds = normalizeObjectIdList(admin.service_location_ids).map(String);
   const zoneIds = normalizeObjectIdList(admin.zone_ids).map(String);
 
@@ -395,6 +405,11 @@ const serializeAdminSummary = (admin, serviceLocationMap = new Map(), zoneMap = 
     role: admin.role || '',
     admin_type: normalizeAdminType(admin.admin_type || admin.role),
     permissions: normalizeAdminPermissions(admin.permissions || []),
+    state_ids: stateIds,
+    states: stateIds
+      .map((id) => stateMap.get(id))
+      .filter(Boolean)
+      .map((item) => ({ id: String(item._id), name: item.name || '', code: item.code || '' })),
     service_location_ids: serviceLocationIds,
     zone_ids: zoneIds,
     service_locations: serviceLocationIds
@@ -432,6 +447,12 @@ const enrichAdminSummaries = async (admins = []) => {
     ),
   ];
 
+  const stateIds = [...new Set(admins.flatMap((admin) => normalizeObjectIdList(admin.state_ids).map(String)))];
+  const states = stateIds.length > 0
+    ? await State.find({ _id: { $in: stateIds } }).select('_id name code').lean()
+    : [];
+  const stateMap = new Map(states.map((item) => [String(item._id), item]));
+
   const [serviceLocations, zones] = await Promise.all([
     serviceLocationIds.length > 0
       ? ServiceLocation.find({ _id: { $in: serviceLocationIds } })
@@ -448,7 +469,7 @@ const enrichAdminSummaries = async (admins = []) => {
   const serviceLocationMap = new Map(serviceLocations.map((item) => [String(item._id), item]));
   const zoneMap = new Map(zones.map((item) => [String(item._id), item]));
 
-  return admins.map((admin) => serializeAdminSummary(admin, serviceLocationMap, zoneMap));
+  return admins.map((admin) => serializeAdminSummary(admin, serviceLocationMap, zoneMap, stateMap));
 };
 
 const normalizeDriverAccountType = (value) => {
@@ -2940,8 +2961,12 @@ const normalizeServiceLocationPayload = (payload = {}, fallback = {}) => {
   const currencyCode = String(payload.currency_code ?? fallback.currency_code ?? 'INR').toUpperCase();
   const status = payload.status ?? fallback.status ?? 'active';
 
+  const rawState = payload.state_id !== undefined ? payload.state_id : fallback.state_id;
+  const stateId = rawState && mongoose.isValidObjectId(String(rawState?._id || rawState)) ? String(rawState?._id || rawState) : null;
+
   return {
     name,
+    state_id: stateId,
     service_location_name: name,
     address: payload.address ?? fallback.address ?? '',
     country: payload.country ?? fallback.country ?? 'India',
@@ -3490,12 +3515,33 @@ export const listAdminPermissions = async () =>
 export const listAdmins = async (currentAdmin) => {
   assertAdminPermission(currentAdmin, 'subadmins.manage', 'subadmins');
 
-  const admins = await Admin.find()
+  let admins = await Admin.find()
     .select('-resetPasswordOtp -resetPasswordExpires')
     .sort({ createdAt: -1 })
     .lean();
 
+  // A state/city-limited admin only sees the sub-admins whose area is inside their own.
+  if (getActiveScope()) {
+    const inside = await Promise.all(admins.map(async (item) => {
+      if (normalizeAdminType(item.admin_type || item.role) === 'superadmin') return false;
+      const locations = await resolveAssignedLocationIds(item);
+      return locations.length > 0 && locations.every((id) => isLocationInScope(id));
+    }));
+    admins = admins.filter((_, index) => inside[index]);
+  }
+
   return enrichAdminSummaries(admins);
+};
+
+// Every service location an admin account reaches: assigned states, cities and zones.
+const resolveAssignedLocationIds = async ({ state_ids = [], service_location_ids = [], zone_ids = [] } = {}) => {
+  const stateLocations = state_ids.length > 0
+    ? await ServiceLocation.find({ state_id: { $in: normalizeObjectIdList(state_ids) } }).setOptions({ skipAdminScope: true }).distinct('_id')
+    : [];
+  const zoneLocations = zone_ids.length > 0
+    ? await Zone.find({ _id: { $in: normalizeObjectIdList(zone_ids) } }).setOptions({ skipAdminScope: true }).distinct('service_location_id')
+    : [];
+  return [...new Set([...service_location_ids, ...stateLocations, ...zoneLocations].filter(Boolean).map(String))];
 };
 
 const validateSubadminPayload = async (payload = {}, existingAdminId = null, currentAdmin = null) => {
@@ -3512,6 +3558,7 @@ const validateSubadminPayload = async (payload = {}, existingAdminId = null, cur
   const permissions = normalizeAdminPermissions(
     adminType === 'superadmin' ? [SUPERADMIN_PERMISSION] : payload.permissions || [],
   );
+  const stateIds = normalizeObjectIdList(payload.state_ids);
   const serviceLocationIds = normalizeObjectIdList(payload.service_location_ids);
   const zoneIds = normalizeObjectIdList(payload.zone_ids);
   const active = payload.active === undefined ? true : normalizeBoolean(payload.active);
@@ -3540,8 +3587,15 @@ const validateSubadminPayload = async (payload = {}, existingAdminId = null, cur
     throw new ApiError(400, 'Select at least one permission for the subadmin');
   }
 
-  if (adminType === 'subadmin' && serviceLocationIds.length === 0) {
-    throw new ApiError(400, 'Assign at least one service location to the subadmin');
+  if (adminType === 'subadmin' && serviceLocationIds.length === 0 && stateIds.length === 0) {
+    throw new ApiError(400, 'Assign at least one state or service location to the subadmin');
+  }
+
+  if (stateIds.length > 0) {
+    const stateCount = await State.countDocuments({ _id: { $in: stateIds } });
+    if (stateCount !== stateIds.length) {
+      throw new ApiError(400, 'One or more selected states are invalid');
+    }
   }
 
   if (serviceLocationIds.length > 0) {
@@ -3559,9 +3613,18 @@ const validateSubadminPayload = async (payload = {}, existingAdminId = null, cur
 
     if (
       adminType === 'subadmin' &&
+      serviceLocationIds.length > 0 &&
       zones.some((zone) => !serviceLocationIds.some((id) => String(id) === String(zone.service_location_id || '')))
     ) {
       throw new ApiError(400, 'Assigned zones must belong to the selected service locations');
+    }
+  }
+
+  // An admin limited to some states / cities can only hand out access inside their own area.
+  if (getActiveScope() && adminType === 'subadmin') {
+    const reach = await resolveAssignedLocationIds({ state_ids: stateIds, service_location_ids: serviceLocationIds, zone_ids: zoneIds });
+    if (reach.length === 0 || !reach.every((id) => isLocationInScope(id))) {
+      throw new ApiError(403, 'You can only assign states and cities inside your own area');
     }
   }
 
@@ -3572,6 +3635,7 @@ const validateSubadminPayload = async (payload = {}, existingAdminId = null, cur
     phone,
     role,
     permissions,
+    state_ids: adminType === 'superadmin' ? [] : stateIds,
     service_location_ids: adminType === 'superadmin' ? [] : serviceLocationIds,
     zone_ids: adminType === 'superadmin' ? [] : zoneIds,
     active,
@@ -3635,6 +3699,7 @@ export const updateAdminAccount = async (currentAdmin, id, payload = {}) => {
   }
 
   await admin.save();
+  clearAdminScopeCache();
   const [serializedAdmin] = await enrichAdminSummaries([admin]);
   return serializedAdmin;
 };
@@ -6009,8 +6074,8 @@ export const listServiceLocations = async (currentAdmin = null) => {
   if (currentAdmin) {
     assertAdminPermission(currentAdmin, 'service_locations.view', 'service locations');
   }
-  const query = currentAdmin ? buildServiceLocationScopeQuery(currentAdmin) : {};
-  return ServiceLocation.find(query).sort({ createdAt: -1 }).lean();
+  // the active admin scope (state-wise view) already limits this query
+  return ServiceLocation.find({}).populate('state_id', 'name code').sort({ createdAt: -1 }).lean();
 };
 
 export const listCountries = async () => {
@@ -6093,6 +6158,7 @@ export const updateServiceLocation = async (id, payload, currentAdmin = null) =>
   }
   Object.assign(persistedLocation, normalizeServiceLocationPayload(payload, persistedLocation.toObject()));
   await persistedLocation.save();
+  clearAdminScopeCache();
   return persistedLocation.toObject();
 
   const state = await ensureAdminState();
@@ -8604,8 +8670,10 @@ export const getAdminEarnings = async (query = {}) => {
 };
 
 export const getDashboardData = async () => {
-  if (dashboardCache.value && dashboardCache.expiresAt > Date.now()) {
-    return dashboardCache.value;
+  const cacheKey = dashboardCacheKey();
+  const cachedDashboard = dashboardCache.get(cacheKey);
+  if (cachedDashboard && cachedDashboard.expiresAt > Date.now()) {
+    return cachedDashboard.value;
   }
 
   const [totalUsers, totalDrivers, totalOwners, approvedDrivers, rides, supportTicketStats] = await Promise.all([
@@ -8838,10 +8906,8 @@ export const getDashboardData = async () => {
       : 0,
   };
 
-  dashboardCache = {
-    expiresAt: Date.now() + DASHBOARD_CACHE_TTL_MS,
-    value: snapshot,
-  };
+  if (dashboardCache.size > 200) dashboardCache.clear();
+  dashboardCache.set(cacheKey, { expiresAt: Date.now() + DASHBOARD_CACHE_TTL_MS, value: snapshot });
 
   return snapshot;
 };
@@ -11782,4 +11848,82 @@ export const seedTransportTypes = async () => {
     }
   }
   return results;
+};
+
+// ---- states (state-wise admin view) ------------------------------------------------------------------------------
+
+const serializeState = (state, serviceLocationCount = 0) => ({
+  _id: state._id,
+  id: state._id,
+  name: state.name || '',
+  code: state.code || '',
+  status: state.status || (state.active === false ? 'inactive' : 'active'),
+  active: state.active !== false,
+  service_location_count: serviceLocationCount,
+  createdAt: state.createdAt || null,
+  updatedAt: state.updatedAt || null,
+});
+
+/** All states for a super admin; for a state/city-limited admin only the states their cities belong to. */
+export const listStates = async () => {
+  // ServiceLocation queries below are already limited by the active admin scope
+  const counts = await ServiceLocation.aggregate([{ $group: { _id: '$state_id', count: { $sum: 1 } } }]);
+  const countByState = new Map(counts.map((row) => [String(row._id || ''), row.count]));
+  const filter = getActiveScope()
+    ? { _id: { $in: normalizeObjectIdList(counts.map((row) => row._id).filter(Boolean)) } }
+    : {};
+  const states = await State.find(filter).sort({ name: 1 }).lean();
+  return states.map((state) => serializeState(state, countByState.get(String(state._id)) || 0));
+};
+
+const assertCanManageStates = (currentAdmin) => {
+  if (!isSuperAdmin(currentAdmin || {}) || getActiveScope()) {
+    throw new ApiError(403, 'Only the superadmin can manage states');
+  }
+};
+
+const normalizeStatePayload = (payload = {}, fallback = {}) => {
+  const name = String(payload.name ?? fallback.name ?? '').trim();
+  const code = String(payload.code ?? fallback.code ?? '').trim().toUpperCase();
+  const status = String(payload.status ?? fallback.status ?? 'active').trim().toLowerCase() === 'inactive' ? 'inactive' : 'active';
+  if (!name) throw new ApiError(400, 'State name is required');
+  if (!/^[A-Z0-9]{2,6}$/.test(code)) throw new ApiError(400, 'State code must be 2 to 6 letters or digits (for example MP)');
+  return { name, code, status, active: status === 'active' };
+};
+
+export const createState = async (currentAdmin, payload = {}) => {
+  assertCanManageStates(currentAdmin);
+  const data = normalizeStatePayload(payload);
+  if (await State.exists({ code: data.code })) throw new ApiError(409, 'A state with this code already exists');
+  const created = await State.create(data);
+  return serializeState(created.toObject(), 0);
+};
+
+export const updateState = async (currentAdmin, id, payload = {}) => {
+  assertCanManageStates(currentAdmin);
+  const state = await State.findById(id);
+  if (!state) throw new ApiError(404, 'State not found');
+  const data = normalizeStatePayload(payload, state.toObject());
+  if (data.code !== state.code && (await State.exists({ code: data.code, _id: { $ne: state._id } }))) {
+    throw new ApiError(409, 'A state with this code already exists');
+  }
+  Object.assign(state, data);
+  await state.save();
+  clearAdminScopeCache();
+  return serializeState(state.toObject(), await ServiceLocation.countDocuments({ state_id: state._id }));
+};
+
+export const deleteState = async (currentAdmin, id) => {
+  assertCanManageStates(currentAdmin);
+  const state = await State.findById(id).lean();
+  if (!state) throw new ApiError(404, 'State not found');
+  if (await ServiceLocation.exists({ state_id: state._id })) {
+    throw new ApiError(409, 'Move or remove the service locations of this state first');
+  }
+  if (await Admin.exists({ state_ids: state._id })) {
+    throw new ApiError(409, 'Remove this state from the admin accounts first');
+  }
+  await State.deleteOne({ _id: state._id });
+  clearAdminScopeCache();
+  return { deleted: true };
 };

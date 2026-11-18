@@ -173,12 +173,13 @@ export const bootstrap = async ({ smtpPort = 1, env: extraEnv = {} } = {}) => {
 
   const tokenFor = (id, role) => signAccessToken({ sub: String(id), role });
 
-  const api = async (method, path, { token, body } = {}) => {
+  const api = async (method, path, { token, body, headers = {} } = {}) => {
     const response = await fetch(`${baseUrl}/api${path}`, {
       method,
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });

@@ -62,6 +62,13 @@ const driverSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    // The driver's city for the state-wise admin view (copied from service_location_id when set, else from the zone).
+    area_location_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'TaxiServiceLocation',
+      default: null,
+      index: true,
+    },
     assignedFleetVehicleId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'TaxiFleetVehicle',

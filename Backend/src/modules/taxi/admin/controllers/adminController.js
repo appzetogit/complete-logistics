@@ -610,6 +610,20 @@ export const getReferralDashboard = asyncHandler(async (_req, res) =>
   ok(res, await adminService.getReferralDashboard()),
 );
 
+export const getStates = asyncHandler(async (_req, res) => ok(res, await adminService.listStates()));
+
+export const createState = asyncHandler(async (req, res) =>
+  ok(res, await adminService.createState(req.auth?.admin, req.body)),
+);
+
+export const updateState = asyncHandler(async (req, res) =>
+  ok(res, await adminService.updateState(req.auth?.admin, req.params.id, req.body)),
+);
+
+export const deleteState = asyncHandler(async (req, res) =>
+  ok(res, await adminService.deleteState(req.auth?.admin, req.params.id)),
+);
+
 export const getServiceLocations = asyncHandler(async (req, res) =>
   ok(res, await adminService.listServiceLocations(req.auth?.admin)),
 );

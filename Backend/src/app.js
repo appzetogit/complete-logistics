@@ -1,3 +1,5 @@
+// must be first: registers the admin-scope plugin before any model is compiled
+import './modules/taxi/admin/services/adminScopeMongoose.js';
 import cors from 'cors';
 import express from 'express';
 import morgan from 'morgan';

@@ -654,6 +654,13 @@ const rideSchema = new mongoose.Schema(
       ref: 'TaxiServiceLocation',
       default: null,
     },
+    // The city of the pickup. Only drives the state-wise admin view (never dispatch or pricing, unlike service_location_id).
+    area_location_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'TaxiServiceLocation',
+      default: null,
+      index: true,
+    },
     transport_type: {
       type: String,
       enum: ['taxi', 'delivery', 'intercity', 'all'],

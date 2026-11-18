@@ -1,3 +1,4 @@
+import StateSelector from './StateSelector.jsx';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -832,6 +833,7 @@ const AdminLayout = () => {
             label: 'Admin Management',
             subItems: [
               { label: 'Admins', path: '/admin/management/admins', permission: 'subadmins.manage' },
+              { label: 'States', path: '/admin/management/states', permission: 'subadmins.manage' },
             ],
           },
           { icon: Home, label: 'Dashboard', path: '/admin/dashboard', permission: 'dashboard.view' },
@@ -1501,6 +1503,7 @@ const AdminLayout = () => {
     socketService.disconnect();
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminInfo');
+    localStorage.removeItem('adminSelectedState');
     setIsUserMenuOpen(false);
     navigate('/admin/login');
   };
@@ -1902,6 +1905,7 @@ const AdminLayout = () => {
               </div>
             </div>
 
+            <StateSelector />
             <ModeSwitcher mode={mode} setMode={setMode} />
             <div className="h-6 w-px bg-slate-200 mx-1"></div>
 

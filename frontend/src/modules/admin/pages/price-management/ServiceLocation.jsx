@@ -36,6 +36,7 @@ const ADMIN_LANGUAGE_OPTIONS = ['English', 'Hindi', 'Arabic', 'French', 'Spanish
 
 const defaultFormData = {
   name: '',
+  state_id: '',
   country: '',
   currency_code: '',
   currency_symbol: '',
@@ -66,6 +67,7 @@ const ServiceLocation = ({ mode }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeLangTab, setActiveLangTab] = useState('English');
   const [formData, setFormData] = useState(defaultFormData);
+  const [states, setStates] = useState([]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -98,6 +100,9 @@ const ServiceLocation = ({ mode }) => {
 
       setLocations(uniqueNextLocations);
       setCountries(Array.isArray(nextCountries) ? nextCountries : []);
+      adminService.getStates().then((stateRes) => {
+        setStates(Array.isArray(stateRes?.data) ? stateRes.data : stateRes?.data?.results || []);
+      }).catch(() => setStates([]));
       
       if (isEdit && id) {
         const item = nextLocations.find(l => String(l._id || l.id) === String(id));
@@ -105,6 +110,7 @@ const ServiceLocation = ({ mode }) => {
           const matchedCountry = nextCountries.find(c => (c._id || c.id) === item.country || c.name === item.country || c.name === item.country?.name);
           setFormData({
             name: item.name || item.service_location_name || '',
+            state_id: String(item.state_id?._id || item.state_id || ''),
             country: matchedCountry?._id || matchedCountry?.id || '',
             currency_code: item.currency_code || '',
             currency_symbol: item.currency_symbol || '',
@@ -671,7 +677,20 @@ const ServiceLocation = ({ mode }) => {
                     />
                  </div>
 
-                 <div className="md:col-span-1 border-0" />
+                 <div className="md:col-span-1 space-y-2">
+                    <label className={labelClass}>State</label>
+                    <div className="relative">
+                      <select
+                         value={formData.state_id}
+                         onChange={(e) => setFormData(p => ({ ...p, state_id: e.target.value }))}
+                         className={inputClass + " appearance-none cursor-pointer"}
+                      >
+                         <option value="">No state</option>
+                         {states.map(s => <option key={s._id || s.id} value={s._id || s.id}>{s.name} ({s.code})</option>)}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                    </div>
+                 </div>
 
                  <div className="space-y-2">
                     <label className={labelClass}>Select Country <span className="text-rose-400">*</span></label>

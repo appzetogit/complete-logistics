@@ -16,6 +16,7 @@ const initialForm = {
   role: 'Operations Subadmin',
   admin_type: 'subadmin',
   permissions: [],
+  state_ids: [],
   service_location_ids: [],
   zone_ids: [],
   password: '',
@@ -49,6 +50,7 @@ const AdminCreate = () => {
   const { id } = useParams();
   const isEdit = Boolean(id);
   const [form, setForm] = useState(initialForm);
+  const [states, setStates] = useState([]);
   const [serviceLocations, setServiceLocations] = useState([]);
   const [zones, setZones] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -60,7 +62,8 @@ const AdminCreate = () => {
     const load = async () => {
       setLoading(true);
       try {
-        const [serviceLocationResponse, zoneResponse, adminResponse] = await Promise.all([
+        const [stateResponse, serviceLocationResponse, zoneResponse, adminResponse] = await Promise.all([
+          adminService.getStates().catch(() => ({ data: [] })),
           adminService.getServiceLocations(),
           adminService.getZones(),
           isEdit ? adminService.getAdmins() : Promise.resolve(null),
@@ -73,6 +76,7 @@ const AdminCreate = () => {
           ? zoneResponse.data.results
           : zoneResponse?.data?.results || [];
 
+        setStates(Array.isArray(stateResponse?.data) ? stateResponse.data : stateResponse?.data?.results || []);
         setServiceLocations(nextServiceLocations);
         setZones(nextZones);
 
@@ -92,6 +96,7 @@ const AdminCreate = () => {
             role: existingAdmin.role || 'Operations Subadmin',
             admin_type: existingAdmin.admin_type || 'subadmin',
             permissions: Array.isArray(existingAdmin.permissions) ? existingAdmin.permissions.filter((item) => item !== '*') : [],
+            state_ids: Array.isArray(existingAdmin.state_ids) ? existingAdmin.state_ids : [],
             service_location_ids: Array.isArray(existingAdmin.service_location_ids) ? existingAdmin.service_location_ids : [],
             zone_ids: Array.isArray(existingAdmin.zone_ids) ? existingAdmin.zone_ids : [],
             password: '',
@@ -115,15 +120,22 @@ const AdminCreate = () => {
     }
 
     const serviceLocationSet = new Set((form.service_location_ids || []).map(String));
+    // the cities of the selected states are in scope too
+    const stateSet = new Set((form.state_ids || []).map(String));
+    serviceLocations.forEach((location) => {
+      const stateId = String(location.state_id?._id || location.state_id || '');
+      if (stateId && stateSet.has(stateId)) serviceLocationSet.add(String(location._id || location.id || ''));
+    });
     return zones.filter((zone) => serviceLocationSet.has(String(zone.service_location_id || '')));
-  }, [form.admin_type, form.service_location_ids, zones]);
+  }, [form.admin_type, form.service_location_ids, form.state_ids, serviceLocations, zones]);
 
   useEffect(() => {
     if (form.admin_type === 'superadmin') {
-      if (form.permissions.length > 0 || form.service_location_ids.length > 0 || form.zone_ids.length > 0) {
+      if (form.permissions.length > 0 || form.state_ids.length > 0 || form.service_location_ids.length > 0 || form.zone_ids.length > 0) {
         setForm((current) => ({
           ...current,
           permissions: [],
+          state_ids: [],
           service_location_ids: [],
           zone_ids: [],
         }));
@@ -136,7 +148,7 @@ const AdminCreate = () => {
       ...current,
       zone_ids: current.zone_ids.filter((zoneId) => allowedZoneIds.has(String(zoneId))),
     }));
-  }, [form.admin_type, form.permissions.length, form.service_location_ids.length, form.zone_ids.length, visibleZones]);
+  }, [form.admin_type, form.permissions.length, form.state_ids.length, form.service_location_ids.length, form.zone_ids.length, visibleZones]);
 
   const handlePermissionToggle = (permission) => {
     setForm((current) => ({
@@ -186,6 +198,7 @@ const AdminCreate = () => {
       role: form.admin_type === 'superadmin' ? 'superadmin' : form.role.trim(),
       admin_type: form.admin_type,
       permissions: form.admin_type === 'superadmin' ? [] : form.permissions,
+      state_ids: form.admin_type === 'superadmin' ? [] : form.state_ids,
       service_location_ids: form.admin_type === 'superadmin' ? [] : form.service_location_ids,
       zone_ids: form.admin_type === 'superadmin' ? [] : form.zone_ids,
       active: form.active,
@@ -414,6 +427,28 @@ const AdminCreate = () => {
                 </div>
               ) : (
                 <div className="space-y-6">
+                  <div>
+                    <div className={labelClass}>Assigned States</div>
+                    <p className="mb-3 text-xs font-semibold text-slate-500">A state gives access to all of its cities, now and later. Add single cities below only if the state is not enough.</p>
+                    {states.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-xs font-bold text-slate-500">No states yet. Add them under Management → States.</div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        {states.map((state) => {
+                          const value = String(state._id || state.id || '');
+                          return (
+                            <PermissionCheckbox
+                              key={value}
+                              checked={form.state_ids.includes(value)}
+                              label={`${state.name} • ${state.code}`}
+                              onChange={() => handleMultiSelect('state_ids', value)}
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
                   <div>
                     <div className={labelClass}>Assigned Service Locations</div>
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

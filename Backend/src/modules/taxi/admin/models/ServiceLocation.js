@@ -87,6 +87,13 @@ const serviceLocationSchema = new mongoose.Schema(
         default: [75.8577, 22.7196],
       },
     },
+    // the state this city is in (admins can be limited to states)
+    state_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'TaxiState',
+      default: null,
+      index: true,
+    },
     status: {
       type: String,
       enum: ['active', 'inactive'],

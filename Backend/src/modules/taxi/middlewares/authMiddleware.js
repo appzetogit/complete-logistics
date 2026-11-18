@@ -8,6 +8,7 @@ import { BusDriver } from '../driver/models/BusDriver.js';
 import { PoolingVehicle } from '../admin/models/PoolingVehicle.js';
 import { User } from '../user/models/User.js';
 import { verifyAccessToken } from '../services/tokenService.js';
+import { resolveAdminScope, runWithAdminScope } from '../admin/services/adminScopeService.js';
 import {
   normalizeAdminPermissions,
   normalizeAdminType,
@@ -46,7 +47,7 @@ const attachResolvedAuth = (req, payload) => {
 // building a full document per request is pure overhead on every endpoint.
 // Mirrors what socket/middleware/socketAuth.js already does.
 const AUTH_ENTITY_FIELDS =
-  '_id active admin_type approve deletedAt email isActive name permissions poolingEnabled role service_location_ids status tokensRevokedAt zone_ids';
+  '_id active admin_type approve deletedAt email isActive name permissions poolingEnabled role service_location_ids state_ids status tokensRevokedAt zone_ids';
 
 /** True when the token was issued before the account logged out (JWT `iat` is in whole seconds). */
 export const isTokenRevoked = (payload, entity) => {
@@ -174,6 +175,9 @@ export const authenticate = (allowedRoles = [], options = {}) => async (req, _re
         service_location_ids: Array.isArray(entity.service_location_ids)
           ? entity.service_location_ids.map((item) => String(item))
           : [],
+        state_ids: Array.isArray(entity.state_ids)
+          ? entity.state_ids.map((item) => String(item))
+          : [],
         zone_ids: Array.isArray(entity.zone_ids)
           ? entity.zone_ids.map((item) => String(item))
           : [],
@@ -183,6 +187,19 @@ export const authenticate = (allowedRoles = [], options = {}) => async (req, _re
 
       if (req.auth.admin.active === false || String(req.auth.admin.status).toLowerCase() === 'inactive') {
         throw new ApiError(403, 'Admin account is inactive');
+      }
+
+      // State-wise view: from here on every query on a scoped model is limited to the admin's area (and to the
+      // state picked in the panel's selector, header x-admin-state).
+      const scope = await resolveAdminScope({
+        admin: req.auth.admin,
+        isSuperAdmin: req.auth.admin.admin_type === 'superadmin',
+        selectedState: req.headers['x-admin-state'],
+      });
+      req.auth.adminScope = scope;
+      if (scope.restricted) {
+        runWithAdminScope(scope, () => next());
+        return;
       }
     }
 

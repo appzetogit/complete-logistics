@@ -33,6 +33,10 @@ import {
   createPaymentMethod,
   createPoolingRoute,
   createServiceLocation,
+  createState,
+  deleteState,
+  getStates,
+  updateState,
   createServiceStore,
   createServiceStoreStaff,
   createRentalVehicleType,
@@ -376,6 +380,10 @@ adminRouter.delete('/admin/user-subscriptions/plans/:id', deleteCustomerSubscrip
 
 adminRouter.get('/countries', getCountries);
 adminRouter.get('/admin/countries', getCountries);
+adminRouter.get('/admin/states', getStates);
+adminRouter.post('/admin/states', createState);
+adminRouter.patch('/admin/states/:id', updateState);
+adminRouter.delete('/admin/states/:id', deleteState);
 adminRouter.get('/admin/service-locations', getServiceLocations);
 adminRouter.get('/admin/service-locations/nearby', getNearbyServiceLocations);
 adminRouter.post('/admin/service-locations', createServiceLocation);

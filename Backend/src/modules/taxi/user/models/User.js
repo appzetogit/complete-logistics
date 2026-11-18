@@ -152,6 +152,13 @@ const userSchema = new mongoose.Schema(
         default: null,
       },
     },
+    // The city this rider belongs to (set from the pickup of their first ride). Only drives the state-wise admin view.
+    area_location_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'TaxiServiceLocation',
+      default: null,
+      index: true,
+    },
     // Tokens issued before this moment are no longer accepted (set by logout).
     tokensRevokedAt: {
       type: Date,

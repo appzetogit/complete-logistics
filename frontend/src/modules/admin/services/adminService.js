@@ -127,6 +127,10 @@ export const adminService = {
   /**
    * Common / Configuration Data
    */
+  getStates: () => api.get('/admin/states'),
+  createState: (data) => api.post('/admin/states', data),
+  updateState: (id, data) => api.patch(`/admin/states/${id}`, data),
+  deleteState: (id) => api.delete(`/admin/states/${id}`),
   getServiceLocations: () => api.get('/admin/service-locations'),
   createServiceLocation: (data) => api.post('/admin/service-locations', data),
   updateServiceLocation: (id, data) => api.patch(`/admin/service-locations/${id}`, data),
