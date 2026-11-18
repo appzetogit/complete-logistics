@@ -2545,7 +2545,8 @@ export const updateRideLifecycle = async ({
   return populatedRide;
 };
 
-export const appendRideMessage = async ({ rideId, role, senderId, message }) => {
+// Same as appendRideMessage, plus the ride's two participants (for the "new message" push).
+export const appendRideMessageWithParticipants = async ({ rideId, role, senderId, message }) => {
   const trimmedMessage = String(message || '').trim();
 
   if (!trimmedMessage) {
@@ -2579,14 +2580,23 @@ export const appendRideMessage = async ({ rideId, role, senderId, message }) => 
   const latestMessage = ride.messages[ride.messages.length - 1];
 
   return {
-    id: String(latestMessage._id),
-    rideId: String(ride._id),
-    senderRole: latestMessage.senderRole,
-    senderId: String(latestMessage.senderId),
-    message: latestMessage.message,
-    sentAt: latestMessage.sentAt,
+    message: {
+      id: String(latestMessage._id),
+      rideId: String(ride._id),
+      senderRole: latestMessage.senderRole,
+      senderId: String(latestMessage.senderId),
+      message: latestMessage.message,
+      sentAt: latestMessage.sentAt,
+    },
+    participants: {
+      userId: ride.userId ? String(ride.userId) : '',
+      driverId: ride.driverId ? String(ride.driverId) : '',
+      status: ride.status,
+    },
   };
 };
+
+export const appendRideMessage = async (args) => (await appendRideMessageWithParticipants(args)).message;
 
 // GPS points closer than this are jitter, and a jump faster than this is a bad fix: neither adds distance.
 const TRAVEL_MIN_STEP_METERS = 3;

@@ -55,3 +55,14 @@ test('the cache is bounded and still serves recent tokens', () => {
   // Evicted or not, a real token must still verify correctly.
   assert.equal(verifyAccessToken(recent).sub, 'user-recent');
 });
+
+test('app roles stay logged in ~90 days, the admin panel keeps the short lifetime', () => {
+  const days = (token) => {
+    const { iat, exp } = jwt.decode(token);
+    return Math.round((exp - iat) / 86400);
+  };
+  for (const role of ['user', 'driver', 'owner', 'bus_driver', 'pooling_driver']) {
+    assert.equal(days(signAccessToken({ sub: 'x', role })), 90, role);
+  }
+  assert.equal(days(signAccessToken({ sub: 'x', role: 'admin' })), 7);
+});

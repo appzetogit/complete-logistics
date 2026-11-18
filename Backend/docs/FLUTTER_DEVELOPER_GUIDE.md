@@ -14,7 +14,7 @@ confirm karna ho to route files dekhein: `user/routes`, `driver/routes`, `socket
 | Health check | `GET {PUBLIC_BACKEND_URL}/health` |
 | Content type | `application/json` (body limit 25 MB) |
 | Auth header | `Authorization: Bearer <token>` |
-| Token expiry | 7 din (`JWT_EXPIRES_IN`). Refresh token nahi hai – expire hone par dobara login |
+| Token expiry | Rider/driver/owner apps: 90 din (`JWT_APP_EXPIRES_IN`), admin panel: 7 din (`JWT_EXPIRES_IN`). Refresh token nahi hai – expire hone par dobara login |
 | Realtime | Socket.IO, same host. Token: `auth: { token }` |
 
 ### Response format

@@ -117,7 +117,7 @@ const ensureUserWallet = async (userId, session = null) => {
   );
 };
 
-const buildCompletionAmounts = (ride, tipAmount = 0) => {
+export const buildCompletionAmounts = (ride, tipAmount = 0) => {
   const fare = roundMoney(ride?.fare || 0);
   const normalizedTipAmount = roundMoney(tipAmount || 0);
   // What is still owed: nothing once paid (cash received, QR, online...), less a paid goods advance, and for a
@@ -132,7 +132,7 @@ const buildCompletionAmounts = (ride, tipAmount = 0) => {
 };
 
 // The rating is optional when paying: it can come with the payment or later (PATCH /rides/:rideId/feedback).
-const validateRideCompletionFeedback = async ({ rating, tipAmount }) => {
+export const validateRideCompletionFeedback = async ({ rating, tipAmount }) => {
   const hasRating = rating !== undefined && rating !== null && rating !== '' && Number(rating) !== 0;
   const numericRating = hasRating ? Number(rating) : null;
   const numericTip = roundMoney(tipAmount || 0);
@@ -164,7 +164,7 @@ const validateRideCompletionFeedback = async ({ rating, tipAmount }) => {
 };
 
 // The rider can pay once the driver is at the drop (liveStatus arrived / goods_delivered) and after completion.
-const loadPayableRideForUser = async (rideId, userId, session = null) => {
+export const loadPayableRideForUser = async (rideId, userId, session = null) => {
   if (!mongoose.isValidObjectId(rideId)) {
     throw new ApiError(404, 'Ride not found');
   }
@@ -185,7 +185,7 @@ const loadPayableRideForUser = async (rideId, userId, session = null) => {
   return ride;
 };
 
-const assertSomethingToPay = (ride, amounts) => {
+export const assertSomethingToPay = (ride, amounts) => {
   if (amounts.totalCharge > 0) return;
   if (isRideCollectionPaid(ride)) {
     throw ridePaymentError(409, RIDE_PAYMENT_CODES.ALREADY_PAID, 'This ride is already paid');
@@ -193,7 +193,7 @@ const assertSomethingToPay = (ride, amounts) => {
   throw ridePaymentError(400, RIDE_PAYMENT_CODES.PAYMENT_NOT_ALLOWED, 'No payable amount remains for this ride');
 };
 
-const ridePaymentResultError = (result) => {
+export const ridePaymentResultError = (result) => {
   const refunded = Boolean(result.refund && result.refund.status !== 'failed');
   const refundNote = result.refund ? (refunded ? ' The payment is being refunded.' : ' Support will refund this payment.') : '';
   if (result.status === 'duplicate' || result.status === 'already_applied') {
@@ -209,7 +209,7 @@ const ridePaymentResultError = (result) => {
 };
 
 // Records the rider's rating if one came with the payment (completed rides only, once per ride).
-const recordOptionalRating = async ({ rideId, userId, rating, comment = '' }) => {
+export const recordOptionalRating = async ({ rideId, userId, rating, comment = '' }) => {
   if (!rating) return;
   const ride = await Ride.findOneAndUpdate(
     { _id: rideId, userId, status: RIDE_STATUS.COMPLETED, 'feedback.submittedAt': null },

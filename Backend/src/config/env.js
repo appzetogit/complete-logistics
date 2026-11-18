@@ -14,6 +14,9 @@ if (primaryEnvLoad.error && primaryEnvPath !== fallbackEnvPath) {
 
 const resolvedJwtSecret = process.env.JWT_SECRET || process.env.JWT_ACCESS_SECRET;
 const resolvedJwtExpiresIn = process.env.JWT_EXPIRES_IN || process.env.JWT_ACCESS_EXPIRES || '7d';
+// Rider / driver / owner apps stay logged in for a long time (the apps have no refresh-token flow, so the token's
+// lifetime IS the session). The admin panel keeps the short JWT_EXPIRES_IN.
+const resolvedAppJwtExpiresIn = process.env.JWT_APP_EXPIRES_IN || '90d';
 const readEnv = (...keys) => {
   for (const key of keys) {
     const value = process.env[key];
@@ -48,6 +51,7 @@ export const env = {
   mongoDbName: process.env.MONGODB_DB_NAME || 'appzeto_taxi',
   jwtSecret: resolvedJwtSecret,
   jwtExpiresIn: resolvedJwtExpiresIn,
+  jwtAppExpiresIn: resolvedAppJwtExpiresIn,
   corsOrigin: process.env.CORS_ORIGIN || process.env.FRONTEND_URL || '*',
   publicFrontendUrl:
     process.env.PUBLIC_FRONTEND_URL ||

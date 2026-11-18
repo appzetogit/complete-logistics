@@ -99,7 +99,7 @@ const validateEmail = (email) => {
   }
 };
 
-const normalizeMoneyAmount = (value) => {
+export const normalizeMoneyAmount = (value) => {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new ApiError(400, 'amount must be a positive number');
@@ -107,7 +107,7 @@ const normalizeMoneyAmount = (value) => {
   return Math.round(amount * 100) / 100;
 };
 
-const ensureUserWallet = async (userId) => {
+export const ensureUserWallet = async (userId) => {
   if (!userId) return;
   await UserWallet.updateOne(
     { userId },
@@ -136,7 +136,7 @@ const serializeUserWalletTransaction = (entry = {}) => ({
   createdAt: entry.createdAt || null,
 });
 
-const buildUserWalletPayload = (wallet) => {
+export const buildUserWalletPayload = (wallet) => {
   const transactions = Array.isArray(wallet?.transactions) ? wallet.transactions : [];
 
   // rupees with paise (no 99.53999999 from floating point)

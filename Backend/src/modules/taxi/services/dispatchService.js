@@ -2033,6 +2033,12 @@ export const startDispatchRecoveryLoop = () => {
     releaseStaleRideWalletHolds().catch((error) => {
       console.error('Stale wallet hold sweep failed', error);
     });
+    // Cashfree orders whose webhook or app verify never arrived.
+    import('../payments/services/paymentOrderService.js')
+      .then(({ reconcilePaymentOrders }) => reconcilePaymentOrders())
+      .catch((error) => {
+        console.error('Payment order reconcile sweep failed', error);
+      });
     // Online bookings the rider never paid: the platform credits the driver after the admin-set hours.
     import('./ridePaymentService.js')
       .then(({ coverUnpaidOnlineRides }) => coverUnpaidOnlineRides())

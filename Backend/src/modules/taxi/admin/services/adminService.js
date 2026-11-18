@@ -10972,7 +10972,12 @@ export const deletePaymentMethod = async (id) => {
 export const getPaymentSettings = async () => {
   const settings = await ensureThirdPartySettings();
   const activeGateway = await getActivePaymentGateway();
-  return { settings: settings.payment || {}, active_gateway: activeGateway };
+  // Servers set up before Cashfree existed have no cashfree block: show the empty defaults.
+  const payment = { ...(settings.payment || {}) };
+  if (!payment.cashfree) {
+    payment.cashfree = createDefaultThirdPartySettings().payment.cashfree;
+  }
+  return { settings: payment, active_gateway: activeGateway };
 };
 
 export const updatePaymentSettings = async (payload) => {

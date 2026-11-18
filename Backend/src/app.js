@@ -22,7 +22,7 @@ app.use(
     // (goods advance: /deliveries/advance/razorpay/webhook, ride payments: /rides/payments/razorpay/webhook).
     verify: (req, _res, buf) => {
       const url = String(req.originalUrl || '');
-      if (url.includes('/advance/razorpay/webhook') || url.includes('/rides/payments/razorpay/webhook')) {
+      if (url.includes('/advance/razorpay/webhook') || url.includes('/rides/payments/razorpay/webhook') || url.includes('/payments/cashfree/webhook')) {
         req.rawBody = buf;
       }
     },

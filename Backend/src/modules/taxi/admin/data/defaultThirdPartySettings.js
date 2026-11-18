@@ -67,6 +67,14 @@ export const createDefaultThirdPartySettings = () => {
         salt_key: '',
         salt_index: '1',
       },
+      cashfree: {
+        enabled: '0',
+        environment: 'test',
+        test_app_id: '',
+        test_secret_key: '',
+        live_app_id: '',
+        live_secret_key: '',
+      },
       stripe: {
         enabled: '0',
         environment: 'test',
