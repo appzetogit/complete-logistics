@@ -479,6 +479,7 @@ const publicDriverPayload = (driver) => {
     serviceCategories: Array.isArray(driver.serviceCategories) ? driver.serviceCategories : [],
     vehicleNumber: driver.vehicleNumber,
     vehicleColor: driver.vehicleColor,
+    vehicleYear: driver.vehicleYear || '',
     city: driver.city,
     approve: driver.approve,
     status: driver.status,
@@ -1746,6 +1747,8 @@ const completeDriverOnboardingInternal = async ({ registrationId, phone, documen
     vehicleModel: session.vehicle.model,
     vehicleNumber: session.vehicle.number,
     vehicleColor: session.vehicle.color,
+    // collected and validated at signup (required); the profile and Vehicle Details screens read it from here
+    vehicleYear: session.vehicle.year,
     city: session.vehicle.city || session.vehicle.locationName,
     referredBy: referrer?._id || null,
     acquiredByEmployeeId: employee?._id || null,

@@ -275,6 +275,21 @@ const normalizeBoolean = (value) => {
   return false;
 };
 
+/**
+ * Vehicle year as stored on the driver: '' (not known yet) or four digits from 1980 to this year. Same rule as the
+ * driver signup. strict=false (bulk import) turns an invalid value into '' instead of failing the whole row.
+ */
+const normalizeVehicleYearInput = (value, { strict = true } = {}) => {
+  const year = String(value ?? '').trim();
+  if (!year) return '';
+  const currentYear = new Date().getFullYear();
+  if (!/^\d{4}$/.test(year) || Number(year) < 1980 || Number(year) > currentYear) {
+    if (!strict) return '';
+    throw new ApiError(400, `Vehicle year must be between 1980 and ${currentYear}`);
+  }
+  return year;
+};
+
 const normalizeObjectIdList = (values = []) =>
   [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || '').trim()).filter(Boolean))]
     .map(toObjectId)
@@ -2776,6 +2791,7 @@ const serializeDriver = (driver) => ({
   vehicle_model: driver.vehicleModel || '',
   vehicle_number: driver.vehicleNumber || '',
   vehicle_color: driver.vehicleColor || '',
+  vehicle_year: driver.vehicleYear || '',
   rating:
     Number(driver.ratingCount || 0) > 0
       ? Number(driver.rating || 0)
@@ -2816,6 +2832,7 @@ const DRIVER_LIST_SELECT = [
   'vehicleIconType',
   'vehicleNumber',
   'vehicleColor',
+  'vehicleYear',
   'rating',
   'ratingCount',
   'isOnline',
@@ -2856,6 +2873,7 @@ const serializeDriverListItem = (driver) => ({
   vehicle_icon_type: driver.vehicleIconType || driver.vehicleType || '',
   vehicle_number: driver.vehicleNumber || '',
   vehicle_color: driver.vehicleColor || '',
+  vehicle_year: driver.vehicleYear || '',
   rating:
     Number(driver.ratingCount || 0) > 0
       ? Number(driver.rating || 0)
@@ -4034,6 +4052,7 @@ export const bulkImportDrivers = async (payload = {}) => {
         vehicleMake: String(raw.vehicle_make || raw.vehicleMake || '').trim(),
         vehicleModel: String(raw.vehicle_model || raw.vehicleModel || '').trim(),
         vehicleColor: String(raw.vehicle_color || raw.vehicleColor || '').trim(),
+        vehicleYear: normalizeVehicleYearInput(raw.vehicle_year ?? raw.vehicleYear ?? raw.car_year, { strict: false }),
         vehicleNumber: String(raw.vehicle_number || raw.vehicleNumber || '').trim(),
         registerFor: transportType,
         city:
@@ -5404,6 +5423,10 @@ export const createDriver = async (payload = {}, currentAdmin = null) => {
     vehicleMake: String(payload.vehicle_make || payload.vehicleMake || payload.car_make || '').trim(),
     vehicleModel: String(payload.vehicle_model || payload.vehicleModel || payload.car_model || '').trim(),
     vehicleColor: String(payload.vehicle_color || payload.vehicleColor || payload.car_color || '').trim(),
+    // the panel sends it as vehicle_year, car_year or inside onboarding: all land in the one canonical field
+    vehicleYear: normalizeVehicleYearInput(
+      payload.vehicle_year ?? payload.vehicleYear ?? payload.car_year ?? payload.onboarding?.vehicleYear ?? payload.onboarding?.vehicle?.year,
+    ),
     vehicleNumber: String(payload.vehicle_number || payload.vehicleNumber || payload.car_number || '').trim(),
     registerFor,
     serviceCategories,
@@ -5487,6 +5510,11 @@ export const updateDriver = async (id, payload, currentAdmin = null) => {
 
   if (payload.vehicle_color !== undefined || payload.vehicleColor !== undefined || payload.car_color !== undefined) {
     update.vehicleColor = String(payload.vehicle_color ?? payload.vehicleColor ?? payload.car_color ?? '').trim();
+  }
+
+  const yearInput = payload.vehicle_year ?? payload.vehicleYear ?? payload.car_year ?? payload.onboarding?.vehicle?.year ?? payload.onboarding?.vehicleYear;
+  if (yearInput !== undefined) {
+    update.vehicleYear = normalizeVehicleYearInput(yearInput);
   }
 
   if (payload.vehicle_number !== undefined || payload.vehicleNumber !== undefined || payload.car_number !== undefined) {
@@ -5686,6 +5714,7 @@ export const getDriverProfile = async (id) => {
       model: driver.vehicleModel || '',
       color: driver.vehicleColor || '',
       number: driver.vehicleNumber || '',
+      year: driver.vehicleYear || '',
     },
     image: driver.profile_image || driver.avatar || '',
     online_selfie: driver.onlineSelfie || {},
