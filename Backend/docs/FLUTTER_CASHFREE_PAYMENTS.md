@@ -362,3 +362,48 @@ When `GET /common/payment-gateway` returns `goodsAdvanceMode: "cashfree_checkout
 5. If the app is closed after paying, the webhook/reconcile loop still marks the advance paid and dispatches the request.
 
 Refunds (driver cancel, no driver found) go back to the wallet or to the original Cashfree payment, following the admin's "refund to" setting. Cashfree rental advance is still not supported.
+
+## Driver "Collect payment" QR (at the drop)
+
+The driver's QR used to be Razorpay-only, so with Cashfree active the screen showed **"Razorpay gateway is disabled"**. It now runs on Cashfree. **The driver app needs no change**: same two calls, same response shape.
+
+| When | Request |
+| --- | --- |
+| Screen opens / Retry | `POST /api/v1/drivers/payments/qr` body `{ "rideId": "<id>" }` |
+| Every 5 s while open | `GET /api/v1/drivers/payments/qr/status?rideId=<id>` |
+
+The same two exist as `POST /api/v1/payments/cashfree/rides/:rideId/collect/order` and `GET /api/v1/payments/cashfree/rides/:rideId/collect/status` (driver token); both pairs do the same thing.
+
+### Create (`POST .../qr`)
+```json
+{
+  "success": true,
+  "data": {
+    "id": "rc_9a3b4d0012ab_mwn6u",
+    "status": "active",
+    "imageUrl": "data:image/png;base64,iVBOR...",
+    "linkUrl": "https://payments.cashfree.com/links/...",
+    "amount": 232,
+    "currency": "INR",
+    "closeBy": 1795000000,
+    "providerMode": "cashfree_payment_link_qr"
+  }
+}
+```
+- `imageUrl` is a **PNG data URL**: draw it with `Image.memory(base64Decode(imageUrl.split(',').last))`. (It is the same kind of value the older payment-link fallback returned.) `linkUrl` is the pay page: offer "Share link" with it.
+- The amount is decided by the server (what the rider still owes). Any `amount` the app sends is ignored.
+- The link lives 30 minutes. **Retry** makes a new link and cancels the old one, so an old QR can never be paid.
+- `409 ALREADY_PAID` ("This ride is already paid") and `409 PAYMENT_NOT_ALLOWED` ("The QR can be shown once you reach the drop") are handled by name, as before.
+
+### Status (`GET .../qr/status`)
+`data.paid` flips to `true` and `data.status` becomes `paid` once the rider has paid; other values: `active`, `expired`, `cancelled`. After `paid` the ride is settled once and the driver is credited once; both apps get the usual `ride:state` event, the driver also `driver:wallet:updated`. If the driver closes the app right after the rider pays, the webhook and the server's recovery loop still settle it.
+
+### Choosing the flow
+`GET /common/payment-gateway` -> `data.activeGateway.driverCollectMode`:
+
+| Value | Meaning |
+| --- | --- |
+| `cashfree_qr` | Use the QR above |
+| `unsupported` | Online collection is not available (hide the QR button, cash only) |
+
+A payment that arrives for a ride that is already paid (cash taken meanwhile, or the rider paid in the app) is refunded to the rider automatically, once.

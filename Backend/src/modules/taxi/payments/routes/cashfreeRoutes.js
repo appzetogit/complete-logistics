@@ -4,6 +4,8 @@ import { authenticate } from '../../middlewares/authMiddleware.js';
 import { paymentOrderRateLimit } from '../../middlewares/rateLimitMiddleware.js';
 import {
   cashfreeWebhook,
+  createDriverCollectOrder,
+  getDriverCollectStatus,
   createDriverWalletOrder,
   createRideCompletionOrder,
   createUserWalletOrder,
@@ -23,6 +25,11 @@ cashfreePaymentRouter.post('/payments/cashfree/driver-wallet/verify', authentica
 
 cashfreePaymentRouter.post('/payments/cashfree/rides/:rideId/order', authenticate(['user']), paymentOrderRateLimit, asyncHandler(createRideCompletionOrder));
 cashfreePaymentRouter.post('/payments/cashfree/rides/:rideId/verify', authenticate(['user']), asyncHandler(verifyRideCompletionOrder));
+
+// Driver: collect the fare at the drop (the rider scans the QR). Same job as POST /drivers/payments/qr and
+// GET /drivers/payments/qr/status, which the driver app already calls.
+cashfreePaymentRouter.post('/payments/cashfree/rides/:rideId/collect/order', authenticate(['driver']), paymentOrderRateLimit, asyncHandler(createDriverCollectOrder));
+cashfreePaymentRouter.get('/payments/cashfree/rides/:rideId/collect/status', authenticate(['driver']), asyncHandler(getDriverCollectStatus));
 
 // Public: Cashfree calls it. Authenticated by the signature over the raw body.
 cashfreePaymentRouter.post('/payments/cashfree/webhook', asyncHandler(cashfreeWebhook));

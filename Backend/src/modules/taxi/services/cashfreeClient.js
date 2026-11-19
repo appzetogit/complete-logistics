@@ -88,6 +88,41 @@ export const createCashfreeRefund = ({ orderId, refundId, amount, note = '', cre
 export const fetchCashfreeRefund = ({ orderId, refundId, credentials }) =>
   cashfreeRequest({ path: `/orders/${encodeURIComponent(orderId)}/refunds/${encodeURIComponent(refundId)}`, credentials });
 
+// ---- payment links: the driver shows a QR at the drop and the rider pays it from any UPI app ------------------------
+// POST /links returns link_url (the pay page) and link_qrcode (a PNG data URL). One link = one fare, single payment.
+export const createCashfreePaymentLink = ({ linkId, amount, purpose, customer = {}, notifyUrl, expiresAt, notes = {}, credentials }) =>
+  cashfreeRequest({
+    method: 'POST',
+    path: '/links',
+    credentials,
+    body: {
+      link_id: linkId,
+      link_amount: Number(Number(amount).toFixed(2)),
+      link_currency: 'INR',
+      link_purpose: String(purpose || 'Ride fare').slice(0, 500),
+      customer_details: {
+        customer_phone: String(customer.phone || '').replace(/\D/g, '').slice(-10) || '9999999999',
+        ...(customer.name ? { customer_name: String(customer.name).slice(0, 100) } : {}),
+      },
+      link_partial_payments: false,
+      link_expiry_time: new Date(expiresAt).toISOString(),
+      link_notify: { send_sms: false, send_email: false },
+      link_auto_reminders: false,
+      link_notes: notes,
+      ...(notifyUrl ? { link_meta: { notify_url: notifyUrl } } : {}),
+    },
+  });
+
+export const fetchCashfreePaymentLink = (linkId, credentials) =>
+  cashfreeRequest({ path: `/links/${encodeURIComponent(linkId)}`, credentials });
+
+/** The orders created when someone paid (or tried to pay) the link. */
+export const fetchCashfreePaymentLinkOrders = (linkId, credentials) =>
+  cashfreeRequest({ path: `/links/${encodeURIComponent(linkId)}/orders`, credentials });
+
+export const cancelCashfreePaymentLink = (linkId, credentials) =>
+  cashfreeRequest({ method: 'POST', path: `/links/${encodeURIComponent(linkId)}/cancel`, credentials });
+
 /** Webhook signature: base64(HMAC-SHA256(timestamp + rawBody, secret)). */
 export const verifyCashfreeWebhookSignature = ({ rawBody, signature, timestamp, secretKey }) => {
   if (!rawBody || !signature || !timestamp || !secretKey) return false;

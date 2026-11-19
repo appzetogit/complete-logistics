@@ -768,6 +768,9 @@ const rideSchema = new mongoose.Schema(
         {
           _id: false,
           paymentId: { type: String, default: '' },
+          // which gateway took the payment, and (Cashfree) the order the refund is made against
+          provider: { type: String, default: '' },
+          orderId: { type: String, default: '' },
           amount: { type: Number, default: 0 },
           refundId: { type: String, default: '' },
           // pending -> processed (Razorpay accepted) | failed (retry in Admin > Payment Refunds) | resolved_manually

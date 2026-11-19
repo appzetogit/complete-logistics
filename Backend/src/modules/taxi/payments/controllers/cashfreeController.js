@@ -19,6 +19,7 @@ import { getRemainingFare } from '../../user/services/goodsAdvanceService.js';
 import { startDispatchFlow } from '../../services/dispatchService.js';
 import { buildUserWalletPayload, ensureUserWallet, normalizeMoneyAmount } from '../../user/controllers/userController.js';
 import { PaymentOrder, PAYMENT_ORDER_STATUS } from '../models/PaymentOrder.js';
+import { createDriverPaymentQr, getDriverPaymentQrStatus } from '../../driver/controllers/driverController.js';
 import {
   createGatewayOrder,
   getBackendOrigin,
@@ -325,6 +326,19 @@ export const verifyGoodsAdvanceCashfreeOrder = async (req, res) => {
     await startDispatchFlow(detailed);
   }
   res.json({ success: true, data: { ...statusPayload(settled), delivery: serializeDeliveryRealtime(detailed) } });
+};
+
+// ---- driver collect (QR at the drop) -----------------------------------------------------------------------------
+
+// The rideId comes from the path; the amount is never taken from the request.
+export const createDriverCollectOrder = (req, res) => {
+  req.body = { ...(req.body || {}), rideId: req.params.rideId };
+  return createDriverPaymentQr(req, res);
+};
+
+export const getDriverCollectStatus = (req, res) => {
+  req.query = { ...(req.query || {}), rideId: req.params.rideId };
+  return getDriverPaymentQrStatus(req, res);
 };
 
 // ---- webhook ---------------------------------------------------------------------------------------------------

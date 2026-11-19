@@ -190,6 +190,8 @@ export const getPublicActivePaymentGateway = async () => {
           : activeGateway.slug === 'phone_pay'
             ? 'phonepe_redirect'
             : 'unsupported',
+      // Driver "Collect payment" QR at the drop: Cashfree only (the Razorpay version is switched off)
+      driverCollectMode: activeGateway.slug === 'cashfree' ? 'cashfree_qr' : 'unsupported',
       // Goods booking advance (paid when the delivery is booked)
       goodsAdvanceMode:
         activeGateway.slug === 'razor_pay'

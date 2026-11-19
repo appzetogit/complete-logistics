@@ -21,7 +21,7 @@ const COMMISSION = 40;
 const realFetch = globalThis.fetch;
 
 // ---- fake Cashfree -------------------------------------------------------------------------------------------
-const cf = { orders: new Map(), payments: new Map(), refunds: [], calls: [], n: 0, down: false };
+const cf = { orders: new Map(), payments: new Map(), refunds: [], calls: [], n: 0, down: false, links: new Map(), linkOrders: new Map(), cancels: [] };
 const jsonRes = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
 before(async () => {
@@ -67,6 +67,32 @@ before(async () => {
     if (method === 'POST' && (m = path.match(/^\/orders\/([^/]+)\/refunds$/))) {
       cf.refunds.push({ orderId: m[1], ...body });
       return jsonRes({ cf_refund_id: `rf_${(cf.n += 1)}`, refund_id: body.refund_id, refund_status: 'PENDING', refund_amount: body.refund_amount });
+    }
+    // payment links (the driver's collect QR)
+    if (method === 'POST' && path === '/links') {
+      const link = {
+        ...body,
+        cf_link_id: `l${(cf.n += 1)}`,
+        link_status: 'ACTIVE',
+        link_amount_paid: 0,
+        link_url: `https://payments-test.cashfree.com/links/${body.link_id}`,
+        link_qrcode: 'data:image/png;base64,AAAA',
+      };
+      cf.links.set(body.link_id, link);
+      cf.linkOrders.set(body.link_id, []);
+      return jsonRes(link);
+    }
+    if (method === 'GET' && (m = path.match(/^\/links\/([^/]+)\/orders$/))) return jsonRes(cf.linkOrders.get(m[1]) || []);
+    if (method === 'POST' && (m = path.match(/^\/links\/([^/]+)\/cancel$/))) {
+      const link = cf.links.get(m[1]);
+      if (!link) return jsonRes({ message: 'link not found', code: 'link_not_found' }, 404);
+      cf.cancels.push(m[1]);
+      if (link.link_status === 'ACTIVE') link.link_status = 'CANCELLED';
+      return jsonRes(link);
+    }
+    if (method === 'GET' && (m = path.match(/^\/links\/([^/]+)$/))) {
+      const link = cf.links.get(m[1]);
+      return link ? jsonRes(link) : jsonRes({ message: 'link not found', code: 'link_not_found' }, 404);
     }
     throw new Error(`unexpected Cashfree call ${method} ${path}`);
   };
@@ -460,4 +486,238 @@ test('goods advance paid through Cashfree is refunded to the original payment wh
   const second = await refundGoodsAdvance({ rideId, reason: 'again', deps: { getConfig: async () => ({ refundTo: 'source' }) } });
   assert.equal(second.refunded, false);
   assert.equal(cf.refunds.filter((r) => r.orderId === orderId).length, 1);
+});
+
+// ---- driver collect: the QR at the drop is a Cashfree payment link ---------------------------------------------------
+
+const arrivedRide = async ({ complete = false } = {}) => {
+  const vehicle = await t.factories.vehicle();
+  const driver = await t.factories.driver({ vehicleTypeId: vehicle._id });
+  const rider = await t.factories.user();
+  const created = await t.api('POST', '/rides', {
+    token: rider.token,
+    body: { pickup: t.locations.pickup, drop: t.locations.drop, fare: FARE, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash' },
+  });
+  assert.equal(created.status, 201, created.text);
+  const rideId = created.body.data.ride._id;
+  await t.acceptRide(rideId, driver.driver._id);
+  const steps = complete ? ['arriving', 'started', 'arrived', 'completed'] : ['arriving', 'started', 'arrived'];
+  for (const status of steps) {
+    const res = await t.patchRideStatus(rideId, { token: driver.token, body: status === 'completed' ? { status, cashReceived: false } : { status } });
+    assert.equal(res.status, 200, `${status}: ${res.text}`);
+  }
+  return { rideId, driver, rider };
+};
+const openQr = (driver, rideId, body = {}) => t.api('POST', '/drivers/payments/qr', { token: driver.token, body: { rideId, ...body } });
+const qrStatus = (driver, rideId) => t.api('GET', `/drivers/payments/qr/status?rideId=${rideId}`, { token: driver.token });
+
+// The customer pays the link in Cashfree's page: the link turns PAID and an order with a successful payment exists.
+const payLink = (linkId, { amount } = {}) => {
+  const link = cf.links.get(linkId);
+  const paid = amount ?? link.link_amount;
+  const orderId = `CFPay_${linkId}_1`;
+  const payment = { cf_payment_id: `${(cf.n += 1)}0002`, order_id: orderId, payment_status: 'SUCCESS', payment_amount: paid, order_amount: paid };
+  link.link_status = 'PAID';
+  link.link_amount_paid = paid;
+  cf.linkOrders.set(linkId, [{ order_id: orderId, order_status: 'PAID', order_amount: paid }]);
+  cf.payments.set(orderId, [payment]);
+  return { orderId, payment };
+};
+const linkWebhook = async (linkId) => {
+  const raw = JSON.stringify({ type: 'PAYMENT_LINK_EVENT', data: { link_id: linkId, link_status: 'PAID' } });
+  const timestamp = String(Date.now());
+  const signature = crypto.createHmac('sha256', SECRET).update(`${timestamp}${raw}`).digest('base64');
+  const res = await realFetch(`${t.baseUrl}/api/v1/payments/cashfree/webhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-webhook-signature': signature, 'x-webhook-timestamp': timestamp },
+    body: raw,
+  });
+  return { status: res.status, body: await res.json() };
+};
+
+test('driver QR on Cashfree: the link is for the fare the server says is due, the app amount is ignored', async () => {
+  const { rideId, driver } = await arrivedRide();
+  const res = await openQr(driver, rideId, { amount: 1 });
+  assert.equal(res.status, 200, res.text);
+  const data = res.body.data;
+  assert.equal(data.amount, FARE, 'the amount comes from the ride, not from the request');
+  assert.ok(data.linkUrl.startsWith('https://'));
+  assert.ok(data.imageUrl.startsWith('data:image'), 'a QR image the app can draw');
+
+  const link = cf.links.get(data.id);
+  assert.equal(link.link_amount, FARE);
+  assert.equal(link.link_notes.rideId, rideId);
+  assert.equal(link.link_notify.send_sms, false, 'the rider is not messaged: the driver shows the QR');
+  const stored = (await t.m.Ride.findById(rideId).lean()).driverPaymentCollection;
+  assert.equal(stored.provider, 'cashfree');
+  assert.equal(stored.providerId, data.id);
+  assert.equal(stored.status, 'active');
+});
+
+test('driver QR on Cashfree: poll, webhook and reconcile settle one payment once and credit the driver once', async () => {
+  const { rideId, driver } = await arrivedRide({ complete: true });
+  const { id: linkId } = (await openQr(driver, rideId)).body.data;
+
+  const waiting = await qrStatus(driver, rideId);
+  assert.equal(waiting.status, 200, waiting.text);
+  assert.equal(waiting.body.data.paid, false);
+  assert.equal(waiting.body.data.status, 'active');
+
+  const { orderId, payment } = payLink(linkId);
+  const results = await Promise.all([qrStatus(driver, rideId), qrStatus(driver, rideId), linkWebhook(linkId), reconcilePaymentOrders()]);
+  assert.equal(results[0].body.data.paid, true, results[0].text);
+  assert.equal(results[2].status, 200);
+  await linkWebhook(linkId);
+  await reconcilePaymentOrders();
+
+  const ride = await t.m.Ride.findById(rideId).lean();
+  assert.equal(ride.driverPaymentCollection.status, 'paid');
+  assert.equal(ride.driverPaymentCollection.provider, 'cashfree');
+  assert.equal(ride.driverPaymentCollection.source, 'qr');
+  assert.equal(ride.driverPaymentCollection.providerOrderId, orderId);
+  assert.equal(ride.driverPaymentCollection.providerPaymentId, String(payment.cf_payment_id));
+  assert.equal(ride.paymentMethod, 'online');
+  assert.equal(await driverNet(rideId), FARE - COMMISSION, 'the fare is credited once');
+  assert.equal(cf.refunds.filter((r) => r.orderId === orderId).length, 0);
+
+  const again = await openQr(driver, rideId);
+  assert.equal(again.status, 409, again.text);
+  assert.match(again.text, /ALREADY_PAID/);
+});
+
+test('driver QR on Cashfree: a signature-less or tampered webhook settles nothing', async () => {
+  const { rideId, driver } = await arrivedRide({ complete: true });
+  const { id: linkId } = (await openQr(driver, rideId)).body.data;
+  payLink(linkId);
+  const raw = JSON.stringify({ type: 'PAYMENT_LINK_EVENT', data: { link_id: linkId } });
+  const res = await realFetch(`${t.baseUrl}/api/v1/payments/cashfree/webhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-webhook-signature': 'bad', 'x-webhook-timestamp': String(Date.now()) },
+    body: raw,
+  });
+  assert.equal(res.status, 401);
+  assert.notEqual((await t.m.Ride.findById(rideId).lean()).driverPaymentCollection.status, 'paid');
+});
+
+test('driver QR on Cashfree: not before the drop, and a new QR cancels the previous link', async () => {
+  const vehicle = await t.factories.vehicle();
+  const driver = await t.factories.driver({ vehicleTypeId: vehicle._id });
+  const rider = await t.factories.user();
+  const created = await t.api('POST', '/rides', {
+    token: rider.token,
+    body: { pickup: t.locations.pickup, drop: t.locations.drop, fare: FARE, vehicleTypeId: String(vehicle._id), paymentMethod: 'cash' },
+  });
+  const rideId = created.body.data.ride._id;
+  await t.acceptRide(rideId, driver.driver._id);
+  const early = await openQr(driver, rideId);
+  assert.equal(early.status, 409, early.text);
+  assert.match(early.text, /PAYMENT_NOT_ALLOWED/);
+
+  for (const status of ['arriving', 'started', 'arrived']) {
+    assert.equal((await t.patchRideStatus(rideId, { token: driver.token, body: { status } })).status, 200);
+  }
+  const first = (await openQr(driver, rideId)).body.data;
+  const second = (await openQr(driver, rideId)).body.data;
+  assert.notEqual(first.id, second.id);
+  assert.ok(cf.cancels.includes(first.id), 'the old link was cancelled, so its QR cannot be paid');
+  assert.equal(cf.links.get(first.id).link_status, 'CANCELLED');
+  assert.equal(cf.links.get(second.id).link_status, 'ACTIVE');
+  assert.equal((await t.m.Ride.findById(rideId).lean()).driverPaymentCollection.providerId, second.id);
+});
+
+test('driver QR on Cashfree: another driver cannot open or poll the ride\'s QR', async () => {
+  const { rideId } = await arrivedRide();
+  const stranger = await t.factories.driver();
+  assert.equal((await openQr(stranger, rideId)).status, 404);
+  assert.equal((await qrStatus(stranger, rideId)).status, 404);
+});
+
+test('driver QR on Cashfree: a link paid after the rider already paid in the app is refunded once, never kept', async () => {
+  const { rideId, driver, rider } = await arrivedRide({ complete: true });
+  const { id: linkId } = (await openQr(driver, rideId)).body.data;
+
+  // the rider pays in the app first
+  const order = (await t.api('POST', `/v1/payments/cashfree/rides/${rideId}/order`, { token: rider.token, body: {} })).body.data;
+  pay(order.orderId);
+  const verified = await t.api('POST', `/v1/payments/cashfree/rides/${rideId}/verify`, { token: rider.token, body: { orderId: order.orderId } });
+  assert.equal(verified.status, 200, verified.text);
+  assert.ok(cf.cancels.includes(linkId), 'paying in the app closes the driver QR');
+
+  // ...and the QR is paid anyway (the customer was already on the page)
+  const { orderId: linkOrderId } = payLink(linkId);
+  assert.equal((await linkWebhook(linkId)).status, 200);
+  await linkWebhook(linkId);
+  await reconcilePaymentOrders();
+
+  assert.equal(cf.refunds.filter((r) => r.orderId === linkOrderId).length, 1, 'refunded exactly once');
+  const ride = await t.m.Ride.findById(rideId).lean();
+  assert.equal(ride.paymentRefunds.length, 1);
+  assert.equal(ride.paymentRefunds[0].provider, 'cashfree');
+  assert.equal(ride.paymentRefunds[0].orderId, linkOrderId);
+  assert.equal(ride.paymentRefunds[0].status, 'processed');
+  assert.equal(ride.driverPaymentCollection.provider, 'cashfree');
+  assert.equal(ride.driverPaymentCollection.source, 'cashfree', 'the ride stays paid by the rider\'s app payment');
+  assert.equal(await driverNet(rideId), FARE - COMMISSION, 'the driver is credited once');
+});
+
+test('public gateway info tells the driver app which collect flow to use', async () => {
+  const res = await t.api('GET', '/common/payment-gateway');
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.body.data.activeGateway.driverCollectMode, 'cashfree_qr');
+});
+
+test('driver QR on Cashfree: paid and polled at the drop before completion: nothing credited yet, credited once at completion', async () => {
+  const { rideId, driver } = await arrivedRide();
+  const { id: linkId } = (await openQr(driver, rideId)).body.data;
+  payLink(linkId);
+
+  const status = await qrStatus(driver, rideId);
+  assert.equal(status.body.data.paid, true, status.text);
+  assert.equal(status.body.data.source, 'qr');
+  assert.equal(await driverNet(rideId), 0, 'not settled yet: nothing credited now');
+
+  const done = await t.patchRideStatus(rideId, { token: driver.token, body: { status: 'completed' } });
+  assert.equal(done.status, 200, done.text);
+  assert.equal(await driverNet(rideId), FARE - COMMISSION, 'settled as a paid online ride');
+
+  assert.equal((await linkWebhook(linkId)).status, 200);
+  assert.equal(await driverNet(rideId), FARE - COMMISSION, 'the later webhook adds nothing');
+});
+
+test('driver QR on Cashfree: an old completed cash ride cannot get a new QR, but a QR opened in time still counts', async () => {
+  const { rideId, driver } = await arrivedRide();
+  const { id: linkId } = (await openQr(driver, rideId)).body.data;
+  const done = await t.patchRideStatus(rideId, { token: driver.token, body: { status: 'completed', cashReceived: false } });
+  assert.equal(done.status, 200, done.text);
+  await t.m.Ride.updateOne({ _id: rideId }, { $set: { completedAt: new Date(Date.now() - 2 * 3600 * 1000) } });
+
+  const late = await openQr(driver, rideId);
+  assert.equal(late.status, 409, late.text);
+  assert.match(late.text, /PAYMENT_NOT_ALLOWED/);
+
+  // the QR shown in time is paid late: accepted, not refunded
+  payLink(linkId);
+  assert.equal((await linkWebhook(linkId)).status, 200);
+  assert.equal((await t.m.Ride.findById(rideId).lean()).driverPaymentCollection.status, 'paid');
+  assert.equal(await driverNet(rideId), FARE - COMMISSION);
+  assert.equal(cf.refunds.filter((r) => r.orderId === `CFPay_${linkId}_1`).length, 0);
+});
+
+test('driver QR on Cashfree: a payment id already recorded on one ride can never pay another (not applied, not refunded)', async () => {
+  const a = await arrivedRide();
+  const { id: linkA } = (await openQr(a.driver, a.rideId)).body.data;
+  const { payment } = payLink(linkA);
+  assert.equal((await qrStatus(a.driver, a.rideId)).body.data.paid, true);
+
+  const b = await arrivedRide();
+  const { id: linkB } = (await openQr(b.driver, b.rideId)).body.data;
+  const { orderId: orderB } = payLink(linkB);
+  // Cashfree reports the same payment id for ride B's link
+  cf.payments.set(orderB, [{ ...cf.payments.get(orderB)[0], cf_payment_id: payment.cf_payment_id }]);
+
+  const res = await qrStatus(b.driver, b.rideId);
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.body.data.paid, false, 'ride B is not paid by ride A\'s payment');
+  assert.notEqual((await t.m.Ride.findById(b.rideId).lean()).driverPaymentCollection.status, 'paid');
+  assert.equal(cf.refunds.length === 0 || cf.refunds.every((r) => !r.orderId.includes(linkA)), true, 'the payment that paid ride A is not refunded');
 });

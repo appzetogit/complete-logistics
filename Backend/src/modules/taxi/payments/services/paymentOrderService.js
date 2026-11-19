@@ -15,6 +15,7 @@ import { UserWallet } from '../../user/models/UserWallet.js';
 import { Ride } from '../../user/models/Ride.js';
 import { afterRidePaymentApplied, applyRidePaymentInSession } from '../../services/ridePaymentService.js';
 import { emitToDriver, startDispatchFlow } from '../../services/dispatchService.js';
+import { reconcileCashfreeCollections, syncCashfreeCollectionByLink } from './driverCollectService.js';
 import { getRideDetails } from '../../services/rideService.js';
 
 /*
@@ -397,6 +398,20 @@ export const handleCashfreeWebhook = async ({ rawBody, signature, timestamp }) =
     throw new ApiError(400, 'Invalid webhook body');
   }
   const orderId = String(event?.data?.order?.order_id || '');
+
+  // The driver's collect QR is a Cashfree payment link. Its events carry the link id (or an order made from the link);
+  // only the id is taken from the body, what was paid is read back from Cashfree.
+  const linkId = String(
+    event?.data?.link_id
+      || event?.data?.order?.order_tags?.link_id
+      || (/^CFPay_(.+)_[A-Za-z0-9]+$/.exec(orderId) || [])[1]
+      || '',
+  );
+  if (linkId) {
+    const synced = await syncCashfreeCollectionByLink(linkId);
+    if (synced.handled) return { handled: true, status: synced.status };
+  }
+
   if (!orderId) return { handled: false };
 
   const known = await PaymentOrder.exists({ orderId, gateway: GATEWAY });
@@ -429,6 +444,8 @@ export const reconcilePaymentOrders = async () => {
   }).sort({ createdAt: 1 }).limit(RECONCILE_BATCH).select('orderId').lean();
 
   let settled = 0;
+  // the driver's open collect QR links (a lost webhook, a driver who closed the app)
+  await reconcileCashfreeCollections().catch((error) => console.error('[driver-collect] reconcile failed', error?.message || error));
   for (const candidate of candidates) {
     try {
       const result = await settlePaymentOrder(candidate.orderId);
