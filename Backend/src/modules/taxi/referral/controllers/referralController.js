@@ -106,12 +106,6 @@ export const claimReferralAttribution = async (req, res) => {
 
 // ---- GET /users|drivers/referrals/me and /history (signed in) --------------------------------------------------------
 
-const baseCode = (type, account) => {
-  const idPart = String(account._id).slice(-6).toUpperCase();
-  const phonePart = String(account.phone || '').slice(-4);
-  return `${type === 'driver' ? 'DRV' : 'USR'}${phonePart}${idPart}`.replace(/\W/g, '');
-};
-
 const modelFor = (type) => (type === 'driver' ? Driver : User);
 
 export const getMyReferral = (type) => async (req, res) => {
@@ -121,7 +115,7 @@ export const getMyReferral = (type) => async (req, res) => {
     throw new ApiError(404, `${type === 'driver' ? 'Driver' : 'User'} not found`);
   }
 
-  const referralCode = await ensureReferralCode(type, account, baseCode(type, account));
+  const referralCode = await ensureReferralCode(type, account);
   const settings = await getReferralProgramSettings(type);
 
   res.json({

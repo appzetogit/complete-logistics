@@ -128,14 +128,6 @@ import { verifyBankAccountWithRecharge, verifyDrivingLicenseWithRecharge, verify
 
 import { ensureReferralCode } from "../../referral/services/referralAttributionService.js";
 
-const generateDriverReferralCode = (driver) => {
-  const idPart = String(driver?._id || "")
-    .slice(-6)
-    .toUpperCase();
-  const phonePart = String(driver?.phone || "").slice(-4);
-  return `DRV${phonePart}${idPart}`.replace(/\W/g, "");
-};
-
 const MAX_EMERGENCY_CONTACTS = 5;
 const EMERGENCY_CONTACT_NAME_REGEX = /^[A-Za-z]+(?:[ .'-][A-Za-z]+)*$/;
 const DRIVER_NAME_REGEX = /^[A-Za-z]+(?:[ .'-][A-Za-z]+)*$/;
@@ -3066,7 +3058,7 @@ export const getCurrentDriver = async (req, res) => {
     });
   }
 
-  await ensureReferralCode("driver", driver, generateDriverReferralCode(driver));
+  await ensureReferralCode("driver", driver);
 
   await clearDriverActiveRideIfStale(driver);
   const vehicleTypeSummary = await resolveVehicleTypeSummary(driver.vehicleTypeId);

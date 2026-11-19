@@ -5,6 +5,8 @@ import test, { after, before } from 'node:test';
 import mongoose from 'mongoose';
 import { bootstrap } from './harness.js';
 
+const RIDER_CODE = /^U[A-Z2-9]{7}$/;
+const DRIVER_CODE = /^D[A-Z2-9]{7}$/;
 let t;
 let attribution; // services, imported after the app has booted (they read env at import time)
 let rewards;
@@ -139,18 +141,18 @@ test('GET /users/referrals/me returns the code and a link built from REFERRAL_BA
   const res = await t.api('GET', '/users/referrals/me', { token: rider.token });
   assert.equal(res.status, 200, res.text);
   const { referralCode, referralLink } = res.body.data;
-  assert.match(referralCode, /^USR/);
+  assert.match(referralCode, RIDER_CODE, 'a rider code is 8 characters starting with U');
   assert.equal(referralLink, `${BASE}/r/${referralCode}`);
 
   const again = await t.api('GET', '/users/referrals/me', { token: rider.token });
   assert.equal(again.body.data.referralCode, referralCode, 'the code is stable');
 });
 
-test('GET /drivers/referrals/me returns a DRV code and link', async () => {
+test('GET /drivers/referrals/me returns an 8 character D code and link', async () => {
   const driver = await t.factories.driver();
   const res = await t.api('GET', '/drivers/referrals/me', { token: driver.token });
   assert.equal(res.status, 200, res.text);
-  assert.match(res.body.data.referralCode, /^DRV/);
+  assert.match(res.body.data.referralCode, DRIVER_CODE);
   assert.equal(res.body.data.referralLink, `${BASE}/r/${res.body.data.referralCode}`);
 });
 
@@ -695,15 +697,38 @@ test('two drivers cannot share a referral code (unique index)', async () => {
   await assert.rejects(t.factories.driver({ referralCode: code }), (error) => error.code === 11000);
 });
 
-test('ensureReferralCode avoids a code that is already taken', async () => {
-  const taken = `USRTAKEN${Date.now()}`;
-  await t.factories.user({ phone: newPhone(), referralCode: taken });
+test('new referral codes are 8 characters, unique, and never reuse a code someone has or had', async () => {
+  const kept = `USRKEPT${Date.now()}`;
+  const holder = await t.factories.user({ phone: newPhone(), referralCode: kept });
   const fresh = await t.factories.user({ phone: newPhone() });
 
-  const code = await attribution.ensureReferralCode('user', fresh.user, taken);
-  assert.notEqual(code, taken);
-  assert.ok(code.startsWith(taken));
+  const code = await attribution.ensureReferralCode('user', fresh.user);
+  assert.match(code, RIDER_CODE);
+  assert.notEqual(code, kept);
   assert.equal((await t.m.User.findById(fresh.user._id).lean()).referralCode, code);
+  // asking again keeps the code
+  assert.equal(await attribution.ensureReferralCode('user', fresh.user), code);
+
+  const codes = new Set();
+  for (let i = 0; i < 200; i += 1) codes.add(await attribution.allocateReferralCode(i % 2 ? 'driver' : 'user'));
+  assert.equal(codes.size, 200, 'no repeats in 200 draws');
+  assert.ok([...codes].every((c) => /^[UD][A-Z2-9]{7}$/.test(c) && !/[OIL01]/.test(c.slice(1))), 'only readable characters');
+
+  // a retired (legacy) code counts as taken too
+  await t.m.User.updateOne({ _id: holder.user._id }, { $set: { legacyReferralCodes: ['UOLDCODE'] } });
+  assert.ok(!codes.has('UOLDCODE'));
+});
+
+test('a retired long code still finds its owner, and the owner now has a short one', async () => {
+  const owner = await t.factories.user({ phone: newPhone(), referralCode: 'U9SHORT2', legacyReferralCodes: ['USR1234ABCDEF0123'] });
+  const byOld = await attribution.findReferrerByCode('usr1234abcdef0123');
+  assert.equal(String(byOld.doc._id), String(owner.user._id));
+  const byNew = await attribution.findReferrerByCode('U9SHORT2');
+  assert.equal(String(byNew.doc._id), String(owner.user._id));
+
+  const driver = await t.factories.driver({ referralCode: 'D8SHORT3', legacyReferralCodes: ['DRV7777ABCDEF'] });
+  assert.equal(String((await attribution.findReferrerByCode('DRV7777ABCDEF')).doc._id), String(driver.driver._id));
+  assert.equal((await attribution.findReferrerByCode('DRV7777ABCDEF')).type, 'driver');
 });
 
 // ---- admin settings and the public settings ----------------------------------------------------------------------------------
@@ -812,7 +837,7 @@ test('driver onboarding with a link: bound at the referral step, converted at co
 
   const created = await t.m.Driver.findOne({ phone }).lean();
   assert.equal(String(created.referredBy), String(referrer.driver._id));
-  assert.match(created.referralCode, /^DRV/);
+  assert.match(created.referralCode, DRIVER_CODE);
   const refreshed = await t.m.Driver.findById(referrer.driver._id).lean();
   assert.equal(refreshed.referralCount, 1);
   assert.equal(refreshed.wallet.balance, before, 'no reward at signup');

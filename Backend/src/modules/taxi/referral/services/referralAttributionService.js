@@ -48,7 +48,7 @@ const referralError = (reason, extra = {}) =>
 
 const modelFor = (type) => (type === 'driver' ? Driver : User);
 
-/** USR... belongs to users, DRV... to drivers; anything else (older codes) is looked up in both. */
+/** Codes starting with D belong to drivers, U to users; anything else (older codes) is looked up in both. */
 export const findReferrerByCode = async (code, preferredType = null) => {
   const normalized = normalizeReferralCodeInput(code);
 
@@ -58,12 +58,13 @@ export const findReferrerByCode = async (code, preferredType = null) => {
 
   const order = preferredType
     ? [preferredType]
-    : normalized.startsWith('DRV')
+    : normalized.startsWith('D')
       ? ['driver', 'user']
       : ['user', 'driver'];
 
   for (const type of order) {
-    const doc = await modelFor(type).findOne({ referralCode: normalized });
+    // an account that got a new short code still answers to the older, longer one it shared before
+    const doc = await modelFor(type).findOne({ $or: [{ referralCode: normalized }, { legacyReferralCodes: normalized }] });
     if (doc) {
       return { type, doc };
     }
@@ -450,18 +451,44 @@ export const resolveBoundAttribution = async ({ attributionId, registrationId, p
 
 // ---- own code and link -----------------------------------------------------------------------------------------------
 
-const randomSuffix = () => crypto.randomBytes(2).toString('hex').toUpperCase();
+// 8 characters: a type letter (U rider, D driver) and 7 random ones. No 0/O/1/I/L, so it is easy to read out and type.
+export const REFERRAL_CODE_LENGTH = 8;
+const REFERRAL_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-/** Gives the account a unique referral code if it has none. Safe under races and collisions. */
-export const ensureReferralCode = async (type, account, baseCode) => {
+export const generateReferralCode = (type) => {
+  let code = type === 'driver' ? 'D' : 'U';
+  while (code.length < REFERRAL_CODE_LENGTH) {
+    code += REFERRAL_CODE_ALPHABET[crypto.randomInt(REFERRAL_CODE_ALPHABET.length)];
+  }
+  return code;
+};
+
+// A code is one namespace across riders and drivers (a link carries only the code), also counting retired codes.
+const referralCodeInUse = async (code) => {
+  const match = { $or: [{ referralCode: code }, { legacyReferralCodes: code }] };
+  const [user, driver] = await Promise.all([User.exists(match), Driver.exists(match)]);
+  return Boolean(user || driver);
+};
+
+/** A fresh 8 character code that nobody has (or had). */
+export const allocateReferralCode = async (type) => {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const candidate = generateReferralCode(type);
+    if (!(await referralCodeInUse(candidate))) return candidate;
+  }
+  throw new ApiError(500, 'Could not create a referral code');
+};
+
+/** Gives the account a unique 8 character referral code if it has none. Safe under races and collisions. */
+export const ensureReferralCode = async (type, account) => {
   if (String(account.referralCode || '').trim()) {
     return account.referralCode;
   }
 
   const Model = modelFor(type);
 
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const candidate = attempt === 0 ? baseCode : `${baseCode}${randomSuffix()}`;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const candidate = await allocateReferralCode(type);
 
     try {
       const updated = await Model.findOneAndUpdate(

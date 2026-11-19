@@ -1561,12 +1561,6 @@ const createUserSession = (user) => ({
   user: toUserPayload(user),
 });
 
-const generateUserReferralCode = (user) => {
-  const idPart = String(user?._id || '').slice(-6).toUpperCase();
-  const phonePart = String(user?.phone || '').slice(-4);
-  return `USR${phonePart}${idPart}`.replace(/\W/g, '');
-};
-
 const getUserReferralProgramSettings = async () => {
   const setting = await AdminBusinessSetting.findOne({ scope: 'default' }).lean();
   const userReferral = setting?.referral?.user || {};
@@ -1586,7 +1580,7 @@ const findUserByReferralCode = async (referralCode) => {
     return null;
   }
 
-  return User.findOne({ referralCode: normalizedCode });
+  return User.findOne({ $or: [{ referralCode: normalizedCode }, { legacyReferralCodes: normalizedCode }] });
 };
 
 // Referral payouts go through the shared ledger: one row per referenceKey, paid once even under concurrent requests.
@@ -1736,7 +1730,7 @@ export const signupUser = async (req, res) => {
     throw error;
   }
 
-  await ensureReferralCode('user', user, generateUserReferralCode(user));
+  await ensureReferralCode('user', user);
 
   if (referrer?._id) {
     await User.updateOne({ _id: referrer._id }, { $inc: { referralCount: 1 } });
@@ -1849,7 +1843,7 @@ export const getCurrentUser = async (req, res) => {
     throw new ApiError(404, 'User not found');
   }
 
-  await ensureReferralCode('user', user, generateUserReferralCode(user));
+  await ensureReferralCode('user', user);
 
   const subscriptionSummary = await getUserSubscriptionSummary(user._id);
   const freeRides = await getFreeRidesSummaryForUser(user);

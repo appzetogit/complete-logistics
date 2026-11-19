@@ -192,6 +192,12 @@ const userSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    // Longer codes this account used before it got its short one: still accepted when someone enters an old code or opens an old link.
+    legacyReferralCodes: {
+      type: [String],
+      default: [],
+      index: true,
+    },
     referredBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'TaxiUser',

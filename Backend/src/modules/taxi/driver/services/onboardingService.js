@@ -215,14 +215,6 @@ const normalizeRcVerificationResult = (result = {}, rcNumber = '') => ({
   manufacturingMonthYear: String(result?.vehicle_manufacturing_month_year || '').trim(),
 });
 
-const generateDriverReferralCode = (driver) => {
-  const idPart = String(driver?._id || '')
-    .slice(-6)
-    .toUpperCase();
-  const phonePart = String(driver?.phone || '').slice(-4);
-  return `DRV${phonePart}${idPart}`.replace(/\W/g, '');
-};
-
 const getDriverReferralProgramSettings = async () => {
   const setting = await AdminBusinessSetting.findOne({ scope: 'default' }).lean();
   const driverReferral = setting?.referral?.driver || {};
@@ -242,7 +234,7 @@ const findDriverByReferralCode = async (referralCode) => {
     return null;
   }
 
-  return Driver.findOne({ referralCode: normalizedCode });
+  return Driver.findOne({ $or: [{ referralCode: normalizedCode }, { legacyReferralCodes: normalizedCode }] });
 };
 
 // Referral payouts go through the shared ledger: one row per referenceKey, paid once even under concurrent requests.
@@ -1794,7 +1786,7 @@ const completeDriverOnboardingInternal = async ({ registrationId, phone, documen
     throw error;
   });
 
-  await ensureReferralCode('driver', driver, generateDriverReferralCode(driver));
+  await ensureReferralCode('driver', driver);
 
   if (referrer?._id) {
     await Driver.updateOne({ _id: referrer._id }, { $inc: { referralCount: 1 } });
