@@ -190,6 +190,13 @@ export const getPublicActivePaymentGateway = async () => {
           : activeGateway.slug === 'phone_pay'
             ? 'phonepe_redirect'
             : 'unsupported',
+      // Ride pass (subscription) purchase online. The rider app switches on this field: missing = Razorpay.
+      subscriptionMode:
+        activeGateway.slug === 'razor_pay'
+          ? 'razorpay_checkout'
+          : activeGateway.slug === 'cashfree'
+            ? 'cashfree_checkout'
+            : 'unsupported',
       // Driver "Collect payment" QR at the drop: Cashfree only (the Razorpay version is switched off)
       driverCollectMode: activeGateway.slug === 'cashfree' ? 'cashfree_qr' : 'unsupported',
       // Goods booking advance (paid when the delivery is booked)

@@ -407,3 +407,38 @@ The same two exist as `POST /api/v1/payments/cashfree/rides/:rideId/collect/orde
 | `unsupported` | Online collection is not available (hide the QR button, cash only) |
 
 A payment that arrives for a ride that is already paid (cash taken meanwhile, or the rider paid in the app) is refunded to the rider automatically, once.
+
+## Ride pass (subscription) purchase on Cashfree
+
+The rider app already ships these calls. It switches on `GET /common/payment-gateway` -> `data.activeGateway.subscriptionMode`:
+
+| `subscriptionMode` | Rider app |
+| --- | --- |
+| `cashfree_checkout` | the two Cashfree routes below |
+| `razorpay_checkout` | the existing Razorpay flow |
+| missing / other | the existing Razorpay flow |
+
+The wallet purchase (`POST /users/subscriptions/purchase`) is unchanged and works with any gateway.
+
+### Create the order
+`POST /api/v1/payments/cashfree/subscriptions/order` (rider token), body: `{ "planId": "<plan id>" }`
+
+```json
+{ "success": true, "data": { "orderId": "sb_...", "paymentSessionId": "session_...", "environment": "sandbox", "amount": 499, "currency": "INR", "reused": false } }
+```
+
+- The server prices the plan; an `amount` in the request is ignored.
+- A double tap (or the pay sheet reopened) returns the **same open order** with `reused: true`. **`environment` is on both branches**: `sandbox` or `production`, so the checkout opens against the right one. (The ride-payment and goods-advance reuse branches had the same gap and now carry it too.)
+- `409 ALREADY_PAID`: the rider already holds an active pass of this plan (not expired, rides left, or unlimited).
+- `404` for a missing, inactive or driver-audience plan; `400` for a missing / invalid `planId`.
+
+### Verify
+`POST /api/v1/payments/cashfree/subscriptions/verify`, body `{ "orderId": "sb_..." }`
+
+```json
+{ "success": true, "data": { "status": "applied", "paid": true, "orderId": "sb_...", "amount": 499 } }
+```
+
+`status`: `applied`, `already_applied`, `pending`. Poll every 3 s (up to 90 s) while `pending`; a UPI collect is not instant. `409` with `code: "payment_refunded"` means the payment could not be turned into a pass (the plan was removed, switched off or re-priced after the order) and the money is going back automatically.
+
+The pass is created exactly once per paid order: verify, the Cashfree webhook and the server's recovery loop all settle the same order, so it also activates when the app is killed inside the UPI app. The new pass shows in `GET /users/subscriptions/me` with `purchaseSource: "cashfree"`.

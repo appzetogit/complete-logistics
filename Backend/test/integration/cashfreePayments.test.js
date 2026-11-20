@@ -721,3 +721,139 @@ test('driver QR on Cashfree: a payment id already recorded on one ride can never
   assert.notEqual((await t.m.Ride.findById(b.rideId).lean()).driverPaymentCollection.status, 'paid');
   assert.equal(cf.refunds.length === 0 || cf.refunds.every((r) => !r.orderId.includes(linkA)), true, 'the payment that paid ride A is not refunded');
 });
+
+// ---- ride pass (subscription) bought online ----------------------------------------------------------------------
+
+const planModel = () => t.mongoose.model('TaxiSubscriptionPlan');
+const newPlan = (overrides = {}) => planModel().create({
+  name: `Pass ${Date.now()}`,
+  audience: 'user',
+  active: true,
+  amount: 499,
+  duration: 30,
+  benefit_type: 'limited',
+  ride_limit: 10,
+  ...overrides,
+});
+const subOrder = (rider, planId, extra = {}) => t.api('POST', '/v1/payments/cashfree/subscriptions/order', { token: rider.token, body: { planId: String(planId), ...extra } });
+const subVerify = (rider, orderId) => t.api('POST', '/v1/payments/cashfree/subscriptions/verify', { token: rider.token, body: { orderId } });
+const passesOf = (userId) => t.mongoose.model('TaxiUserSubscription').find({ userId }).lean();
+
+test('ride pass: the order is priced by the server, pending until paid, then one pass is created and repeat verifies add nothing', async () => {
+  const plan = await newPlan();
+  const rider = await t.factories.user();
+  const created = await subOrder(rider, plan._id, { amount: 1 }); // an amount from the app is ignored
+  assert.equal(created.status, 201, created.text);
+  const { orderId, paymentSessionId, environment, amount, reused } = created.body.data;
+  assert.ok(paymentSessionId.startsWith('session_'));
+  assert.equal(environment, 'sandbox');
+  assert.equal(amount, 499);
+  assert.equal(reused, false);
+  assert.equal(cf.orders.get(orderId).order_amount, 499);
+  const row = await PaymentOrder.findOne({ orderId });
+  assert.equal(row.purpose, 'subscription');
+  assert.equal(String(row.context.planId), String(plan._id));
+
+  const pending = await subVerify(rider, orderId);
+  assert.equal(pending.status, 200, pending.text);
+  assert.equal(pending.body.data.status, 'pending');
+  assert.equal(pending.body.data.paid, false);
+  assert.equal((await passesOf(rider.user._id)).length, 0);
+
+  pay(orderId);
+  const results = await Promise.all([subVerify(rider, orderId), subVerify(rider, orderId), webhook(orderId), reconcilePaymentOrders()]);
+  assert.equal(results[0].body.data.paid, true, results[0].text);
+  assert.equal(results[2].status, 200);
+  assert.equal((await subVerify(rider, orderId)).body.data.status, 'already_applied');
+
+  const passes = await passesOf(rider.user._id);
+  assert.equal(passes.length, 1, 'one payment, one pass');
+  assert.equal(passes[0].purchaseSource, 'cashfree');
+  assert.equal(passes[0].amount, 499);
+  assert.equal(passes[0].providerOrderId, orderId);
+  assert.ok(passes[0].providerPaymentId);
+  assert.equal(passes[0].status, 'active');
+  const mine = await t.api('GET', '/users/subscriptions/me', { token: rider.token });
+  assert.equal(mine.body.data.activeCount, 1);
+});
+
+test('ride pass: a double tap gets the same open order (with its environment); buying a pass you already hold is refused', async () => {
+  const plan = await newPlan();
+  const rider = await t.factories.user();
+  const first = await subOrder(rider, plan._id);
+  const second = await subOrder(rider, plan._id);
+  assert.equal(second.status, 201, second.text);
+  assert.equal(second.body.data.orderId, first.body.data.orderId);
+  assert.equal(second.body.data.reused, true);
+  assert.equal(second.body.data.environment, 'sandbox', 'the reuse branch says which environment too');
+  assert.equal(second.body.data.paymentSessionId, first.body.data.paymentSessionId);
+
+  pay(first.body.data.orderId);
+  assert.equal((await subVerify(rider, first.body.data.orderId)).body.data.paid, true);
+  const again = await subOrder(rider, plan._id);
+  assert.equal(again.status, 409, again.text);
+  assert.equal(again.body.code, 'ALREADY_PAID');
+
+  // another plan is fine, and another rider can buy the same plan
+  const other = await newPlan({ amount: 299 });
+  assert.equal((await subOrder(rider, other._id)).status, 201);
+  const stranger = await t.factories.user();
+  assert.equal((await subOrder(stranger, plan._id)).status, 201);
+});
+
+test('ride pass: the webhook alone (app killed inside the UPI app) still activates the pass', async () => {
+  const plan = await newPlan();
+  const rider = await t.factories.user();
+  const { orderId } = (await subOrder(rider, plan._id)).body.data;
+  pay(orderId);
+  const hook = await webhook(orderId);
+  assert.equal(hook.status, 200, JSON.stringify(hook.body));
+  assert.equal((await passesOf(rider.user._id)).length, 1);
+});
+
+test('ride pass: a plan re-priced after the order cannot be honoured: the payment is refunded, no pass', async () => {
+  const plan = await newPlan();
+  const rider = await t.factories.user();
+  const { orderId } = (await subOrder(rider, plan._id)).body.data;
+  await planModel().updateOne({ _id: plan._id }, { $set: { amount: 599 } });
+  pay(orderId);
+  const res = await subVerify(rider, orderId);
+  assert.equal(res.status, 409, res.text);
+  assert.equal(res.body.code, 'payment_refunded');
+  assert.equal((await passesOf(rider.user._id)).length, 0);
+  assert.equal(cf.refunds.filter((r) => r.orderId === orderId).length, 1, 'refunded exactly once');
+  await subVerify(rider, orderId);
+  await reconcilePaymentOrders();
+  assert.equal(cf.refunds.filter((r) => r.orderId === orderId).length, 1);
+});
+
+test('ride pass: bad plan ids, inactive plans, and orders that are not yours or not for a pass are refused', async () => {
+  const rider = await t.factories.user();
+  assert.equal((await t.api('POST', '/v1/payments/cashfree/subscriptions/order', { token: rider.token, body: {} })).status, 400);
+  assert.equal((await subOrder(rider, new t.mongoose.Types.ObjectId())).status, 404);
+  const off = await newPlan({ active: false });
+  assert.equal((await subOrder(rider, off._id)).status, 404);
+  const driverPlan = await newPlan({ audience: 'driver' });
+  assert.equal((await subOrder(rider, driverPlan._id)).status, 404);
+
+  const plan = await newPlan();
+  const { orderId } = (await subOrder(rider, plan._id)).body.data;
+  const stranger = await t.factories.user();
+  assert.equal((await subVerify(stranger, orderId)).status, 404, 'not your order');
+  const wallet = await t.api('POST', '/v1/payments/cashfree/user-wallet/order', { token: rider.token, body: { amount: 100 } });
+  assert.equal((await subVerify(rider, wallet.body.data.orderId)).status, 404, 'a wallet order is not a pass');
+  assert.equal((await t.api('POST', '/v1/payments/cashfree/subscriptions/order', { body: { planId: String(plan._id) } })).status, 401);
+});
+
+test('the reuse branch of the ride payment order also carries the environment', async () => {
+  const { rideId, rider } = await arrivedCashRide();
+  await t.api('POST', `/v1/payments/cashfree/rides/${rideId}/order`, { token: rider.token, body: {} });
+  const again = await t.api('POST', `/v1/payments/cashfree/rides/${rideId}/order`, { token: rider.token, body: {} });
+  assert.equal(again.body.data.reused, true);
+  assert.equal(again.body.data.environment, 'sandbox');
+});
+
+test('public gateway info switches the app to the Cashfree pass flow', async () => {
+  const res = await t.api('GET', '/common/payment-gateway');
+  assert.equal(res.body.data.activeGateway.subscriptionMode, 'cashfree_checkout');
+});

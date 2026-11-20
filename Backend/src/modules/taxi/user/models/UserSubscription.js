@@ -80,10 +80,10 @@ const userSubscriptionSchema = new mongoose.Schema(
     },
     purchaseSource: {
       type: String,
-      enum: ['wallet', 'admin', 'razorpay'],
+      enum: ['wallet', 'admin', 'razorpay', 'cashfree'],
       default: 'wallet',
     },
-    // Razorpay purchase: one payment can only ever create one subscription.
+    // Gateway purchase (Razorpay / Cashfree): one payment can only ever create one subscription.
     providerOrderId: { type: String, default: '', trim: true },
     providerPaymentId: { type: String, default: '', trim: true },
     purchasedAt: {

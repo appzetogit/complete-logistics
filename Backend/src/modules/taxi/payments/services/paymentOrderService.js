@@ -13,6 +13,7 @@ import {
 import { applyDriverWalletAdjustment } from '../../driver/services/walletService.js';
 import { UserWallet } from '../../user/models/UserWallet.js';
 import { Ride } from '../../user/models/Ride.js';
+import { createSubscriptionFromPayment, findPlanForPaidOrder } from '../../user/services/subscriptionService.js';
 import { afterRidePaymentApplied, applyRidePaymentInSession } from '../../services/ridePaymentService.js';
 import { emitToDriver, startDispatchFlow } from '../../services/dispatchService.js';
 import { reconcileCashfreeCollections, syncCashfreeCollectionByLink } from './driverCollectService.js';
@@ -52,7 +53,7 @@ const runAtomically = async (fn) => {
 };
 
 const newOrderId = (purpose) => {
-  const prefix = { user_wallet_topup: 'uw', driver_wallet_topup: 'dw', ride_payment: 'rp', goods_advance: 'ga' }[purpose] || 'po';
+  const prefix = { user_wallet_topup: 'uw', driver_wallet_topup: 'dw', ride_payment: 'rp', goods_advance: 'ga', subscription: 'sb' }[purpose] || 'po';
   return `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(5).toString('hex')}`;
 };
 
@@ -109,6 +110,9 @@ export const createGatewayOrder = async ({ purpose, ownerType, ownerId, amount, 
     environment: credentials.isLive ? 'production' : 'sandbox',
   };
 };
+
+/** 'sandbox' or 'production': the checkout must open against the same one the order was made in. */
+export const getCashfreeEnvironment = async () => ((await resolveCashfreeCredentials()).isLive ? 'production' : 'sandbox');
 
 const pickSuccessfulPayment = (payments, expectedAmount) => {
   const list = Array.isArray(payments) ? payments : [];
@@ -215,7 +219,25 @@ const applyGoodsAdvanceForOrder = async (order, session) => {
   return { outcome: 'applied', rideResult: { status: 'applied' } };
 };
 
+// Ride pass bought online: one pass per paid order. A plan that is gone, switched off or re-priced since the order was
+// made cannot be honoured: the payment goes back to the rider.
+const applySubscriptionForOrder = async (order, session) => {
+  const found = await findPlanForPaidOrder(order.context?.planId, order.amount);
+  if (!found) return { outcome: 'unusable', rideResult: { status: 'plan_unavailable' } };
+  const subscription = await createSubscriptionFromPayment({
+    userId: order.ownerId,
+    plan: found.plan,
+    amount: found.amount,
+    paymentSource: GATEWAY,
+    providerOrderId: order.orderId,
+    providerPaymentId: order.providerPaymentId,
+    session,
+  });
+  return { outcome: 'applied', rideResult: { status: 'applied' }, subscriptionId: String(subscription._id) };
+};
+
 const APPLIERS = {
+  subscription: applySubscriptionForOrder,
   goods_advance: applyGoodsAdvanceForOrder,
   user_wallet_topup: applyWalletTopUpForUser,
   driver_wallet_topup: applyWalletTopUpForDriver,

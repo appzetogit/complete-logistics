@@ -291,6 +291,44 @@ const loadPurchasablePlan = async (planId) => {
   return { plan, amount };
 };
 
+/** The plan a paid order is for, or null when it is gone, switched off or no longer costs what was charged. */
+export const findPlanForPaidOrder = async (planId, paidAmount) => {
+  if (!mongoose.Types.ObjectId.isValid(String(planId || ''))) return null;
+  const plan = await SubscriptionPlan.findOne({ _id: planId, audience: 'user', active: true })
+    .populate('vehicle_type_id', VEHICLE_FIELDS)
+    .populate('vehicle_type_ids', VEHICLE_FIELDS);
+  if (!plan) return null;
+  const amount = roundMoney(plan.amount || 0);
+  if (amount <= 0 || Math.round(amount * 100) !== Math.round(roundMoney(paidAmount) * 100)) return null;
+  return { plan, amount };
+};
+
+/** Creates the pass for a gateway payment inside the caller's transaction. Returns the new subscription. */
+export const createSubscriptionFromPayment = async ({ userId, plan, amount, paymentSource, providerOrderId, providerPaymentId, session = null }) => {
+  const [subscription] = await UserSubscription.create(
+    [buildSubscriptionDoc({ userId, plan, amount, paymentSource, extra: { providerOrderId, providerPaymentId } })],
+    session ? { session } : {},
+  );
+  return subscription;
+};
+
+/** The pass of this plan the rider is already using (active, not expired, rides left), or null. */
+export const findHeldPlanSubscription = async ({ userId, planId }) => {
+  const items = await UserSubscription.find({
+    userId,
+    planId,
+    status: 'active',
+    active: true,
+    $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+  }).lean();
+  return items.find((item) => {
+    const metrics = buildSubscriptionMetrics(item);
+    return metrics.isUnlimited || metrics.ridesRemaining > 0;
+  }) || null;
+};
+
+export { loadPurchasablePlan };
+
 /**
  * Wallet purchase. The debit and the new subscription are written in ONE transaction:
  * either the rider pays and gets the pass, or nothing happens. The debit is conditional

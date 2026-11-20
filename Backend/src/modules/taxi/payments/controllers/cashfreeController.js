@@ -20,9 +20,11 @@ import { startDispatchFlow } from '../../services/dispatchService.js';
 import { buildUserWalletPayload, ensureUserWallet, normalizeMoneyAmount } from '../../user/controllers/userController.js';
 import { PaymentOrder, PAYMENT_ORDER_STATUS } from '../models/PaymentOrder.js';
 import { createDriverPaymentQr, getDriverPaymentQrStatus } from '../../driver/controllers/driverController.js';
+import { findHeldPlanSubscription, loadPurchasablePlan } from '../../user/services/subscriptionService.js';
 import {
   createGatewayOrder,
   getBackendOrigin,
+  getCashfreeEnvironment,
   handleCashfreeWebhook,
   loadOwnOrder,
   settlePaymentOrder,
@@ -159,6 +161,7 @@ export const createRideCompletionOrder = async (req, res) => {
           fareDue: amounts.fareDue,
           tipAmount: amounts.tipAmount,
           totalCharge: amounts.totalCharge,
+          environment: await getCashfreeEnvironment(),
           reused: true,
         },
       });
@@ -267,7 +270,7 @@ export const createGoodsAdvanceCashfreeOrder = async (req, res) => {
     if (existing?.paymentSessionId && Math.round(existing.amount * 100) === Math.round(amount * 100)) {
       res.status(201).json({
         success: true,
-        data: { orderId: existing.orderId, paymentSessionId: existing.paymentSessionId, amount: existing.amount, currency: 'INR', advanceAmount: amount, remainingAmount, reused: true },
+        data: { orderId: existing.orderId, paymentSessionId: existing.paymentSessionId, amount: existing.amount, currency: 'INR', environment: await getCashfreeEnvironment(), advanceAmount: amount, remainingAmount, reused: true },
       });
       return;
     }
@@ -326,6 +329,75 @@ export const verifyGoodsAdvanceCashfreeOrder = async (req, res) => {
     await startDispatchFlow(detailed);
   }
   res.json({ success: true, data: { ...statusPayload(settled), delivery: serializeDeliveryRealtime(detailed) } });
+};
+
+// ---- ride pass (subscription) bought online -----------------------------------------------------------------------
+
+export const createSubscriptionOrder = async (req, res) => {
+  const planId = String(req.body?.planId || '').trim();
+  // 400 for a bad id, 404 for a missing / inactive plan; the price is the plan's, never the app's
+  const { plan, amount } = await loadPurchasablePlan(planId);
+
+  if (await findHeldPlanSubscription({ userId: req.auth.sub, planId: String(plan._id) })) {
+    throw new ApiError(409, 'You already have an active pass for this plan', { code: 'ALREADY_PAID' });
+  }
+
+  // A double tap (or reopening the pay sheet) gets the same open order, so the rider is never charged twice.
+  const existing = await PaymentOrder.findOne({
+    gateway: 'cashfree',
+    purpose: 'subscription',
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    status: PAYMENT_ORDER_STATUS.CREATED,
+    'context.planId': String(plan._id),
+    paymentSessionId: { $ne: '' },
+    createdAt: { $gt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+  }).sort({ createdAt: -1 }).lean();
+  if (existing && Math.round(existing.amount * 100) === Math.round(amount * 100)) {
+    res.status(201).json({
+      success: true,
+      data: {
+        orderId: existing.orderId,
+        paymentSessionId: existing.paymentSessionId,
+        environment: await getCashfreeEnvironment(),
+        amount: existing.amount,
+        currency: 'INR',
+        reused: true,
+      },
+    });
+    return;
+  }
+
+  const user = await User.findById(req.auth.sub).select('name phone email').lean();
+  const order = await createGatewayOrder({
+    purpose: 'subscription',
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    amount,
+    customer: customerOf(user),
+    context: { planId: String(plan._id) },
+    notifyUrl: notifyUrlFor(req),
+  });
+  res.status(201).json({ success: true, data: { ...order, reused: false } });
+};
+
+export const verifySubscriptionOrder = async (req, res) => {
+  const order = await loadOwnOrder({
+    orderId: req.body?.orderId,
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    purpose: 'subscription',
+  });
+  // 'pending' is normal right after checkout closes (a UPI collect takes a while): the app polls this call.
+  const settled = await settlePaymentOrder(order.orderId);
+
+  if (['refunded', 'refund_pending'].includes(settled.status)) {
+    throw new ApiError(409, 'This payment could not be used for the pass and is being refunded', {
+      code: 'payment_refunded',
+      status: settled.status,
+    });
+  }
+  res.json({ success: true, data: statusPayload(settled) });
 };
 
 // ---- driver collect (QR at the drop) -----------------------------------------------------------------------------

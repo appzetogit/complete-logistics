@@ -1,16 +1,18 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../../../utils/asyncHandler.js';
 import { authenticate } from '../../middlewares/authMiddleware.js';
-import { paymentOrderRateLimit } from '../../middlewares/rateLimitMiddleware.js';
+import { paymentConfirmRateLimit, paymentOrderRateLimit } from '../../middlewares/rateLimitMiddleware.js';
 import {
   cashfreeWebhook,
   createDriverCollectOrder,
   getDriverCollectStatus,
   createDriverWalletOrder,
   createRideCompletionOrder,
+  createSubscriptionOrder,
   createUserWalletOrder,
   verifyDriverWalletOrder,
   verifyRideCompletionOrder,
+  verifySubscriptionOrder,
   verifyUserWalletOrder,
 } from '../controllers/cashfreeController.js';
 
@@ -25,6 +27,10 @@ cashfreePaymentRouter.post('/payments/cashfree/driver-wallet/verify', authentica
 
 cashfreePaymentRouter.post('/payments/cashfree/rides/:rideId/order', authenticate(['user']), paymentOrderRateLimit, asyncHandler(createRideCompletionOrder));
 cashfreePaymentRouter.post('/payments/cashfree/rides/:rideId/verify', authenticate(['user']), asyncHandler(verifyRideCompletionOrder));
+
+// Rider: buy a ride pass online. verify is polled by the app while the payment is still pending.
+cashfreePaymentRouter.post('/payments/cashfree/subscriptions/order', authenticate(['user']), paymentOrderRateLimit, asyncHandler(createSubscriptionOrder));
+cashfreePaymentRouter.post('/payments/cashfree/subscriptions/verify', authenticate(['user']), paymentConfirmRateLimit, asyncHandler(verifySubscriptionOrder));
 
 // Driver: collect the fare at the drop (the rider scans the QR). Same job as POST /drivers/payments/qr and
 // GET /drivers/payments/qr/status, which the driver app already calls.

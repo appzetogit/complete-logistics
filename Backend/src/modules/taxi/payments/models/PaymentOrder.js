@@ -15,7 +15,7 @@ const paymentOrderSchema = new mongoose.Schema(
   {
     orderId: { type: String, required: true, unique: true, trim: true },
     gateway: { type: String, required: true, trim: true, index: true },
-    purpose: { type: String, enum: ['user_wallet_topup', 'driver_wallet_topup', 'ride_payment', 'goods_advance'], required: true },
+    purpose: { type: String, enum: ['user_wallet_topup', 'driver_wallet_topup', 'ride_payment', 'goods_advance', 'subscription'], required: true },
     ownerType: { type: String, enum: ['user', 'driver'], required: true },
     ownerId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
     amount: { type: Number, required: true, min: 0 },
@@ -23,7 +23,7 @@ const paymentOrderSchema = new mongoose.Schema(
     status: { type: String, enum: Object.values(PAYMENT_ORDER_STATUS), default: PAYMENT_ORDER_STATUS.CREATED, index: true },
     paymentSessionId: { type: String, default: '' },
     providerPaymentId: { type: String, default: '', trim: true },
-    // purpose specific: ride payment => { rideId, fareDue, tipAmount }
+    // purpose specific: ride payment => { rideId, fareDue, tipAmount }; goods advance => { rideId }; subscription => { planId }
     context: { type: mongoose.Schema.Types.Mixed, default: {} },
     paidAt: { type: Date, default: null },
     appliedAt: { type: Date, default: null },
