@@ -9,6 +9,8 @@
  *   wallets    rider wallets: transactions removed, balance / refund wallet / held amount set to 0
  *              driver wallets: transactions removed, wallet.balance set to 0 (cash limit and blocked flag are kept)
  *              owner wallets: transactions removed, wallet.balance set to 0
+ *   earnings   every driver's "today" summary (earnings, rides, distance) set to 0. The admin earnings and dashboard
+ *              pages are worked out from the rides, so they read 0 once the rides are gone
  *   cleanup    riders' currentRideId cleared, drivers' isOnRide set to false (no ride exists any more)
  *
  * What it does NOT touch
@@ -79,6 +81,7 @@ const main = async () => {
   console.log(`  rider wallets                ${await UserWallet.countDocuments()}  balance sum ${await sum(UserWallet, 'balance')}, refund wallet sum ${await sum(UserWallet, 'refundWallet')}, held sum ${await sum(UserWallet, 'heldBalance')}`);
   console.log(`  driver wallets               ${await Driver.countDocuments({ 'wallet.balance': { $ne: 0 } })} drivers with a balance, sum ${await sum(Driver, 'wallet.balance')}`);
   console.log(`  owner wallets                ${await Owner.countDocuments({ 'wallet.balance': { $ne: 0 } })} owners with a balance, sum ${await sum(Owner, 'wallet.balance')}`);
+  console.log(`  driver "today" earnings     ${await Driver.countDocuments({ $or: [{ 'todaySummary.earnings': { $ne: 0 } }, { 'todaySummary.rides': { $ne: 0 } }] })} drivers with a summary, earnings sum ${await sum(Driver, 'todaySummary.earnings')}`);
   console.log(`\nWill be CLEARED: ${await User.countDocuments({ currentRideId: { $ne: null } })} riders with a current ride, ${await Driver.countDocuments({ isOnRide: true })} drivers marked on a ride`);
 
   if (!apply) {
@@ -100,6 +103,11 @@ const main = async () => {
   console.log(`  driver wallets reset: ${drivers.modifiedCount}`);
   const owners = await Owner.updateMany({ 'wallet.balance': { $ne: 0 } }, { $set: { 'wallet.balance': 0 } });
   console.log(`  owner wallets reset: ${owners.modifiedCount}`);
+  const summaries = await Driver.updateMany(
+    { $or: [{ 'todaySummary.earnings': { $ne: 0 } }, { 'todaySummary.rides': { $ne: 0 } }, { 'todaySummary.distanceMeters': { $ne: 0 } }] },
+    { $set: { 'todaySummary.earnings': 0, 'todaySummary.rides': 0, 'todaySummary.distanceMeters': 0 } },
+  );
+  console.log(`  driver "today" summaries reset: ${summaries.modifiedCount}`);
   const riders = await User.updateMany({ currentRideId: { $ne: null } }, { $set: { currentRideId: null } });
   const onRide = await Driver.updateMany({ isOnRide: true }, { $set: { isOnRide: false } });
   console.log(`  riders with a current ride cleared: ${riders.modifiedCount}, drivers set off-ride: ${onRide.modifiedCount}`);
