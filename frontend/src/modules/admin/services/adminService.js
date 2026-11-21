@@ -127,7 +127,8 @@ export const adminService = {
   /**
    * Common / Configuration Data
    */
-  getStates: () => api.get('/admin/states'),
+  // the States page always lists every state the admin may see, whatever the header selector says
+  getStates: () => api.get('/admin/states', { headers: { 'x-admin-state': 'all' } }),
   createState: (data) => api.post('/admin/states', data),
   updateState: (id, data) => api.patch(`/admin/states/${id}`, data),
   deleteState: (id) => api.delete(`/admin/states/${id}`),

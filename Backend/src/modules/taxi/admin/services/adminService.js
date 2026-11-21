@@ -41,7 +41,7 @@ import { SetPrice } from '../models/SetPrice.js';
 import { ServiceLocation } from '../models/ServiceLocation.js';
 import { State } from '../models/State.js';
 import { ReferralReward } from '../../referral/models/ReferralReward.js';
-import { clearAdminScopeCache, getActiveScope, getScopedLocationIds, isLocationInScope } from './adminScopeService.js';
+import { clearAdminScopeCache, getActiveScope, getScopedLocationIds, isLocationInScope, withoutAdminScope } from './adminScopeService.js';
 import { ServiceCenterStaff } from '../models/ServiceCenterStaff.js';
 import { ServiceStore } from '../models/ServiceStore.js';
 import { Vehicle } from '../models/Vehicle.js';
@@ -3407,14 +3407,17 @@ const seedInitialData = async () => {
   await ensureFleetOwnersSeeded();
 };
 
-export const ensureServiceLocationsSeeded = async () => {
+// The seeding routines below look at the WHOLE database (is the default city / owner there yet?). They must not run
+// inside a state-limited admin's scope: the filter would make everything look missing and they would try to create it
+// again (duplicate key errors), or be refused by the 'only inside your area' guard.
+export const ensureServiceLocationsSeeded = () => withoutAdminScope(async () => {
   if (await ServiceLocation.countDocuments() === 0) {
     const defaults = createDefaultAdminState();
     await ServiceLocation.insertMany(defaults.serviceLocations);
   }
-};
+});
 
-export const ensureFleetOwnersSeeded = async () => {
+export const ensureFleetOwnersSeeded = () => withoutAdminScope(async () => {
   const now = new Date();
 
   const serviceLocation = await ServiceLocation.findOneAndUpdate(
@@ -3465,13 +3468,13 @@ export const ensureFleetOwnersSeeded = async () => {
 
     await Owner.create(seed);
   }
-};
+});
 
-export const ensureAdminState = async () => {
+export const ensureAdminState = () => withoutAdminScope(async () => {
   await bootstrapFirstAdmin();
   await seedInitialData();
   return { ready: true };
-};
+});
 
 export const getAdminModuleInfo = async () => {
   const [

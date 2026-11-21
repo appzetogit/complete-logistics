@@ -367,7 +367,8 @@ api.interceptors.request.use(
     // State-wise admin view: the state picked in the admin header limits every admin request to that state.
     try {
       const selectedState = window.localStorage.getItem('adminSelectedState');
-      if (selectedState && String(config.url || '').startsWith('/admin')) {
+      // (a request that sets x-admin-state itself, e.g. the States list, keeps its own value)
+      if (selectedState && String(config.url || '').startsWith('/admin') && !config.headers?.['x-admin-state']) {
         config.headers['x-admin-state'] = selectedState;
       }
     } catch {

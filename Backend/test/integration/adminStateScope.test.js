@@ -201,3 +201,33 @@ test('dashboard totals follow the scope: the state admin counts only their state
   assert.ok(all.totalUsers > mine.totalUsers, 'the super admin total is the sum over all states');
   assert.equal(mine.totalDrivers.total, await t.m.Driver.countDocuments({ area_location_id: indore._id }), 'mine drivers');
 });
+
+test('a state-limited admin can open the owners list: the default-owner seeding runs outside their scope', async () => {
+  const Owner = t.mongoose.model('TaxiOwner');
+  await Owner.collection.insertMany([
+    { name: 'Indore Vendor', mobile: '9210000001', email: 'iv@example.com', service_location_id: indore._id, approve: true, active: true, status: 'approved', createdAt: new Date(), updatedAt: new Date() },
+    { name: 'Pune Vendor', mobile: '9210000002', email: 'pv@example.com', service_location_id: pune._id, approve: true, active: true, status: 'approved', createdAt: new Date(), updatedAt: new Date() },
+  ]);
+  // before the fix this answered 409 (duplicate key): the seeding routine saw the filtered database and tried to create the default city again
+  const mine = await get('/v1/admin/owner-management/manage-owners', mpAdmin);
+  assert.equal(mine.status, 200, mine.text);
+  const names = (mine.body.data.results || []).map((o) => o.name);
+  assert.ok(names.includes('Indore Vendor'), JSON.stringify(names));
+  assert.ok(!names.includes('Pune Vendor'), 'a Maharashtra vendor is not visible');
+
+  const all = await get('/v1/admin/owner-management/manage-owners', superAdmin);
+  const allNames = (all.body.data.results || []).map((o) => o.name);
+  assert.ok(allNames.includes('Indore Vendor') && allNames.includes('Pune Vendor'));
+  const puneOwner = await Owner.findOne({ name: 'Pune Vendor' }).lean();
+  assert.equal((await get(`/v1/admin/owner-management/manage-owners/${puneOwner._id}`, mpAdmin)).status, 404, 'by id too');
+});
+
+test('the browser preflight allows the x-admin-state header (otherwise the state selector breaks every admin request)', async () => {
+  const res = await fetch(`${t.baseUrl}/api/v1/admin/users`, {
+    method: 'OPTIONS',
+    headers: { Origin: 'https://www.rentol.in', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization,x-admin-state' },
+  });
+  assert.equal(res.status, 204);
+  const allowed = String(res.headers.get('access-control-allow-headers') || '').toLowerCase();
+  assert.ok(allowed.includes('x-admin-state') && allowed.includes('authorization'), allowed);
+});

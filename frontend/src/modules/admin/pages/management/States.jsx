@@ -106,11 +106,11 @@ const States = () => {
         <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-4 rounded-[28px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50 md:grid-cols-4">
           <div className="md:col-span-2">
             <label className={labelClass}>State name</label>
-            <input className={inputClass} value={form.name} onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))} placeholder="Madhya Pradesh" />
+            <input className={inputClass} value={form.name} onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))} placeholder="e.g. Maharashtra" />
           </div>
           <div>
             <label className={labelClass}>Code</label>
-            <input className={inputClass} value={form.code} maxLength={6} onChange={(e) => setForm((c) => ({ ...c, code: e.target.value.toUpperCase() }))} placeholder="MP" />
+            <input className={inputClass} value={form.code} maxLength={6} onChange={(e) => setForm((c) => ({ ...c, code: e.target.value.toUpperCase() }))} placeholder="e.g. MH" />
           </div>
           <div>
             <label className={labelClass}>Status</label>
