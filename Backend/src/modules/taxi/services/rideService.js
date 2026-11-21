@@ -1499,18 +1499,24 @@ const PAID_COLLECTION_STATUSES = new Set(['paid', 'captured', 'success', 'comple
  * The driver tapped "Cash received" when completing a cash ride: the fare is paid, so the rider can no longer pay
  * it online as well (ALREADY_PAID). Does nothing when the ride was already paid another way (the rider paid
  * online at the drop) or is not a cash ride. An open QR for the ride is closed.
+ *
+ * allowOnline: an ONLINE-booked ride the rider has not paid yet, where the driver explicitly took the fare in cash
+ * (driver app "Cash received"). It then becomes a cash ride (paymentSwitchedFrom 'online'): settled like any cash ride
+ * (commission from the driver's wallet, the driver keeps the cash) and the rider is not asked to pay again.
  */
-const markRideCashReceived = async (ride) => {
-  if (ride.paymentMethod !== 'cash') return false;
+const markRideCashReceived = async (ride, { allowOnline = false } = {}) => {
+  const switchFromOnline = allowOnline && ride.paymentMethod === 'online';
+  if (ride.paymentMethod !== 'cash' && !switchFromOnline) return false;
   const now = new Date();
   const collection = ride.driverPaymentCollection || {};
   const openCollection = collection.providerId
     ? { providerId: collection.providerId, providerMode: collection.providerMode, status: collection.status }
     : null;
   const result = await Ride.updateOne(
-    { _id: ride._id, paymentMethod: 'cash', ...UNPAID_COLLECTION_FILTER },
+    { _id: ride._id, paymentMethod: switchFromOnline ? 'online' : 'cash', ...UNPAID_COLLECTION_FILTER },
     {
       $set: {
+        ...(switchFromOnline ? { paymentMethod: 'cash', paymentSwitchedFrom: 'online' } : {}),
         driverPaymentCollection: {
           provider: 'cash',
           providerId: '',
@@ -1531,6 +1537,11 @@ const markRideCashReceived = async (ride) => {
   if (result.modifiedCount && openCollection) {
     const { closeRidePaymentCollection } = await import('./ridePaymentService.js');
     await closeRidePaymentCollection(openCollection);
+  }
+  if (result.modifiedCount && switchFromOnline) {
+    // keep the in-memory ride in step with the database for the settlement that follows
+    ride.paymentMethod = 'cash';
+    ride.paymentSwitchedFrom = 'online';
   }
   return Boolean(result.modifiedCount);
 };
@@ -2498,7 +2509,10 @@ export const updateRideLifecycle = async ({
     ? String(paymentMethod || '').trim().toLowerCase() === 'cash'
     : cashReceived === true || cashReceived === 'true';
   if (nextStatus === RIDE_LIVE_STATUS.COMPLETED && tookCash) {
-    await markRideCashReceived(ride);
+    // An online-booked ride only turns into a cash ride on an explicit cashReceived: true (the driver's choice);
+    // an app that merely sends paymentMethod: 'cash' never converts an online ride.
+    const explicitCashReceived = cashReceived === true || cashReceived === 'true';
+    await markRideCashReceived(ride, { allowOnline: explicitCashReceived });
   }
 
   let walletUpdate = null;
