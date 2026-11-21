@@ -40,6 +40,7 @@ import { RentalQuoteRequest } from '../models/RentalQuoteRequest.js';
 import { SetPrice } from '../models/SetPrice.js';
 import { ServiceLocation } from '../models/ServiceLocation.js';
 import { State } from '../models/State.js';
+import { ReferralReward } from '../../referral/models/ReferralReward.js';
 import { clearAdminScopeCache, getActiveScope, getScopedLocationIds, isLocationInScope } from './adminScopeService.js';
 import { ServiceCenterStaff } from '../models/ServiceCenterStaff.js';
 import { ServiceStore } from '../models/ServiceStore.js';
@@ -5861,28 +5862,65 @@ export const updateReferralSettings = async (type, payload) => {
   return setting.referral[type];
 };
 
+/**
+ * Referral dashboard: real numbers from the accounts and the reward ledger (it used to return zeros).
+ *   referral users / drivers   accounts that signed up through someone's referral (referredBy is set)
+ *   monthly                    those sign-ups per month (Jan..Dec) of the current year, India time
+ *   active referrals           referred accounts that have taken a ride or already earned the referrer a reward
+ *   referral earning           credited referral rewards (rupees)
+ * Every count follows the admin's state / city scope (the account queries are scoped by the active scope).
+ */
 export const getReferralDashboard = async () => {
-  const [totalDrivers, totalUsers] = await Promise.all([
+  const year = new Date().getFullYear();
+  const referred = { referredBy: { $ne: null } };
+  const monthly = async (Model) => {
+    const rows = await Model.aggregate([
+      { $match: { ...referred, createdAt: { $gte: new Date(`${year}-01-01T00:00:00+05:30`), $lt: new Date(`${year + 1}-01-01T00:00:00+05:30`) } } },
+      { $group: { _id: { $month: { date: '$createdAt', timezone: 'Asia/Kolkata' } }, count: { $sum: 1 } } },
+    ]);
+    const series = Array(12).fill(0);
+    rows.forEach((row) => { series[row._id - 1] = row.count; });
+    return series;
+  };
+  const activeFilter = { ...referred, $or: [{ referredRideCompletionCount: { $gt: 0 } }, { referralRewardGrantedAt: { $ne: null } }] };
+
+  const [totalDrivers, totalUsers, referralUsers, referralDrivers, userMonthly, driverMonthly, activeUsers, activeDrivers] = await Promise.all([
     Driver.countDocuments(),
     User.countDocuments(),
+    User.countDocuments(referred),
+    Driver.countDocuments(referred),
+    monthly(User),
+    monthly(Driver),
+    User.countDocuments(activeFilter),
+    Driver.countDocuments(activeFilter),
   ]);
 
-  // Mocking some parts for the dashboard view
+  // The reward ledger has no city of its own: a limited admin only counts payouts to accounts inside their area.
+  const rewardFilter = { status: 'CREDITED' };
+  if (getActiveScope()) {
+    const [userIds, driverIds] = await Promise.all([User.find({}).distinct('_id'), Driver.find({}).distinct('_id')]);
+    rewardFilter.payeeId = { $in: [...userIds, ...driverIds] };
+  }
+  const [earning] = await ReferralReward.aggregate([
+    { $match: rewardFilter },
+    { $group: { _id: null, total: { $sum: '$amount' } } },
+  ]);
+
   return {
     total_drivers: totalDrivers,
     total_users: totalUsers,
-    active_referrals: 0,
-    referral_earning: 0,
+    active_referrals: activeUsers + activeDrivers,
+    referral_earning: Math.round((earning?.total || 0) * 100) / 100,
     user_referrals: {
-      normal_user: totalUsers,
-      referral_user: 0,
-      monthly: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      normal_user: Math.max(0, totalUsers - referralUsers),
+      referral_user: referralUsers,
+      monthly: userMonthly,
     },
     driver_referrals: {
-      normal_driver: totalDrivers,
-      referral_driver: 0,
-      monthly: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    }
+      normal_driver: Math.max(0, totalDrivers - referralDrivers),
+      referral_driver: referralDrivers,
+      monthly: driverMonthly,
+    },
   };
 };
 
