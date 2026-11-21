@@ -127,6 +127,8 @@ export const resolveAdminScope = async ({ admin, isSuperAdmin, selectedState = '
 
 // ---- the filter for one model -----------------------------------------------------------------------------------
 
+// the cache holds a PROMISE (.exec()): a mongoose Query can only be awaited once, and two queries of one request
+// (for example two aggregates in a Promise.all) both need these ids.
 const idsInScope = async (scope, modelName) => {
   const key = `ids:${modelName}`;
   if (!scope.cache.has(key)) {
@@ -134,7 +136,7 @@ const idsInScope = async (scope, modelName) => {
     scope.cache.set(
       key,
       Model
-        ? Model.find({ [SCOPE_RULES[modelName]?.field || 'service_location_id']: { $in: scope.locationIds } }).setOptions({ skipAdminScope: true }).distinct('_id')
+        ? Model.find({ [SCOPE_RULES[modelName]?.field || 'service_location_id']: { $in: scope.locationIds } }).setOptions({ skipAdminScope: true }).distinct('_id').exec()
         : Promise.resolve([]),
     );
   }

@@ -291,3 +291,12 @@ test('putting a driver in a city moves him into that city\'s state (his area lab
   assert.ok(rowsOf(await get('/v1/admin/drivers?limit=100', mhAdmin)).includes(String(driver._id)), 'now listed for Maharashtra');
   assert.ok(!rowsOf(await get('/v1/admin/drivers?limit=100', mpAdmin)).includes(String(driver._id)), 'no longer listed for MP');
 });
+
+// ---- wallet pages: two scoped queries in one request (Promise.all) must not break ---------------------------------
+
+test('driver withdrawal requests page works for a state-limited admin (scope ids are shared by parallel queries)', async () => {
+  const res = await get('/v1/admin/wallet/drivers/withdrawals', mpAdmin);
+  assert.equal(res.status, 200, res.text);
+  const all = await get('/v1/admin/wallet/drivers/withdrawals', superAdmin);
+  assert.equal(all.status, 200, all.text);
+});
