@@ -5,7 +5,8 @@
  *
  * What it removes
  *   bookings   rides (their chat, refunds and advance records are inside the ride), deliveries, ride bids,
- *              gateway payment orders (Cashfree / Razorpay order records), referral reward entries
+ *              gateway payment orders (Cashfree / Razorpay order records), referral reward entries,
+ *              withdrawal requests (the drivers' / owners' withdraw history, pending ones included)
  *   wallets    rider wallets: transactions removed, balance / refund wallet / held amount set to 0
  *              driver wallets: transactions removed, wallet.balance set to 0 (cash limit and blocked flag are kept)
  *              owner wallets: transactions removed, wallet.balance set to 0
@@ -14,7 +15,7 @@
  *   cleanup    riders' currentRideId cleared, drivers' isOnRide set to false (no ride exists any more)
  *
  * What it does NOT touch
- *   accounts (riders, drivers, owners, admins), vehicles, prices, cities and zones, settings, withdrawal requests,
+ *   accounts (riders, drivers, owners, admins), vehicles, prices, cities and zones, settings,
  *   rental / bus / pooling / owner bookings, promo redemptions, referral codes and counters, subscriptions,
  *   support tickets, driver statistics.
  *
@@ -57,6 +58,7 @@ const main = async () => {
   const UserWallet = await load(`${base}user/models/UserWallet.js`, 'UserWallet');
   const WalletTransaction = await load(`${base}driver/models/WalletTransaction.js`, 'WalletTransaction');
   const OwnerWalletTransaction = await load(`${base}admin/models/OwnerWalletTransaction.js`, 'OwnerWalletTransaction');
+  const WithdrawalRequest = await load(`${base}admin/models/WithdrawalRequest.js`, 'WithdrawalRequest');
   const Driver = await load(`${base}driver/models/Driver.js`, 'Driver');
   const Owner = await load(`${base}admin/models/Owner.js`, 'Owner');
   const User = await load(`${base}user/models/User.js`, 'User');
@@ -69,6 +71,7 @@ const main = async () => {
     ['referral rewards', ReferralReward],
     ['driver wallet transactions', WalletTransaction],
     ['owner wallet transactions', OwnerWalletTransaction],
+    ['withdrawal requests', WithdrawalRequest],
   ];
 
   console.log(`Database: ${dbName}`);
@@ -112,7 +115,7 @@ const main = async () => {
   const onRide = await Driver.updateMany({ isOnRide: true }, { $set: { isOnRide: false } });
   console.log(`  riders with a current ride cleared: ${riders.modifiedCount}, drivers set off-ride: ${onRide.modifiedCount}`);
 
-  console.log('\nDone. Restart the backend (pm2 restart 25 --update-env) so nothing keeps old state in memory.');
+  console.log('\nDone. Restart the backend (pm2 restart complete-logistics-backend --update-env) so nothing keeps old state in memory.');
   await mongoose.disconnect();
 };
 
