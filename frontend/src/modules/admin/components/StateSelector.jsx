@@ -51,7 +51,7 @@ const StateSelector = () => {
 
   if (states.length === 1) {
     return (
-      <div className="hidden items-center gap-1.5 rounded border border-slate-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 sm:flex">
+      <div className="hidden h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[13px] font-medium text-slate-700 sm:flex">
         <MapPinned size={13} />
         {states[0].name}
       </div>
@@ -72,12 +72,12 @@ const StateSelector = () => {
   };
 
   return (
-    <label className="hidden items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 sm:flex">
+    <label className="hidden h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[13px] font-medium text-slate-700 transition-all hover:border-slate-300 hover:bg-slate-50 sm:flex">
       <MapPinned size={13} />
       <select
         value={selected}
         onChange={handleChange}
-        className="bg-transparent text-[11px] font-bold text-slate-700 outline-none"
+        className="cursor-pointer bg-transparent text-[13px] font-medium text-slate-700 outline-none"
         aria-label="State"
       >
         <option value="">All states</option>
