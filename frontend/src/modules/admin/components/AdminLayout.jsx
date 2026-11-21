@@ -1905,7 +1905,8 @@ const AdminLayout = () => {
               </div>
             </div>
 
-            <StateSelector />
+            {/* riders are not state-wise: the User List always shows every user, so no state picker there */}
+            {!/^\/admin\/users(\/|$)/.test(location.pathname) && <StateSelector />}
             <ModeSwitcher mode={mode} setMode={setMode} />
             <div className="h-6 w-px bg-slate-200 mx-1"></div>
 
