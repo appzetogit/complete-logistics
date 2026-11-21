@@ -274,3 +274,20 @@ test('a driver dispatched in a state-less "India" zone but labelled with a state
   assert.ok(!rowsOf(await get('/v1/admin/drivers?limit=100', punAdmin)).includes(String(driver._id)), 'not listed for Maharashtra');
   assert.equal((await get(`/v1/admin/drivers/${driver._id}`, punAdmin)).status, 404, 'not found for Maharashtra');
 });
+
+// ---- a driver follows the state of the city he is put in ---------------------------------------------------------
+
+test('putting a driver in a city moves him into that city\'s state (his area label follows)', async () => {
+  const driver = (await t.factories.driver({ name: 'Move Me', service_location_id: indore._id })).driver;
+  const mhAdmin = await makeSubAdmin({ state_ids: [mh._id] });
+  assert.ok(!rowsOf(await get('/v1/admin/drivers?limit=100', mhAdmin)).includes(String(driver._id)), 'not in Maharashtra yet');
+
+  const res = await t.api('PATCH', `/v1/admin/drivers/${driver._id}`, { token: superAdmin.token, body: { service_location_id: String(pune._id) } });
+  assert.equal(res.status, 200, res.text);
+  const saved = await t.m.Driver.findById(driver._id).lean();
+  assert.equal(String(saved.service_location_id), String(pune._id));
+  assert.equal(String(saved.area_location_id), String(pune._id), 'the area label follows the city');
+
+  assert.ok(rowsOf(await get('/v1/admin/drivers?limit=100', mhAdmin)).includes(String(driver._id)), 'now listed for Maharashtra');
+  assert.ok(!rowsOf(await get('/v1/admin/drivers?limit=100', mpAdmin)).includes(String(driver._id)), 'no longer listed for MP');
+});

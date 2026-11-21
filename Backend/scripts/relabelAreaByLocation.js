@@ -3,7 +3,8 @@
  * they are. Only the LABEL `area_location_id` is changed (it feeds the admin's state view and nothing else): dispatch,
  * pricing and a driver's `service_location_id` are never touched.
  *
- *   - driver: the nearest city that belongs to a state, from the driver's `location` (within --max-km)
+ *   - driver: the state of the city he was put in (his service_location_id) when that city has a state; otherwise the
+ *             nearest city that belongs to a state, from the driver's `location` (within --max-km)
  *   - ride:   the same, from the pickup point
  *   (riders are NOT state-wise: every admin sees every rider, so they are never touched here)
  *
@@ -83,15 +84,18 @@ const main = async () => {
     return best;
   };
 
-  const relabel = async (label, Model, pointOf, extraSelect = '') => {
+  const byId = new Map(targets.map((t) => [t.id, t]));
+  // ownCityOf: the city the record was put in by hand (a driver's service_location_id). If that city has a state it decides.
+  const relabel = async (label, Model, pointOf, extraSelect = '', ownCityOf = null) => {
     const moves = new Map();
     let changed = 0;
     let skipped = 0;
     const cursor = Model.find().select(`area_location_id ${extraSelect}`).lean().cursor();
     for await (const doc of cursor) {
+      const own = ownCityOf ? byId.get(String(ownCityOf(doc) || '')) : null;
       const point = pointOf(doc);
-      if (!validPoint(point)) { skipped += 1; continue; }
-      const target = nearest(point.map(Number));
+      if (!own && !validPoint(point)) { skipped += 1; continue; }
+      const target = own ? { ...own, km: 0 } : nearest(point.map(Number));
       if (!target) { skipped += 1; continue; }
       if (String(doc.area_location_id || '') === target.id) continue;
       const key = `${nameOf(doc.area_location_id)}  ->  ${target.name} (${target.state})`;
@@ -122,11 +126,11 @@ ${label} to put into ${city.name} (${city.state}): ${found.length} of ${phones.l
     return;
   }
 
-  await relabel('Drivers', Driver, (d) => d.location?.coordinates, 'location');
+  await relabel('Drivers', Driver, (d) => d.location?.coordinates, 'location service_location_id', (d) => d.service_location_id);
   // drivers that still sit in a state-less city after this: they need a city by hand
   const statelessIds = new Set(allLocations.filter((l) => !l.state_id).map((l) => String(l._id)));
-  const unplaced = (await Driver.find().select('name phone area_location_id location').lean()).filter((d) => !d.area_location_id || statelessIds.has(String(d.area_location_id)));
-  const willMove = (d) => validPoint(d.location?.coordinates) && nearest(d.location.coordinates.map(Number));
+  const unplaced = (await Driver.find().select('name phone area_location_id service_location_id location').lean()).filter((d) => !d.area_location_id || statelessIds.has(String(d.area_location_id)));
+  const willMove = (d) => byId.has(String(d.service_location_id || '')) || (validPoint(d.location?.coordinates) && nearest(d.location.coordinates.map(Number)));
   const needHand = unplaced.filter((d) => !willMove(d));
   console.log(`
 Drivers that cannot be placed by location (no real GPS point, or no city near): ${needHand.length}`);

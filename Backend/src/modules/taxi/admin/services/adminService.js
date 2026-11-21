@@ -5556,6 +5556,12 @@ export const updateDriver = async (id, payload, currentAdmin = null) => {
     }
   }
 
+  // A driver belongs to the state of the city he is put in: when the admin gives him a city (directly or through a
+  // zone), the state-wise label follows it.
+  if (update.service_location_id) {
+    update.area_location_id = update.service_location_id;
+  }
+
   if (payload.country !== undefined) {
     update.country = payload.country || null;
   }
