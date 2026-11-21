@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 .redigo-admin-root {
   --admin-sidebar: #05070D;
@@ -9,8 +9,8 @@
   --admin-text-secondary: #64748B;
   --admin-border: #E5E7EB;
 
-  --font-heading: 'Poppins', sans-serif;
-  --font-body: 'Poppins', sans-serif;
+  --font-heading: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
 
   /* Page content fade-up on load */
   animation: adminFadeUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;

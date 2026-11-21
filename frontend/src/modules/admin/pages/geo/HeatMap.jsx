@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Circle, GoogleMap } from '@react-google-maps/api';
 import { 
   ChevronRight, 
@@ -194,12 +194,22 @@ const HeatMap = () => {
     return [...buckets.values()];
   }, [filteredData, heatSource]);
 
-  const mapCenter = useMemo(() => {
-    if (requestOverlays.length > 0) {
-      return requestOverlays[0].center;
-    }
-    return INDIA_CENTER;
-  }, [requestOverlays]);
+  // The view is placed once (on load, then on the first data that arrives). After that the admin is in control: a data
+  // refresh or a filter change must not pull the map back (center / zoom are NOT controlled props any more).
+  const [mapInstance, setMapInstance] = useState(null);
+  const centeredOnData = useRef(false);
+  const handleMapLoad = useCallback((map) => {
+    map.setCenter(INDIA_CENTER);
+    map.setZoom(11);
+    setMapInstance(map);
+  }, []);
+  const hasOverlays = requestOverlays.length > 0;
+  useEffect(() => {
+    if (!mapInstance || !hasOverlays || centeredOnData.current) return;
+    mapInstance.setCenter(requestOverlays[0].center);
+    centeredOnData.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapInstance, hasOverlays]);
 
   const circleRadiusMeters = Math.max(250, radius * 140);
 
@@ -234,7 +244,7 @@ const HeatMap = () => {
               ) : HAS_VALID_GOOGLE_MAPS_KEY && isLoaded ? (
                  <>
                    <GoogleMap
-                      mapContainerStyle={MAP_CONTAINER_STYLE} center={mapCenter} zoom={11} options={mapOptions}
+                      mapContainerStyle={MAP_CONTAINER_STYLE} options={mapOptions} onLoad={handleMapLoad}
                    >
                       {requestOverlays.map((overlay) => (
                         <Circle

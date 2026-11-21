@@ -7,7 +7,7 @@ import { ADMIN_PERMISSION_GROUPS } from '../../constants/adminAccess';
 
 const inputClass =
   'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none transition-all placeholder:text-slate-400 focus:border-[#1D4ED8] focus:ring-4 focus:ring-blue-100';
-const labelClass = 'mb-2 block text-xs font-black uppercase tracking-[0.18em] text-slate-500';
+const labelClass = 'mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500';
 
 const initialForm = {
   name: '',
@@ -230,7 +230,7 @@ const AdminCreate = () => {
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
         <div className="flex flex-col items-center gap-3">
           <Loader2 size={30} className="animate-spin text-blue-600" />
-          <p className="text-xs font-black uppercase tracking-[0.24em] text-slate-400">Preparing access form</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Preparing access form</p>
         </div>
       </div>
     );
@@ -241,12 +241,12 @@ const AdminCreate = () => {
       <div className="mx-auto max-w-7xl space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <div className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.22em] text-slate-400">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
               <span>Admin Management</span>
               <ChevronRight size={12} />
               <span className="text-slate-700">{isEdit ? 'Edit Admin' : 'Create Subadmin'}</span>
             </div>
-            <h1 className="text-3xl font-black tracking-tight text-slate-950">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-950">
               {isEdit ? 'Update Scoped Access' : 'Create Scoped Subadmin'}
             </h1>
             <p className="mt-2 max-w-2xl text-sm font-semibold text-slate-500">
@@ -257,7 +257,7 @@ const AdminCreate = () => {
           <button
             type="button"
             onClick={() => navigate('/admin/management/admins')}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 transition-all hover:bg-slate-50"
+            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition-all hover:bg-slate-50"
           >
             <ArrowLeft size={16} />
             Back to Admins
@@ -266,13 +266,13 @@ const AdminCreate = () => {
 
         <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-6 xl:grid-cols-12">
           <div className="space-y-6 xl:col-span-4">
-            <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
               <div className="mb-6 flex items-center gap-3">
                 <div className="rounded-2xl bg-blue-50 p-3 text-blue-700">
                   <UserRound size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-[0.18em] text-slate-900">Identity</h3>
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-900">Identity</h3>
                   <p className="text-xs font-semibold text-slate-500">Who will use this access profile</p>
                 </div>
               </div>
@@ -289,7 +289,7 @@ const AdminCreate = () => {
                         key={option.key}
                         type="button"
                         onClick={() => setField('admin_type', option.key)}
-                        className={`rounded-2xl border px-4 py-3 text-sm font-black uppercase tracking-[0.14em] transition-all ${
+                        className={`rounded-2xl border px-4 py-3 text-sm font-semibold uppercase tracking-wide transition-all ${
                           form.admin_type === option.key
                             ? 'border-blue-200 bg-blue-50 text-blue-700'
                             : 'border-slate-200 bg-white text-slate-500'
@@ -329,7 +329,7 @@ const AdminCreate = () => {
                     }`}
                   >
                     <span>{form.active ? 'Active account' : 'Inactive account'}</span>
-                    <span className="text-xs font-black uppercase tracking-[0.18em]">
+                    <span className="text-xs font-semibold uppercase tracking-wider">
                       {form.active ? 'Enabled' : 'Disabled'}
                     </span>
                   </button>
@@ -337,13 +337,13 @@ const AdminCreate = () => {
               </div>
             </div>
 
-            <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
               <div className="mb-6 flex items-center gap-3">
                 <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">
                   <LockKeyhole size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-[0.18em] text-slate-900">Credentials</h3>
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-900">Credentials</h3>
                   <p className="text-xs font-semibold text-slate-500">
                     {isEdit ? 'Leave blank to keep the current password.' : 'Set initial login password.'}
                   </p>
@@ -374,13 +374,13 @@ const AdminCreate = () => {
           </div>
 
           <div className="space-y-6 xl:col-span-8">
-            <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
               <div className="mb-6 flex items-center gap-3">
                 <div className="rounded-2xl bg-violet-50 p-3 text-violet-700">
                   <Shield size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-[0.18em] text-slate-900">Sidebar Permissions</h3>
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-900">Sidebar Permissions</h3>
                   <p className="text-xs font-semibold text-slate-500">Choose which menu groups and modules the admin can access.</p>
                 </div>
               </div>
@@ -393,7 +393,7 @@ const AdminCreate = () => {
                 <div className="space-y-6">
                   {ADMIN_PERMISSION_GROUPS.map((group) => (
                     <div key={group.title} className="space-y-3">
-                      <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">{group.title}</div>
+                      <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">{group.title}</div>
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                         {group.items.map((permission) => (
                           <PermissionCheckbox
@@ -410,13 +410,13 @@ const AdminCreate = () => {
               )}
             </div>
 
-            <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
               <div className="mb-6 flex items-center gap-3">
                 <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
                   <MapPinned size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-[0.18em] text-slate-900">Service Location Scope</h3>
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-900">Service Location Scope</h3>
                   <p className="text-xs font-semibold text-slate-500">Subadmins only see records inside the locations and zones selected here.</p>
                 </div>
               </div>
@@ -492,18 +492,18 @@ const AdminCreate = () => {
               )}
             </div>
 
-            <div className="flex flex-col gap-3 rounded-[30px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50 sm:flex-row sm:justify-end">
+            <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50 sm:flex-row sm:justify-end">
               <button
                 type="button"
                 onClick={() => navigate('/admin/management/admins')}
-                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition-all hover:bg-slate-50"
+                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition-all hover:bg-slate-50"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#1D4ED8] px-6 py-3 text-sm font-black text-white shadow-lg shadow-blue-200 transition-all hover:-translate-y-0.5 hover:bg-[#1E40AF] disabled:cursor-not-allowed disabled:opacity-70"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#1D4ED8] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-200 transition-all hover:-translate-y-0.5 hover:bg-[#1E40AF] disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {saving ? <Loader2 size={16} className="animate-spin" /> : null}
                 {isEdit ? 'Update Admin Access' : 'Create Admin Access'}

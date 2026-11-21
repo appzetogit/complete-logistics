@@ -19,6 +19,20 @@ const StatusToggle = ({ status, onToggle }) => (
 import UserModal from './UserModal';
 import { adminService } from '../../services/adminService';
 
+// "22 Nov 2026" with the time underneath, in India time; "N/A" when the account has no signup date.
+const formatJoined = (value) => {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return <span className="text-xs font-medium text-gray-500">N/A</span>;
+  const day = date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+  const time = date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+  return (
+    <div className="flex flex-col">
+      <span className="font-medium text-gray-900">{day}</span>
+      <span className="text-xs text-gray-500">{time}</span>
+    </div>
+  );
+};
+
 const GENDER_LABELS = {
   male: 'Male',
   female: 'Female',
@@ -79,6 +93,7 @@ const UserList = () => {
           acquiredByEmployeeId: u.acquiredByEmployeeId || '',
           acquiredByEmployeeCode: u.acquiredByEmployeeCode || '',
           acquiredByEmployeeName: u.acquiredByEmployeeName || '',
+          joinedAt: u.createdAt || null,
           status: u.active ? 'Active' : 'Suspended',
         }));
         setUsers(mapped);
@@ -376,6 +391,7 @@ const UserList = () => {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-900">Gender</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-900">Mobile</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-900">Email</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-900">Joined</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-900">ID Proof</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-900">Employee Referral</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-gray-900">Status</th>
@@ -408,6 +424,9 @@ const UserList = () => {
                   <td className="px-4 py-3 text-sm text-gray-700">{user.gender}</td>
                   <td className="px-4 py-3 text-sm text-gray-700">{user.phone}</td>
                   <td className="px-4 py-3 text-sm text-gray-700">{user.email}</td>
+                  <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
+                    {formatJoined(user.joinedAt)}
+                  </td>
                   <td className="px-4 py-3 text-sm text-gray-700">
                     {user.governmentIdProof?.imageUrl ? (
                       <a
