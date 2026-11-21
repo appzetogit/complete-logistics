@@ -4540,7 +4540,9 @@ export const listDrivers = async ({ page = 1, limit = 50, status, search, approv
   const query = { deletedAt: null };
   if (currentAdmin) {
     assertAdminPermission(currentAdmin, 'drivers.view', 'drivers');
-    Object.assign(query, buildServiceLocationScopeQuery(currentAdmin));
+    // A state / city-limited admin is already limited by the scope plugin (the driver's area label). The dispatch-city
+    // filter would hide drivers whose dispatch city is a country-wide zone, so it only applies without that scope.
+    if (!getActiveScope()) Object.assign(query, buildServiceLocationScopeQuery(currentAdmin));
   }
 
   if (status) {
@@ -5451,11 +5453,11 @@ export const createDriver = async (payload = {}, currentAdmin = null) => {
 export const updateDriver = async (id, payload, currentAdmin = null) => {
   if (currentAdmin) {
     assertAdminPermission(currentAdmin, 'drivers.view', 'drivers');
-    const existingDriver = await Driver.findById(id).select('service_location_id').lean();
+    const existingDriver = await Driver.findById(id).select('service_location_id area_location_id').lean();
     if (!existingDriver) {
       throw new ApiError(404, 'Driver not found');
     }
-    assertServiceLocationAccess(currentAdmin, existingDriver.service_location_id);
+    assertServiceLocationAccess(currentAdmin, existingDriver.area_location_id || existingDriver.service_location_id);
   }
 
   const update = {};
@@ -5619,20 +5621,20 @@ export const getDriverById = async (id, currentAdmin = null) => {
   }
   if (currentAdmin) {
     assertAdminPermission(currentAdmin, 'drivers.view', 'drivers');
-    assertServiceLocationAccess(currentAdmin, driver.service_location_id);
+    assertServiceLocationAccess(currentAdmin, driver.area_location_id || driver.service_location_id);
   }
   return serializeDriver(driver);
 };
 
 // Lifts a driver's "too many cancels" block and resets today's count.
 export const clearDriverCancelBlockForAdmin = async (id, currentAdmin = null) => {
-  const driver = await Driver.findById(id).select('service_location_id').lean();
+  const driver = await Driver.findById(id).select('service_location_id area_location_id').lean();
   if (!driver) {
     throw new ApiError(404, 'Driver not found');
   }
   if (currentAdmin) {
     assertAdminPermission(currentAdmin, 'drivers.view', 'drivers');
-    assertServiceLocationAccess(currentAdmin, driver.service_location_id);
+    assertServiceLocationAccess(currentAdmin, driver.area_location_id || driver.service_location_id);
   }
 
   const status = await clearDriverCancelBlock({ driverId: id });

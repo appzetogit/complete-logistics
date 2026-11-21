@@ -31,11 +31,13 @@ const uniqueIds = (values = []) => {
 
 // ---- what is scoped ---------------------------------------------------------------------------------------------
 // field: the model carries the service location itself. via: it is reached through another scoped model.
+// global: the model is NOT limited by state (every admin sees all of it). Riders are global: a rider is not tied to one
+// state, so the Users screens, a rider's wallet and subscriptions always show every rider.
 export const SCOPE_RULES = {
   // area_location_id is a label only for this view; rides and drivers also fall back to their dispatch service_location_id
   TaxiRide: { field: 'area_location_id', mirrorFrom: 'service_location_id' },
   TaxiDriver: { field: 'area_location_id', mirrorFrom: 'service_location_id' },
-  TaxiUser: { field: 'area_location_id' },
+  TaxiUser: { global: true },
   TaxiOwner: { field: 'service_location_id' },
   TaxiFleetVehicle: { field: 'service_location_id' },
   TaxiServiceStore: { field: 'service_location_id' },
@@ -44,13 +46,11 @@ export const SCOPE_RULES = {
   TaxiSetPrice: { field: 'service_location_id' },
   TaxiServiceLocation: { field: '_id' },
   WalletTransaction: { via: [{ field: 'driverId', model: 'TaxiDriver' }] },
-  TaxiUserWallet: { via: [{ field: 'userId', model: 'TaxiUser' }] },
-  TaxiUserSubscription: { via: [{ field: 'userId', model: 'TaxiUser' }] },
   TaxiWithdrawalRequest: {
     via: [{ field: 'driver_id', model: 'TaxiDriver' }, { field: 'owner_id', model: 'TaxiOwner' }],
   },
   TaxiSupportTicket: {
-    via: [{ field: 'driver_id', model: 'TaxiDriver' }, { field: 'owner_id', model: 'TaxiOwner' }, { field: 'user_id', model: 'TaxiUser' }],
+    via: [{ field: 'driver_id', model: 'TaxiDriver' }, { field: 'owner_id', model: 'TaxiOwner' }, { field: 'user_id', model: 'TaxiUser', global: true }],
   },
 };
 
@@ -144,13 +144,14 @@ const idsInScope = async (scope, modelName) => {
 /** The mongo filter that limits `modelName` to the active scope, or null when nothing applies. */
 export const buildScopeFilter = async (modelName, scope = getActiveScope()) => {
   const rule = SCOPE_RULES[modelName];
-  if (!scope || !rule) return null;
+  if (!scope || !rule || rule.global) return null;
 
   if (rule.field) return { [rule.field]: { $in: scope.locationIds } };
 
   const clauses = [];
   for (const link of rule.via) {
-    clauses.push({ [link.field]: { $in: await idsInScope(scope, link.model) } });
+    // a global model (riders) has no area: every record of that kind is visible, so the link only has to be set
+    clauses.push(link.global ? { [link.field]: { $ne: null } } : { [link.field]: { $in: await idsInScope(scope, link.model) } });
   }
   return clauses.length === 1 ? clauses[0] : { $or: clauses };
 };

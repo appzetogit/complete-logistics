@@ -7,7 +7,9 @@ Every admin sees, opens and changes only the data of the states (cities) assigne
 ```
 State  ->  Service Locations (cities)  ->  Zones
                  |
-   rides, drivers, riders, owners, vehicles, stores, airports, set prices, wallets, support ...
+   rides, drivers, owners, vehicles, stores, airports, set prices, driver wallets, support ...
+
+   Riders (users) are NOT state-wise: every admin sees every rider.
 ```
 
 - A **state** is a master record (Admin -> Management -> States). Each **service location** (Pricing -> Service Location) belongs to one state.
@@ -30,10 +32,12 @@ A limited admin cannot hand out areas outside its own, cannot see super admins, 
 | Record | Field | Set when |
 | --- | --- | --- |
 | Ride | `area_location_id` | At booking: the ride's `service_location_id`, else the zone, else the zone containing the pickup, else the nearest city within 150 km |
-| Rider | `area_location_id` | Set once from the first ride's pickup |
+| Rider | `area_location_id` | A label only; it is **not** used to limit admins (every admin sees every rider) |
 | Driver | `area_location_id` | Copied from `service_location_id` when the driver is created (backfill for the rest) |
 | Owner, fleet vehicle, store, airport, zone, set price | `service_location_id` | Chosen by the admin who creates it |
-| Wallet transactions, withdrawals, subscriptions, support tickets | through the driver / rider / owner | automatic |
+| Driver wallet transactions, withdrawals | through the driver / owner | automatic |
+| Rider wallets and subscriptions | not limited | every admin sees them (riders are global) |
+| Support tickets | driver / owner tickets follow the state; rider tickets are visible to all | automatic |
 
 `area_location_id` is only a label for this view. It never changes dispatch or pricing (those keep using `service_location_id`).
 
@@ -60,7 +64,7 @@ Existing sub-admins already have service locations (the form required one): they
 
 ## Limits to know
 
-- A record without a city (for example a rider who never booked) is invisible to limited admins and visible to the super admin with "All states".
+- A record without a city (for example a driver who never sent a location and was never given a city) is invisible to limited admins and visible to the super admin with "All states". Riders are not affected.
 - Populating a field that points to an out-of-scope record (for example a ride in scope whose driver is in another state) returns an empty reference.
 - Raw `aggregate` stages that `$lookup` into another collection are not filtered inside the lookup (the main collection is).
 - `estimatedDocumentCount` is not filterable; the code does not use it.

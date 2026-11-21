@@ -84,17 +84,20 @@ before(async () => {
 });
 after(async () => { await t.stop(); });
 
-test('a state-limited admin lists only the riders of that state', async () => {
+test('riders are NOT state-wise: every admin, limited or not, lists and opens every rider', async () => {
   const res = await get('/v1/admin/users?limit=100', mpAdmin);
   assert.equal(res.status, 200, res.text);
   const found = rowsOf(res);
   assert.ok(found.includes(String(userIndore._id)));
-  assert.ok(!found.includes(String(userPune._id)), 'a Maharashtra rider is invisible to the MP admin');
+  assert.ok(found.includes(String(userPune._id)), 'a Maharashtra rider is visible to the MP admin too');
+  assert.equal((await get(`/v1/admin/users/${userPune._id}`, mpAdmin)).status, 200);
+  // even the state selector does not narrow riders
+  const narrowed = rowsOf(await get('/v1/admin/users?limit=100', mpAdmin, { 'x-admin-state': String(mp._id) }));
+  assert.ok(narrowed.includes(String(userPune._id)));
 });
 
 test('opening a record of another state is a not-found, for reading and for changing it', async () => {
   assert.equal((await get(`/v1/admin/users/${userIndore._id}`, mpAdmin)).status, 200);
-  assert.equal((await get(`/v1/admin/users/${userPune._id}`, mpAdmin)).status, 404);
   assert.equal((await get(`/v1/admin/drivers/${driverPune._id}`, mpAdmin)).status, 404);
   const change = await t.api('PATCH', `/v1/admin/drivers/${driverPune._id}`, { token: mpAdmin.token, body: { name: 'Hacked' } });
   assert.ok([403, 404].includes(change.status), change.text);
@@ -115,20 +118,21 @@ test('a super admin sees every state, or one state through the selector', async 
   const all = rowsOf(await get('/v1/admin/users?limit=100', superAdmin));
   assert.ok(all.includes(String(userIndore._id)) && all.includes(String(userPune._id)));
 
-  const onlyMh = rowsOf(await get('/v1/admin/users?limit=100', superAdmin, { 'x-admin-state': String(mh._id) }));
-  assert.ok(onlyMh.includes(String(userPune._id)));
-  assert.ok(!onlyMh.includes(String(userIndore._id)));
+  // drivers follow the selector (riders do not)
+  const onlyMh = rowsOf(await get('/v1/admin/drivers?limit=100', superAdmin, { 'x-admin-state': String(mh._id) }));
+  assert.ok(onlyMh.includes(String(driverPune._id)));
+  assert.ok(!onlyMh.includes(String(driverIndore._id)));
 
   const everything = rowsOf(await get('/v1/admin/users?limit=100', superAdmin, { 'x-admin-state': 'all' }));
   assert.ok(everything.includes(String(userIndore._id)) && everything.includes(String(userPune._id)));
 });
 
 test('the selector can only narrow a limited admin, never widen it', async () => {
-  const other = await get('/v1/admin/users?limit=100', mpAdmin, { 'x-admin-state': String(mh._id) });
+  const other = await get('/v1/admin/drivers?limit=100', mpAdmin, { 'x-admin-state': String(mh._id) });
   assert.equal(other.status, 200, other.text);
   assert.deepEqual(rowsOf(other), [], 'MP admin asking for Maharashtra gets nothing');
-  const same = rowsOf(await get('/v1/admin/users?limit=100', mpAdmin, { 'x-admin-state': String(mp._id) }));
-  assert.ok(same.includes(String(userIndore._id)));
+  const same = rowsOf(await get('/v1/admin/drivers?limit=100', mpAdmin, { 'x-admin-state': String(mp._id) }));
+  assert.ok(same.includes(String(driverIndore._id)));
 });
 
 test('a legacy sub-admin with no state or city assigned keeps seeing everything', async () => {
@@ -138,12 +142,12 @@ test('a legacy sub-admin with no state or city assigned keeps seeing everything'
 
 test('a city assigned directly limits an admin too, and an admin with a state that has no cities sees nothing', async () => {
   const cityAdmin = await makeSubAdmin({ service_location_ids: [pune._id] });
-  const found = rowsOf(await get('/v1/admin/users?limit=100', cityAdmin));
-  assert.ok(found.includes(String(userPune._id)) && !found.includes(String(userIndore._id)));
+  const found = rowsOf(await get('/v1/admin/drivers?limit=100', cityAdmin));
+  assert.ok(found.includes(String(driverPune._id)) && !found.includes(String(driverIndore._id)));
 
   const empty = await State.create({ name: 'Goa', code: 'GA' });
   const goaAdmin = await makeSubAdmin({ state_ids: [empty._id] });
-  assert.deepEqual(rowsOf(await get('/v1/admin/users?limit=100', goaAdmin)), []);
+  assert.deepEqual(rowsOf(await get('/v1/admin/drivers?limit=100', goaAdmin)), []);
 });
 
 test('states: super admin manages them, a limited admin only sees their own', async () => {
@@ -196,9 +200,12 @@ test('dashboard totals follow the scope: the state admin counts only their state
   const mine = (await get('/v1/admin/dashboard/data', mpAdmin)).body.data;
   const all = (await get('/v1/admin/dashboard/data', superAdmin)).body.data;
   const onlyMh = (await get('/v1/admin/dashboard/data', superAdmin, { 'x-admin-state': String(mh._id) })).body.data;
-  assert.equal(mine.totalUsers, await t.m.User.countDocuments({ area_location_id: indore._id }), 'mine users');
-  assert.equal(onlyMh.totalUsers, await t.m.User.countDocuments({ area_location_id: pune._id }), 'mh users');
-  assert.ok(all.totalUsers > mine.totalUsers, 'the super admin total is the sum over all states');
+  // riders are not state-wise: everybody counts every rider
+  const everyRider = await t.m.User.countDocuments({});
+  assert.equal(mine.totalUsers, everyRider, 'mine users = all riders');
+  assert.equal(onlyMh.totalUsers, everyRider, 'mh users = all riders');
+  assert.equal(all.totalUsers, everyRider, 'super admin users = all riders');
+  assert.ok(all.totalDrivers.total > mine.totalDrivers.total, 'drivers still follow the state');
   assert.equal(mine.totalDrivers.total, await t.m.Driver.countDocuments({ area_location_id: indore._id }), 'mine drivers');
 });
 
@@ -230,4 +237,40 @@ test('the browser preflight allows the x-admin-state header (otherwise the state
   assert.equal(res.status, 204);
   const allowed = String(res.headers.get('access-control-allow-headers') || '').toLowerCase();
   assert.ok(allowed.includes('x-admin-state') && allowed.includes('authorization'), allowed);
+});
+
+// ---- labelling: a city in a state wins over a state-less country-wide location ------------------------------------
+
+test('area label: a state-less country-wide location only is the last resort; the nearest city with a state wins', async () => {
+  const { resolveAreaLocationId } = await import('../../src/modules/taxi/services/serviceAreaService.js');
+  const india = await ServiceLocation.create({
+    name: 'India (country-wide)', service_location_name: 'India (country-wide)', state_id: null,
+    location: { type: 'Point', coordinates: [78.9629, 20.5937] },
+  });
+  const nearIndore = [75.9, 22.75];
+  // explicit country-wide id (the driver picked it at signup) + a point near Indore: Indore wins
+  assert.equal(String(await resolveAreaLocationId({ serviceLocationId: india._id, coordinates: nearIndore })), String(indore._id));
+  // explicit id of a city in a state is kept as it is
+  assert.equal(String(await resolveAreaLocationId({ serviceLocationId: pune._id, coordinates: nearIndore })), String(pune._id));
+  // nothing with a state within reach: the country-wide location is still used (never lost)
+  assert.equal(String(await resolveAreaLocationId({ serviceLocationId: india._id, coordinates: [100, 40] })), String(india._id));
+  // no point, no id: nothing
+  assert.equal(await resolveAreaLocationId({}), null);
+});
+
+// ---- a driver whose DISPATCH city is a state-less country-wide zone but whose area is in a state -------------------
+
+test('a driver dispatched in a state-less "India" zone but labelled with a state city is visible to that state\'s admin', async () => {
+  const india = await ServiceLocation.create({
+    name: 'India (all)', service_location_name: 'India (all)', state_id: null,
+    location: { type: 'Point', coordinates: [78.9629, 20.5937] },
+  });
+  const driver = (await t.factories.driver({ name: 'Dispatch-India Driver', service_location_id: india._id })).driver;
+  await t.m.Driver.collection.updateOne({ _id: driver._id }, { $set: { area_location_id: indore._id } });
+
+  assert.ok(rowsOf(await get('/v1/admin/drivers?limit=100', mpAdmin)).includes(String(driver._id)), 'listed for MP');
+  assert.equal((await get(`/v1/admin/drivers/${driver._id}`, mpAdmin)).status, 200, 'opens for MP');
+  const punAdmin = await makeSubAdmin({ state_ids: [mh._id] });
+  assert.ok(!rowsOf(await get('/v1/admin/drivers?limit=100', punAdmin)).includes(String(driver._id)), 'not listed for Maharashtra');
+  assert.equal((await get(`/v1/admin/drivers/${driver._id}`, punAdmin)).status, 404, 'not found for Maharashtra');
 });
