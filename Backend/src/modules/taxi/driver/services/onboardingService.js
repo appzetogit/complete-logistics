@@ -51,6 +51,7 @@ import {
   unbindAttributionFromRegistration,
 } from '../../referral/services/referralAttributionService.js';
 import { sendWelcomeEmail } from '../../services/welcomeEmailService.js';
+import { genericVehicleTypeOf } from '../../../../utils/genericVehicleType.js';
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -330,19 +331,7 @@ const getVehicleType = (vehicleTypeId, registerFor = '') => {
   return type || 'car';
 };
 
-const getGenericVehicleTypeFromCatalog = (vehicle = {}) => {
-  const value = String(vehicle.icon_types || vehicle.name || '').trim().toLowerCase();
-
-  if (value.includes('bike')) {
-    return 'bike';
-  }
-
-  if (value.includes('auto')) {
-    return 'auto';
-  }
-
-  return 'car';
-};
+const getGenericVehicleTypeFromCatalog = (vehicle = {}) => genericVehicleTypeOf(vehicle.icon_types || vehicle.name);
 
 const getServiceLocationName = (serviceLocation = {}) =>
   String(serviceLocation.service_location_name || serviceLocation.name || '').trim();

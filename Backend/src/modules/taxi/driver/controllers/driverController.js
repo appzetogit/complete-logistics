@@ -132,6 +132,7 @@ import {
 import { verifyBankAccountWithRecharge, verifyDrivingLicenseWithRecharge, verifyGstinWithRecharge, verifyPanWithRecharge, verifyRcWithRecharge, verifyUpiWithRecharge } from "../../services/rechargeVerificationService.js";
 
 import { ensureReferralCode } from "../../referral/services/referralAttributionService.js";
+import { genericVehicleTypeOf } from "../../../../utils/genericVehicleType.js";
 
 const MAX_EMERGENCY_CONTACTS = 5;
 const EMERGENCY_CONTACT_NAME_REGEX = /^[A-Za-z]+(?:[ .'-][A-Za-z]+)*$/;
@@ -7466,19 +7467,7 @@ export const getDriverPaymentQrStatus = async (req, res) => {
   });
 };
 
-const getGenericVehicleType = (vehicle = {}) => {
-  const value = String(vehicle.icon_types || vehicle.name || "").toLowerCase();
-
-  if (value.includes("bike")) {
-    return "bike";
-  }
-
-  if (value.includes("auto")) {
-    return "auto";
-  }
-
-  return "car";
-};
+const getGenericVehicleType = (vehicle = {}) => genericVehicleTypeOf(vehicle.icon_types || vehicle.name);
 
 export const updateDriverVehicle = async (req, res) => {
   const {
