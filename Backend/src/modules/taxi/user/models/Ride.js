@@ -66,6 +66,14 @@ const rideSchema = new mongoose.Schema(
         default: null,
       },
     },
+    // The catalog name of the booked vehicle ('Ambulance', 'Tata Ace').
+    // `vehicleIconType` alone cannot tell an ambulance from a cab: the
+    // catalog files both under icon type `car`.
+    vehicleType: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     vehicleIconType: {
       type: String,
       default: '',

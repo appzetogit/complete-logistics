@@ -992,7 +992,7 @@ export const createRideRecord = async ({
 
   const primaryVehicleTypeId = dispatchVehicleTypeIds[0] || null;
   const primaryVehicle = primaryVehicleTypeId
-    ? await Vehicle.findById(primaryVehicleTypeId).select('icon map_icon image dispatch_type admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner').lean()
+    ? await Vehicle.findById(primaryVehicleTypeId).select('icon_types name icon map_icon image dispatch_type admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner').lean()
     : null;
   // Take the first value that is a reference rather than the image itself. A
   // data: URL here lands in this ride and in the delivery synced from it, so a
@@ -1006,6 +1006,18 @@ export const createRideRecord = async ({
     asImageReference(primaryVehicle?.image) ||
     asImageReference(primaryVehicle?.map_icon) ||
     asImageReference(primaryVehicle?.icon);
+  // Resolved from the catalog the same way the icon URL above is, instead of
+  // only echoing the booking request. The rider app never sends it, so every
+  // ride was stored with an empty icon type and both apps fell back to the
+  // generic car marker whatever was actually booked. The vehicle's name is the
+  // last resort: 'Bike Direct', 'Tourist Bus' and the like still carry the
+  // family in plain words.
+  const resolvedVehicleName = String(primaryVehicle?.name || '').trim();
+  const resolvedVehicleIconType = [
+    vehicleIconType,
+    primaryVehicle?.icon_types,
+    primaryVehicle?.name,
+  ].map((value) => String(value || '').trim()).find(Boolean) || '';
   const normalizedTransportType = normalizeRideTransportType(transport_type);
   const resolvedZoneId =
     zone_id && mongoose.Types.ObjectId.isValid(zone_id)
@@ -1224,7 +1236,8 @@ export const createRideRecord = async ({
       userId,
       vehicleTypeId: primaryVehicleTypeId,
       dispatchVehicleTypeIds,
-      vehicleIconType: vehicleIconType || '',
+      vehicleType: resolvedVehicleName,
+      vehicleIconType: resolvedVehicleIconType,
       vehicleIconUrl: resolvedVehicleIconUrl,
       serviceType: normalizedServiceType,
       tripMode: String(tripMode || '').toLowerCase() === 'round_trip' ? 'round_trip' : 'one_way',
@@ -1284,7 +1297,8 @@ export const createRideRecord = async ({
             userId,
             vehicleTypeId: primaryVehicleTypeId,
             dispatchVehicleTypeIds,
-            vehicleIconType: vehicleIconType || '',
+            vehicleType: resolvedVehicleName,
+            vehicleIconType: resolvedVehicleIconType,
             vehicleIconUrl: resolvedVehicleIconUrl,
             serviceType: normalizedServiceType,
             pickupLocation: toPoint(pickupCoords, 'pickup'),
@@ -1685,6 +1699,7 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
         resolvedAt: ride.pricingSnapshot.resolvedAt || null,
       }
     : null,
+  vehicleType: ride.vehicleType || '',
   vehicleIconType: ride.vehicleIconType || '',
   // URL only (older rides copied a base64 icon from the vehicle)
   vehicleIconUrl: isDataUrl(ride.vehicleIconUrl) ? '' : (ride.vehicleIconUrl || ''),
@@ -1948,6 +1963,7 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
               }
             : null,
         }),
+    vehicleType: ride.vehicleType || '',
     vehicleIconType: ride.vehicleIconType,
     // Keep history responses light; giant data URLs can stall the activity screen.
     vehicleIconUrl: String(ride.vehicleIconUrl || '').startsWith('data:') ? '' : (ride.vehicleIconUrl || ''),
