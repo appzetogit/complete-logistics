@@ -993,6 +993,7 @@ const SetPrices = ({ mode }) => {
                            <input type="number" min="0" required className={inputClass + " py-1"} value={formData.admin_commission_from_driver} onChange={e => setFormData(p=>({...p, admin_commission_from_driver: clampNonNegativeInput('admin_commission_from_driver', e.target.value)}))} />
                         </div>
                      </div>
+                     {/* Admin Comm. (Owner) hidden: this field is not used in ride settlement (only Admin Comm. (Driver) applies). Kept in formData so the payload stays unchanged.
                      <div>
                         <label className={labelClass}>Admin Comm. (Owner) <span className="text-rose-500">*</span></label>
                         <div className="flex gap-1">
@@ -1003,6 +1004,7 @@ const SetPrices = ({ mode }) => {
                            <input type="number" min="0" required className={inputClass + " py-1"} value={formData.admin_commission_for_owner} onChange={e => setFormData(p=>({...p, admin_commission_for_owner: clampNonNegativeInput('admin_commission_for_owner', e.target.value)}))} />
                         </div>
                      </div>
+                     */}
                      <div>
                         <label className={labelClass}>Service Tax (%) <span className="text-rose-500">*</span></label>
                         <input type="number" min="0" required className={inputClass + " py-1"} value={formData.service_tax} onChange={e => setFormData(p=>({...p, service_tax: clampNonNegativeInput('service_tax', e.target.value)}))} />

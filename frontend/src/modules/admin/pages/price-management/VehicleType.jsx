@@ -1529,6 +1529,7 @@ const VehicleType = ({ mode: propMode }) => {
               </div>
             ) : null}
 
+            {/* Load Height Options section hidden from UI
             {showsDeliveryCategorySelector ? (
               <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
                 <div className="mb-3 flex items-center justify-between">
@@ -1661,6 +1662,7 @@ const VehicleType = ({ mode: propMode }) => {
                 </p>
               </div>
             ) : null}
+            */}
 
             <div>
               <label className={labelClass}>Short Description *</label>
@@ -1868,6 +1870,7 @@ const VehicleType = ({ mode: propMode }) => {
                 This form is fully dynamic from your DB. Transport type, icon type, supported vehicles, and preferences all save to the real vehicle catalog.
               </p>
             </div>
+            {/* Accept share ride hidden from UI
             <label className="flex items-center gap-3 text-sm font-medium text-slate-700">
               <input
                 type="checkbox"
@@ -1877,6 +1880,7 @@ const VehicleType = ({ mode: propMode }) => {
               />
               Accept share ride
             </label>
+            */}
             <label className="flex items-center gap-3 text-sm font-medium text-slate-700">
               <input
                 type="checkbox"
