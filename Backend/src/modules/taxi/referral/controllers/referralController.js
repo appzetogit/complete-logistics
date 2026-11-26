@@ -22,14 +22,17 @@ const clientIp = (req) => {
 
 // ---- GET /r/:referralCode (public) -------------------------------------------------------------------------------
 
-const pickDestination = (userAgent = '') => {
-  const { landingUrl, androidStoreUrl, iosStoreUrl } = env.referral;
+const pickDestination = (userAgent = '', referrerType = 'user') => {
+  const { landingUrl, androidStoreUrl, driverAndroidStoreUrl, iosStoreUrl } = env.referral;
 
   if (/iphone|ipad|ipod/i.test(userAgent)) {
     return iosStoreUrl || landingUrl || androidStoreUrl;
   }
   if (/android/i.test(userAgent)) {
-    return androidStoreUrl || landingUrl || iosStoreUrl;
+    if (referrerType === 'driver') {
+      return driverAndroidStoreUrl || androidStoreUrl || landingUrl;
+    }
+    return androidStoreUrl || landingUrl;
   }
   return landingUrl || androidStoreUrl || iosStoreUrl;
 };
@@ -57,13 +60,13 @@ const wantsJson = (req) =>
 export const openReferralLink = async (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   const userAgent = String(req.headers['user-agent'] || '');
-  const destination = pickDestination(userAgent);
 
   try {
     // chat apps fetch links to build a preview: that is not a person opening it
     if (isLinkPreviewBot(userAgent)) {
-      if (destination && !wantsJson(req)) {
-        return res.redirect(302, destination);
+      const defaultDest = pickDestination(userAgent, 'user');
+      if (defaultDest && !wantsJson(req)) {
+        return res.redirect(302, defaultDest);
       }
       return res.json({ success: true, data: { attributed: false } });
     }
@@ -74,6 +77,8 @@ export const openReferralLink = async (req, res, next) => {
       userAgent,
       source: 'link',
     });
+
+    const destination = pickDestination(userAgent, attribution.referrerType);
 
     if (wantsJson(req) || !destination) {
       return res.json({
@@ -89,11 +94,12 @@ export const openReferralLink = async (req, res, next) => {
 
     return res.redirect(302, withToken(destination, token));
   } catch (error) {
-    if (!(error instanceof ApiError) || wantsJson(req) || !destination) {
+    const fallbackDest = pickDestination(userAgent, 'user');
+    if (!(error instanceof ApiError) || wantsJson(req) || !fallbackDest) {
       return next(error);
     }
     // a bad or disabled link still sends the visitor to the app, just without a referral
-    return res.redirect(302, destination);
+    return res.redirect(302, fallbackDest);
   }
 };
 

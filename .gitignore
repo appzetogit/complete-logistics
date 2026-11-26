@@ -15,7 +15,4 @@ scratch/
 config.bat
 
 # Secrets and editor config (restored after the Nov 2026 malware rewrite removed them)
-.env
-.env.*
-.vscode/*
 !.vscode/extensions.json

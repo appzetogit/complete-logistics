@@ -126,7 +126,8 @@ export const env = {
     ).trim().replace(/\/+$/, ''),
     // Where /r/<code> sends the visitor. Store links win over the landing page when set.
     landingUrl: String(process.env.REFERRAL_LANDING_URL || '').trim(),
-    androidStoreUrl: String(process.env.REFERRAL_ANDROID_STORE_URL || '').trim(),
+    androidStoreUrl: String(process.env.REFERRAL_ANDROID_STORE_URL || process.env.REFERRAL_USER_ANDROID_STORE_URL || '').trim(),
+    driverAndroidStoreUrl: String(process.env.REFERRAL_DRIVER_ANDROID_STORE_URL || '').trim(),
     iosStoreUrl: String(process.env.REFERRAL_IOS_STORE_URL || '').trim(),
     // How long an unused click stays valid (default 7 days).
     attributionTtlHours:
