@@ -1019,7 +1019,7 @@ const AdminLayout = () => {
             permission: 'settings.view',
             subItems: [
               { label: 'General Settings', path: '/admin/settings/business/general', permission: 'settings.view' },
-              { label: 'Customization Settings', path: '/admin/settings/business/customization', permission: 'settings.view' },
+              // { label: 'Customization Settings', path: '/admin/settings/business/customization', permission: 'settings.view' }, // hidden
               { label: 'Transport Ride Settings', path: '/admin/settings/business/transport-ride', permission: 'settings.view' },
               { label: 'Bid Ride Settings', path: '/admin/settings/business/bid-ride', permission: 'settings.view' },
             ],
