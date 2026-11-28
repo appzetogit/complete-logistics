@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ExportButton, { fetchAllPages } from '../../components/ExportButton';
 import { 
   Plus, 
   Search, 
@@ -77,10 +78,24 @@ const CountryManagement = () => {
                   className="pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-[14px] w-64 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
                  />
               </div>
+              <div className="flex items-center gap-2">
+                <ExportButton
+                filename="countries"
+                getRows={() => fetchAllPages(
+                  (page, limit) => api.get(`/admin/countries?page=${page}&limit=${limit}&search=${searchTerm}`),
+                  (res) => ({ results: res.data?.results || [], lastPage: res.data?.paginator?.last_page }),
+                  { limit: 100 },
+                )}
+                columns={[
+                  { label: 'Country Name', value: (row) => row.name || '' },
+                  { label: 'Status', value: (row) => (row.active ? 'Active' : 'Inactive') },
+                ]}
+              />
               <button className="flex items-center gap-2 bg-[#2563EB] text-white px-5 py-2.5 rounded-xl text-[13px] font-black shadow-lg shadow-blue-500/20 hover:bg-blue-700 transition-all active:scale-95">
                  <Plus size={18} />
                  Add Country
               </button>
+              </div>
            </div>
         </div>
 

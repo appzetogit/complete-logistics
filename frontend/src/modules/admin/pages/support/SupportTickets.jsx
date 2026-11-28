@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { ChevronRight, Filter, Send } from 'lucide-react';
 import { adminSupportService } from '../../../shared/services/supportTicketService';
+import ExportButton from '../../components/ExportButton';
 
 const statusBadgeClass = (status) => {
   if (status === 'closed') return 'bg-emerald-50 text-emerald-600';
@@ -9,6 +10,7 @@ const statusBadgeClass = (status) => {
 };
 
 const SupportTickets = () => {
+  const tableRef = useRef(null);
   const [stats, setStats] = useState({
     totalTickets: 0,
     pendingTickets: 0,
@@ -128,6 +130,7 @@ const SupportTickets = () => {
           <span className="text-gray-700">Support Tickets</span>
         </div>
         <h1 className="text-xl text-gray-900 font-bold">Support Tickets</h1>
+        <ExportButton filename="support_tickets" tableRef={tableRef} />
       </div>
 
       {error ? (
@@ -191,7 +194,7 @@ const SupportTickets = () => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table ref={tableRef} className="w-full">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50">
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Ticket ID</th>

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { ChevronDown, ChevronRight, Edit2, FileSearch, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AdminPageHeader from '../../components/ui/AdminPageHeader';
@@ -15,6 +16,7 @@ const getDocTypeLabel = (value) => {
 };
 
 const OwnerNeededDocuments = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const token = localStorage.getItem('adminToken') || '';
 
@@ -101,6 +103,8 @@ const OwnerNeededDocuments = () => {
               <span>Entries</span>
             </div>
 
+            <div className="flex items-center gap-2">
+            <ExportButton filename="owner_needed_documents" tableRef={tableRef} />
             <button
               type="button"
               onClick={() => navigate('/admin/owners/documents/create')}
@@ -108,11 +112,12 @@ const OwnerNeededDocuments = () => {
             >
               <Plus size={16} /> Add Owner Needed Documents
             </button>
+            </div>
           </div>
 
           <div className="px-5">
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
+              <table ref={tableRef} className="w-full text-left">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-3 py-4 text-sm font-bold text-gray-950">Name</th>

@@ -20,6 +20,7 @@ import {
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { adminService } from '../../services/adminService';
+import ExportButton, { fetchAllPages } from '../../components/ExportButton';
 import { AnimatePresence } from 'framer-motion';
 
 const ACTION_MENU_WIDTH = 220;
@@ -40,14 +41,37 @@ const DriverList = ({ mode = 'approved' }) => {
   const [page, setPage] = useState(1);
   const [paginator, setPaginator] = useState(null);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [vehicleTypeOptions, setVehicleTypeOptions] = useState([]);
 
-  const fetchDrivers = async ({ nextPage = page, nextLimit = itemsPerPage, nextSearch = searchTerm } = {}) => {
+  // Vehicle types created by the admin (Auto, Scooty Direct, Cab AC, ...) for the Vehicle Type filter.
+  useEffect(() => {
+    adminService.getVehicleTypes()
+      .then((res) => {
+        const payload = res?.data ?? res;
+        const list = Array.isArray(payload) ? payload
+          : Array.isArray(payload?.results) ? payload.results
+          : Array.isArray(payload?.data?.results) ? payload.data.results
+          : Array.isArray(payload?.data) ? payload.data
+          : [];
+        setVehicleTypeOptions(
+          list
+            .map((item) => ({ id: String(item._id || item.id || ''), name: item.name || item.type_name || '' }))
+            .filter((item) => item.id && item.name)
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        );
+      })
+      .catch(() => setVehicleTypeOptions([]));
+  }, []);
+
+  const fetchDrivers = async ({ nextPage = page, nextLimit = itemsPerPage, nextSearch = searchTerm, nextFilters = filters } = {}) => {
     setIsLoading(true);
     setError('');
     try {
       const responseData = await adminService.getDrivers(nextPage, nextLimit, {
         ...(mode === 'active' ? { isOnline: true } : { approve: true }),
         search: String(nextSearch || '').trim(),
+        ...(nextFilters.dateRange ? { dateRange: nextFilters.dateRange } : {}),
+        ...(nextFilters.vehicleType ? { vehicleType: nextFilters.vehicleType } : {}),
       });
       const driversList = responseData.data?.results || [];
       if (responseData.success) {
@@ -99,6 +123,17 @@ const DriverList = ({ mode = 'approved' }) => {
   useEffect(() => {
     fetchDrivers({ nextPage: page, nextLimit: itemsPerPage, nextSearch: searchTerm });
   }, [page]);
+
+  // Date range / vehicle type: reload from page 1 whenever a filter changes.
+  const isFirstFilterRun = React.useRef(true);
+  useEffect(() => {
+    if (isFirstFilterRun.current) {
+      isFirstFilterRun.current = false;
+      return;
+    }
+    setPage(1);
+    fetchDrivers({ nextPage: 1, nextLimit: itemsPerPage, nextSearch: searchTerm, nextFilters: filters });
+  }, [filters.dateRange, filters.vehicleType]);
 
   const closeMenu = () => {
     setActiveMenu(null);
@@ -227,6 +262,34 @@ const DriverList = ({ mode = 'approved' }) => {
         </div>
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-base text-gray-900 font-bold">{mode === 'active' ? 'Active Drivers' : 'Approved Drivers'}</h1>
+          <div className="flex items-center gap-2">
+          <ExportButton
+            filename={mode === 'active' ? 'active_drivers' : 'approved_drivers'}
+            getRows={async () => {
+              const rows = await fetchAllPages(
+                (nextPage, limit) => adminService.getDrivers(nextPage, limit, {
+                  ...(mode === 'active' ? { isOnline: true } : { approve: true }),
+                  search: String(searchTerm || '').trim(),
+                  ...(filters.dateRange ? { dateRange: filters.dateRange } : {}),
+                  ...(filters.vehicleType ? { vehicleType: filters.vehicleType } : {}),
+                }),
+                (res) => ({ results: res?.data?.results || [], lastPage: res?.data?.paginator?.last_page }),
+                { limit: 100 },
+              );
+              return mode === 'active' ? rows.filter((d) => Boolean(d.isOnline)) : rows;
+            }}
+            columns={[
+              { label: 'Name', value: (d) => d.name || '' },
+              { label: 'Code', value: (d) => d.driver_code || d.referralCode || '' },
+              { label: 'Location', value: (d) => d.service_location_name || d.city || d.service_location?.name || '' },
+              { label: 'Mobile', value: (d) => d.phone || d.mobile || '' },
+              { label: 'Type', value: (d) => d.transport_type || d.register_for || d.vehicle_type || '' },
+              { label: 'Selfie', value: (d) => (d.online_selfie_image ? 'Uploaded' : 'Missing') },
+              { label: 'Status', value: (d) => (mode === 'active' ? (d.isOnline ? 'Online' : 'Offline') : (d.approve ? 'Approved' : (d.status || ''))) },
+              { label: 'Rating', value: (d) => (Number(d.rating_count || d.ratingCount || 0) > 0 ? Number(d.rating || d.average_rating || d.avg_rating || 0) : 0) },
+              { label: 'Registered', value: (d) => (d.createdAt ? new Date(d.createdAt).toLocaleString('en-IN') : '') },
+            ]}
+          />
           {mode !== 'active' ? (
             <button
               onClick={() => navigate('/admin/drivers/create')}
@@ -235,6 +298,7 @@ const DriverList = ({ mode = 'approved' }) => {
               <Plus size={14} /> Add Drivers
             </button>
           ) : null}
+          </div>
         </div>
       </div>
 
@@ -296,9 +360,9 @@ const DriverList = ({ mode = 'approved' }) => {
                 className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-xs text-gray-700 bg-gray-50 outline-none focus:border-yellow-400 focus:bg-white"
               >
                 <option value="">All Types</option>
-                <option value="sedan">Sedan</option>
-                <option value="suv">SUV</option>
-                <option value="hatchback">Hatchback</option>
+                {vehicleTypeOptions.map((option) => (
+                  <option key={option.id} value={option.id}>{option.name}</option>
+                ))}
               </select>
             </div>
           </div>

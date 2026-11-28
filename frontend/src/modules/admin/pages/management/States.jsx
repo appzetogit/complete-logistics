@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useRef, useCallback, useEffect, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { Loader2, MapPinned, Pencil, Plus, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { adminService } from '../../services/adminService';
@@ -19,6 +20,7 @@ const readIsSuperAdmin = () => {
 };
 
 const States = () => {
+  const tableRef = useRef(null);
   const [states, setStates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -102,6 +104,10 @@ const States = () => {
         </div>
       </div>
 
+      <div className="flex justify-end">
+        <ExportButton filename="states" tableRef={tableRef} />
+      </div>
+
       {canManage && (
         <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-4 rounded-[28px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50 md:grid-cols-4">
           <div className="md:col-span-2">
@@ -141,7 +147,7 @@ const States = () => {
         ) : states.length === 0 ? (
           <div className="p-10 text-center text-sm font-semibold text-slate-500">No states yet.</div>
         ) : (
-          <table className="w-full text-left text-sm">
+          <table ref={tableRef} className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">
               <tr>
                 <th className="px-5 py-3">State</th>

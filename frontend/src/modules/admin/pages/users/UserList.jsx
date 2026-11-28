@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { 
-  Search, Download, UserPlus, MoreHorizontal,
+  Search, UserPlus, MoreHorizontal,
   ChevronRight, UserCheck, Edit2, Lock, Trash2,
   Loader2, Ban, FileText
 } from 'lucide-react';
@@ -18,6 +18,7 @@ const StatusToggle = ({ status, onToggle }) => (
 
 import UserModal from './UserModal';
 import { adminService } from '../../services/adminService';
+import ExportButton, { fetchAllPages } from '../../components/ExportButton';
 
 // "22 Nov 2026" with the time underneath, in India time; "N/A" when the account has no signup date.
 const formatJoined = (value) => {
@@ -282,9 +283,27 @@ const UserList = () => {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-lg text-gray-900 font-bold">Passengers</h1>
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 transition-colors">
-            <Download size={14} /> Export
-          </button>
+          <ExportButton
+            filename="passengers"
+            getRows={() => fetchAllPages(
+              (nextPage, limit) => adminService.getUsers(nextPage, limit, String(searchTerm || '').trim(), {
+                referralSource,
+                employeeId: selectedEmployeeId,
+              }),
+              (res) => ({ results: res?.data?.results || [], lastPage: res?.data?.paginator?.last_page }),
+              { limit: 100 },
+            )}
+            columns={[
+              { label: 'Name', value: (u) => u.name || '' },
+              { label: 'Mobile', value: (u) => u.mobile || u.phone || '' },
+              { label: 'Email', value: (u) => u.email || '' },
+              { label: 'Gender', value: (u) => GENDER_LABELS[u.gender] || '' },
+              { label: 'Joined', value: (u) => (u.createdAt ? new Date(u.createdAt).toLocaleString('en-IN') : '') },
+              { label: 'ID Proof', value: (u) => (u.governmentIdProof?.imageUrl ? 'Uploaded' : 'Missing') },
+              { label: 'Employee', value: (u) => [u.acquiredByEmployeeName, u.acquiredByEmployeeCode].filter(Boolean).join(' ') },
+              { label: 'Status', value: (u) => (u.active ? 'Active' : 'Suspended') },
+            ]}
+          />
           <button 
             onClick={handleAddUser}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-400 text-black text-sm font-semibold rounded-lg shadow-sm hover:bg-yellow-500 transition-colors"

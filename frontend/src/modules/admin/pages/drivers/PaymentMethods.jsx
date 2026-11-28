@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import {
   ChevronRight,
   Plus,
@@ -25,6 +26,7 @@ const buildField = () => ({
 });
 
 const PaymentMethods = () => {
+  const tableRef = useRef(null);
   const [view, setView] = useState('list');
   const [editingId, setEditingId] = useState(null);
   const [methods, setMethods] = useState([]);
@@ -330,12 +332,15 @@ const PaymentMethods = () => {
         </div>
         <div className="flex items-center justify-between">
           <h1 className="text-xl text-gray-900 font-bold">Payment Methods</h1>
+          <div className="flex items-center gap-2">
+          <ExportButton filename="payment_methods" tableRef={tableRef} />
           <button
             onClick={startAdd}
             className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-black bg-yellow-400 shadow-sm rounded-lg hover:bg-yellow-500 transition-colors"
           >
             <Plus size={16} /> Add
           </button>
+          </div>
         </div>
       </div>
 
@@ -371,7 +376,7 @@ const PaymentMethods = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table ref={tableRef} className="w-full">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-500">
                 <th className="px-6 py-3 text-left">Method</th>

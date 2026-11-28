@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -31,6 +32,7 @@ const getInitials = (name) =>
     .join('');
 
 const DeleteRequestUsers = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [users, setUsers] = useState([]);
@@ -129,6 +131,8 @@ const DeleteRequestUsers = () => {
 
         <div className="flex items-center justify-between gap-4">
           <h1 className="text-lg text-gray-900 font-bold">Delete Requests</h1>
+          <div className="flex items-center gap-2">
+          <ExportButton filename="user_delete_requests" tableRef={tableRef} />
           <button
             type="button"
             onClick={() => navigate('/admin/users')}
@@ -136,6 +140,7 @@ const DeleteRequestUsers = () => {
           >
             <ArrowLeft size={16} /> Back
           </button>
+          </div>
         </div>
       </div>
 
@@ -172,7 +177,7 @@ const DeleteRequestUsers = () => {
             </div>
 
             <div className="mt-5 overflow-x-auto">
-              <table className="w-full">
+              <table ref={tableRef} className="w-full">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-900">User</th>

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { 
   Plus, 
   Search, 
@@ -33,6 +34,7 @@ const StatusToggle = ({ active, onToggle }) => (
 );
 
 const RentalPackageTypes = ({ mode: propMode }) => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const { id } = useParams();
   const location = useLocation();
@@ -201,12 +203,15 @@ const RentalPackageTypes = ({ mode: propMode }) => {
                   <button onClick={() => setShowFilters(!showFilters)} className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-[13px] font-bold shadow-sm transition-colors ${showFilters ? 'bg-slate-800 text-white border-transparent' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
                     <Filter size={16} /> Filters
                   </button>
+                  <div className="flex items-center gap-2">
+                    <ExportButton filename="rental_package_types" tableRef={tableRef} />
                   <button 
                     onClick={() => navigate("create")}
                     className="flex items-center gap-2 px-5 py-2.5 bg-amber-400 text-slate-900 rounded-lg text-[13px] font-bold shadow-sm hover:bg-amber-500 transition-colors"
                   >
                     <Plus size={18} /> Add Package
                   </button>
+                  </div>
 
                   {/* Filter Dropdown */}
                   <AnimatePresence>
@@ -250,7 +255,7 @@ const RentalPackageTypes = ({ mode: propMode }) => {
               {/* Table */}
               <div className="px-4 pb-4 lg:px-6 lg:pb-6">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left">
+                  <table ref={tableRef} className="w-full text-left">
                     <thead>
                       <tr className="bg-[#E9E9E9]">
                         <th className="px-4 py-3 text-[13px] font-bold text-slate-700">Name</th>

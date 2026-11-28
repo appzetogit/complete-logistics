@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { 
   Wallet, 
   Search, 
@@ -8,7 +9,6 @@ import {
   IndianRupee, 
   History, 
   CreditCard, 
-  Download, 
   Filter, 
   MoreHorizontal, 
   CheckCircle2, 
@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 
 const DriverWallet = () => {
+  const tableRef = useRef(null);
   const [searchTerm, setSearchTerm] = useState('');
   
   const [walletStats] = useState({
@@ -51,9 +52,7 @@ const DriverWallet = () => {
             </div>
          </div>
          <div className="flex items-center gap-3">
-            <button className="bg-white border border-gray-100 text-gray-950 px-5 py-2.5 rounded-xl text-[12px] font-bold flex items-center gap-2 hover:bg-gray-50 transition-all shadow-sm">
-               <Download size={16} className="text-gray-400" /> Export CSV
-            </button>
+            <ExportButton filename="driver_wallet_transactions" tableRef={tableRef} />
             <button className="bg-yellow-400 text-black px-5 py-2.5 rounded-xl text-[12px] font-bold flex items-center gap-2 hover:bg-yellow-500 transition-all shadow-sm">
                <Zap size={16} /> Bulk Settle Payouts
             </button>
@@ -111,7 +110,7 @@ const DriverWallet = () => {
 
          <div className="bg-white rounded-[40px] border border-gray-50 shadow-sm overflow-hidden">
             <div className="overflow-x-auto no-scrollbar">
-               <table className="w-full text-left">
+               <table ref={tableRef} className="w-full text-left">
                   <thead>
                      <tr className="border-b border-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] bg-gray-50/20">
                         <th className="px-8 py-6">Transaction ID</th>

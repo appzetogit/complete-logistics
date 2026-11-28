@@ -1744,9 +1744,26 @@ const normalizeEmployeeCode = (value = '') =>
     .trim()
     .toUpperCase();
 
+const hasManualCount = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
+
+// '' / null clears the manual count (back to the automatic one); otherwise a whole number >= 0.
+const parseManualCount = (value, label) => {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 0) {
+    throw new ApiError(400, `${label} must be a whole number of 0 or more`);
+  }
+  return number;
+};
+
 const serializeEmployee = (employee, stats = {}) => {
-  const totalUsers = Number(stats.totalUsers || 0);
-  const totalDrivers = Number(stats.totalDrivers || 0);
+  const autoUsers = Number(stats.totalUsers || 0);
+  const autoDrivers = Number(stats.totalDrivers || 0);
+  const manualUsers = hasManualCount(employee.manualUsersCount) ? Number(employee.manualUsersCount) : null;
+  const manualDrivers = hasManualCount(employee.manualDriversCount) ? Number(employee.manualDriversCount) : null;
+  // The admin's number wins when it is filled in; otherwise the automatic count is shown.
+  const totalUsers = manualUsers ?? autoUsers;
+  const totalDrivers = manualDrivers ?? autoDrivers;
 
   return {
     _id: employee._id,
@@ -1756,6 +1773,10 @@ const serializeEmployee = (employee, stats = {}) => {
     employeeCode: employee.employeeCode || '',
     active: employee.active !== false,
     notes: employee.notes || '',
+    manualUsersCount: manualUsers,
+    manualDriversCount: manualDrivers,
+    autoUsersAcquired: autoUsers,
+    autoDriversAcquired: autoDrivers,
     totalUsersAcquired: totalUsers,
     totalDriversAcquired: totalDrivers,
     totalAcquired: totalUsers + totalDrivers,
@@ -4532,7 +4553,7 @@ export const adjustUserWallet = async (id, payload = {}) => {
   return { balance: Number(Number(updated.balance || 0).toFixed(2)) };
 };
 
-export const listDrivers = async ({ page = 1, limit = 50, status, search, approve, isOnline } = {}, currentAdmin = null) => {
+export const listDrivers = async ({ page = 1, limit = 50, status, search, approve, isOnline, dateRange, vehicleType } = {}, currentAdmin = null) => {
   const safePage = Number(page) || 1;
   const safeLimit = Number(limit) || 50;
   const start = (safePage - 1) * safeLimit;
@@ -4555,6 +4576,21 @@ export const listDrivers = async ({ page = 1, limit = 50, status, search, approv
 
   if (isOnline !== undefined) {
     query.isOnline = isOnline === 'true' || isOnline === true || isOnline === 1;
+  }
+
+  // Registered today / this week / this month (India time).
+  if (['today', 'week', 'month'].includes(String(dateRange || ''))) {
+    query.createdAt = { $gte: getSettlementPeriodStart(String(dateRange)) };
+  }
+
+  // Vehicle type: an admin vehicle type id (e.g. "Scooty Direct"), or the old bike / auto / car group.
+  if (vehicleType) {
+    const value = String(vehicleType).trim();
+    if (mongoose.Types.ObjectId.isValid(value)) {
+      query.vehicleTypeId = value;
+    } else {
+      query.vehicleType = value.toLowerCase();
+    }
   }
 
   if (search) {
@@ -5935,6 +5971,52 @@ export const getReferralDashboard = async () => {
   };
 };
 
+// Accounts that joined through a referral, with who referred them. `status=active` matches the dashboard's
+// "Active Referrals" count (completed at least one ride, or the referral reward was granted).
+export const listReferredAccounts = async ({ status = 'active' } = {}) => {
+  const match = { referredBy: { $ne: null } };
+  if (status === 'active') {
+    match.$or = [{ referredRideCompletionCount: { $gt: 0 } }, { referralRewardGrantedAt: { $ne: null } }];
+  }
+  const fields = 'name phone referredBy referredRideCompletionCount referralRewardGrantedAt createdAt';
+  const [users, drivers] = await Promise.all([
+    User.find(match).select(fields).sort({ createdAt: -1 }).lean(),
+    Driver.find(match).select(fields).sort({ createdAt: -1 }).lean(),
+  ]);
+
+  // A referrer can be a rider or a driver, so look the id up in both.
+  const referrerIds = [...new Set([...users, ...drivers].map((row) => String(row.referredBy)))];
+  const [referrerUsers, referrerDrivers] = await Promise.all([
+    User.find({ _id: { $in: referrerIds } }).select('name phone').lean(),
+    Driver.find({ _id: { $in: referrerIds } }).select('name phone').lean(),
+  ]);
+  const referrers = new Map([
+    ...referrerUsers.map((row) => [String(row._id), { ...row, type: 'user' }]),
+    ...referrerDrivers.map((row) => [String(row._id), { ...row, type: 'driver' }]),
+  ]);
+
+  const toRow = (row, type) => {
+    const referrer = referrers.get(String(row.referredBy));
+    return {
+      id: String(row._id),
+      type,
+      name: row.name || '',
+      phone: row.phone || '',
+      joinedAt: row.createdAt || null,
+      completedRides: Number(row.referredRideCompletionCount || 0),
+      rewardGrantedAt: row.referralRewardGrantedAt || null,
+      referrer: referrer
+        ? { id: String(referrer._id), type: referrer.type, name: referrer.name || '', phone: referrer.phone || '' }
+        : { id: String(row.referredBy), type: '', name: 'Deleted account', phone: '' },
+    };
+  };
+
+  const results = [...users.map((row) => toRow(row, 'user')), ...drivers.map((row) => toRow(row, 'driver'))]
+    .sort((a, b) => new Date(b.joinedAt || 0) - new Date(a.joinedAt || 0));
+
+  return { status: status === 'active' ? 'active' : 'all', total: results.length, results };
+};
+
 export const listSubscriptionPlans = async () =>
   SubscriptionPlan.find({ audience: 'driver' }).sort({ createdAt: -1 }).populate('vehicle_type_id').lean();
 export const createSubscriptionPlan = async (payload) => {
@@ -6546,6 +6628,8 @@ export const createEmployee = async (payload = {}, currentAdmin = null) => {
   const employeeCode = normalizeEmployeeCode(payload.employeeCode);
   const active = payload.active === undefined ? true : normalizeBoolean(payload.active);
   const notes = String(payload.notes || '').trim();
+  const manualUsersCount = parseManualCount(payload.manualUsersCount, 'Users count');
+  const manualDriversCount = parseManualCount(payload.manualDriversCount, 'Drivers count');
 
   if (!name || name.length < 2 || name.length > 80) {
     throw new ApiError(400, 'Employee name must be between 2 and 80 characters');
@@ -6575,6 +6659,8 @@ export const createEmployee = async (payload = {}, currentAdmin = null) => {
     employeeCode,
     active,
     notes,
+    manualUsersCount,
+    manualDriversCount,
   });
 
   return serializeEmployee(employee.toObject());
@@ -6631,6 +6717,14 @@ export const updateEmployee = async (id, payload = {}, currentAdmin = null) => {
 
   if (payload.notes !== undefined) {
     employee.notes = String(payload.notes || '').trim();
+  }
+
+  if (payload.manualUsersCount !== undefined) {
+    employee.manualUsersCount = parseManualCount(payload.manualUsersCount, 'Users count');
+  }
+
+  if (payload.manualDriversCount !== undefined) {
+    employee.manualDriversCount = parseManualCount(payload.manualDriversCount, 'Drivers count');
   }
 
   await employee.save();
@@ -8589,6 +8683,68 @@ const groupAdminEarnings = (rows, keyGetter, labelGetter) => {
     .sort((a, b) => b.adminCommission - a.adminCommission);
 };
 
+// Start of the requested period in India time (IST, UTC+5:30), whatever the server's own timezone is.
+const IST_OFFSET_MS = 330 * 60 * 1000;
+const getSettlementPeriodStart = (period, now = new Date()) => {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  ist.setUTCHours(0, 0, 0, 0);
+  if (period === 'today') {
+    // midnight IST today
+  } else if (period === 'week') {
+    const daysSinceMonday = (ist.getUTCDay() + 6) % 7;
+    ist.setUTCDate(ist.getUTCDate() - daysSinceMonday);
+  } else if (period === 'month') {
+    ist.setUTCDate(1);
+  } else {
+    return null; // all time
+  }
+  return new Date(ist.getTime() - IST_OFFSET_MS);
+};
+
+// Settlement ledger for the admin earnings page: what drivers earned in the period and what happened to their
+// withdrawal requests (completed = paid out, pending = waiting, cancelled = failed / rejected).
+export const getSettlementSummary = async ({ period = 'all' } = {}) => {
+  const safePeriod = ['today', 'week', 'month', 'all'].includes(period) ? period : 'all';
+  const start = getSettlementPeriodStart(safePeriod);
+
+  const rideMatch = { status: RIDE_STATUS.COMPLETED };
+  if (start) {
+    rideMatch.$or = [
+      { completedAt: { $gte: start } },
+      { completedAt: null, updatedAt: { $gte: start } },
+    ];
+  }
+  const withdrawalMatch = { driver_id: { $ne: null } };
+  if (start) withdrawalMatch.createdAt = { $gte: start };
+
+  const [earnings, withdrawals] = await Promise.all([
+    Ride.aggregate([
+      { $match: rideMatch },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$driverEarnings', 0] } }, trips: { $sum: 1 } } },
+    ]),
+    WithdrawalRequest.aggregate([
+      { $match: withdrawalMatch },
+      { $group: { _id: '$status', amount: { $sum: { $ifNull: ['$amount', 0] } }, count: { $sum: 1 } } },
+    ]),
+  ]);
+
+  const byStatus = Object.fromEntries(withdrawals.map((row) => [row._id, row]));
+  const money = (value) => Math.round(Number(value || 0) * 100) / 100;
+
+  return {
+    period: safePeriod,
+    from: start,
+    driverPayable: money(earnings[0]?.total),
+    completedTrips: Number(earnings[0]?.trips || 0),
+    paidToDrivers: money(byStatus.completed?.amount),
+    paidCount: Number(byStatus.completed?.count || 0),
+    pendingPayout: money(byStatus.pending?.amount),
+    pendingCount: Number(byStatus.pending?.count || 0),
+    failedPayout: money(byStatus.cancelled?.amount),
+    failedCount: Number(byStatus.cancelled?.count || 0),
+  };
+};
+
 export const getAdminEarnings = async (query = {}) => {
   const {
     from,
@@ -8754,11 +8910,13 @@ export const getDashboardData = async () => {
     return cachedDashboard.value;
   }
 
-  const [totalUsers, totalDrivers, totalOwners, approvedDrivers, rides, supportTicketStats] = await Promise.all([
+  const [totalUsers, totalDrivers, totalOwners, approvedDrivers, onlineDrivers, rides, supportTicketStats] = await Promise.all([
     User.countDocuments(),
     Driver.countDocuments(),
     Owner.countDocuments(),
     Driver.countDocuments({ approve: true }),
+    // same filter as the admin "Active Drivers" list (listDrivers with isOnline: true)
+    Driver.countDocuments({ isOnline: true, deletedAt: null }),
     Ride.find()
       .select('status liveStatus fare paymentMethod commissionAmount driverEarnings driverId createdAt updatedAt completedAt')
       .sort({ createdAt: -1 })
@@ -8925,11 +9083,42 @@ export const getDashboardData = async () => {
     { pending: 0, assigned: 0, closed: 0 },
   );
 
+  // Leaderboard: the 4 drivers with the most completed rides, with their real rating.
+  const completedByDriver = new Map();
+  for (const ride of rides) {
+    if (ride.status !== 'completed' || !ride.driverId) continue;
+    const key = String(ride.driverId);
+    completedByDriver.set(key, (completedByDriver.get(key) || 0) + 1);
+  }
+  const rankedDriverEntries = [...completedByDriver.entries()].sort((a, b) => b[1] - a[1]);
+  // Drivers that were deleted still have old rides; skip them so only real, current drivers are ranked.
+  const topDriverDocs = rankedDriverEntries.length
+    ? await Driver.find({ _id: { $in: rankedDriverEntries.map(([id]) => id) }, deletedAt: null })
+      .select('name phone rating ratingCount isOnline')
+      .lean()
+    : [];
+  const topDriverById = new Map(topDriverDocs.map((driver) => [String(driver._id), driver]));
+  const topDriverEntries = rankedDriverEntries.filter(([id]) => topDriverById.has(id)).slice(0, 4);
+  const topDrivers = topDriverEntries.map(([id, trips]) => {
+    const driver = topDriverById.get(id);
+    return {
+      id,
+      name: driver.name || 'Unknown driver',
+      phone: driver.phone || '',
+      rating: Number(driver.rating || 0),
+      ratingCount: Number(driver.ratingCount || 0),
+      isOnline: Boolean(driver.isOnline),
+      trips,
+    };
+  });
+
   const snapshot = {
+    topDrivers,
     totalUsers,
     totalDrivers: {
       total: totalDrivers,
       approved: approvedDrivers,
+      online: onlineDrivers,
       declined: totalDrivers - approvedDrivers
     },
     totalOwners,

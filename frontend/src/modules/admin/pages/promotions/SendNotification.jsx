@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   ArrowLeft,
   Bell,
@@ -15,6 +15,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { adminService } from '../../services/adminService';
+import ExportButton from '../../components/ExportButton';
 
 const Motion = motion;
 const LIST_PATH = '/admin/promotions/send-notification';
@@ -114,6 +115,7 @@ const SendNotification = () => {
   const location = useLocation();
   const isCreateRoute = location.pathname === CREATE_PATH;
 
+  const tableRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
   const [serviceLocations, setServiceLocations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -325,9 +327,10 @@ const SendNotification = () => {
               ) : null}
             </div>
 
+            <div className="flex justify-end"><ExportButton filename="push_notifications" tableRef={tableRef} /></div>
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left">
+                <table ref={tableRef} className="w-full text-left">
                   <thead className="bg-gray-50">
                     <tr className="text-xs font-semibold text-gray-500">
                       <th className="px-6 py-4">Push Title</th>

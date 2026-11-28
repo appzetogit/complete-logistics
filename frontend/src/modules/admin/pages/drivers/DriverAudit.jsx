@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useRef, useCallback, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import {
   ArrowLeft,
   AlertCircle,
@@ -24,6 +25,7 @@ import {
 } from '../../../driver/utils/documentTemplates';
 
 const DriverAudit = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const { id } = useParams();
   const [driver, setDriver] = useState(null);
@@ -217,12 +219,15 @@ const DriverAudit = () => {
           <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden">
             <div className="p-6 border-b border-gray-50 flex items-center justify-between">
               <h3 className="text-[14px] font-black text-gray-900 uppercase tracking-widest">Document Audit Checklist</h3>
+              <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 border border-gray-100 rounded-lg text-[10px] font-black uppercase text-gray-400">
                 Total Items: {mappedDocs.length}
               </div>
+              <ExportButton filename="driver_audit_documents" tableRef={tableRef} />
+              </div>
             </div>
             <div className="overflow-x-auto no-scrollbar">
-              <table className="w-full text-left">
+              <table ref={tableRef} className="w-full text-left">
                 <thead>
                   <tr className="bg-gray-50/50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
                     <th className="px-6 py-5">Document Name</th>

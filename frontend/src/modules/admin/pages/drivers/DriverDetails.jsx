@@ -27,6 +27,7 @@ import McvIcon from '@/assets/icons/mcv.png';
 import LuxuryIcon from '@/assets/icons/Luxury.png';
 import PremiumIcon from '@/assets/icons/Premium.png';
 import SuvIcon from '@/assets/icons/SUV.png';
+import ScootyIcon from '@/assets/icons/scooty.png';
 
 const mapContainerStyle = { width: '100%', height: '100%' };
 
@@ -38,6 +39,7 @@ const getMapIconForVehicle = (iconType = '') => {
 
   const value = raw.toLowerCase();
 
+  if (value.includes('scooty') || value.includes('scooter')) return ScootyIcon;
   if (value.includes('bike')) return BikeIcon;
   if (value.includes('auto')) return AutoIcon;
   if (value.includes('ehc')) return EhcvIcon;

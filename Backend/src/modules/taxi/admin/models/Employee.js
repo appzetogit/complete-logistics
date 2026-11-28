@@ -28,6 +28,18 @@ const employeeSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    // Counts typed by the admin. When set they are shown instead of the automatic count
+    // (users / drivers who signed up with this employee's code). null = use the automatic count.
+    manualUsersCount: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    manualDriversCount: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
   },
   { timestamps: true },
 );

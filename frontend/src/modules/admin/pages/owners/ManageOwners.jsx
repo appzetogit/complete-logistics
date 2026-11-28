@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import {
   Plus,
   Search,
@@ -45,6 +46,7 @@ const MotionDiv = motion.div;
 const ownerStatusOptions = ['pending', 'approved', 'rejected'];
 
 const ManageOwners = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [view, setView] = useState('list');
   const [editingId, setEditingId] = useState(null);
@@ -240,13 +242,14 @@ const ManageOwners = () => {
             >
               <AdminPageHeader module="Owner Management" page="Manage Owners" title="Manage Owners" />
 
-              <div className="mb-4">
+              <div className="mb-4 flex items-center gap-2">
                 <button
                   onClick={() => navigate('/admin/owners/create')}
                   className="flex items-center gap-2 px-4 py-2 bg-yellow-400 text-black text-sm font-bold rounded-lg hover:bg-yellow-500 transition-colors"
                 >
                   <Plus size={15} /> Add Owner
                 </button>
+                <ExportButton filename="owners" tableRef={tableRef} />
               </div>
 
             <div className="bg-white rounded-xl border border-gray-200 overflow-visible">
@@ -319,7 +322,7 @@ const ManageOwners = () => {
 
               {/* Table */}
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table ref={tableRef} className="w-full">
                   <thead>
                     <tr className="bg-gray-50 border-b border-gray-100">
                       <th className="px-6 py-3 text-left text-sm font-bold text-gray-500">Company Name</th>

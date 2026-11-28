@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { 
   ChevronRight,
   Loader2,
@@ -11,6 +12,7 @@ import toast from 'react-hot-toast';
 import { useSettings } from '../../../../shared/context/SettingsContext';
 
 const HeaderFooter = () => {
+  const tableRef = useRef(null);
   const { settings } = useSettings();
   const appName = settings.general?.app_name || 'App';
   const appLogo = settings.general?.logo || settings.customization?.logo || settings.general?.favicon || '';
@@ -125,9 +127,12 @@ const HeaderFooter = () => {
                  <h3 className="text-sm text-gray-900 tracking-tight font-bold">Header-Footer Page Registry</h3>
                  <p className="text-xs text-gray-400 font-medium italic italic decoration-indigo-200 underline-offset-4">Manage navigational static pages throughout your landing site</p>
               </div>
+              <div className="ml-auto flex items-center gap-2">
+                <ExportButton filename="header_footer_pages" tableRef={tableRef} />
               <button className="ml-auto flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 shadow-sm transition-all">
                  <Plus size={14} /> Add New Translation
               </button>
+              </div>
            </div>
 
            {/* Preview Mockup */}
@@ -166,7 +171,7 @@ const HeaderFooter = () => {
            </div>
 
            <div className="overflow-hidden border border-gray-100 rounded-xl shadow-sm">
-              <table className="w-full text-left border-collapse">
+              <table ref={tableRef} className="w-full text-left border-collapse">
                  <thead className="bg-[#F9FAFB] border-b border-gray-100">
                     <tr>
                        <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Title</th>

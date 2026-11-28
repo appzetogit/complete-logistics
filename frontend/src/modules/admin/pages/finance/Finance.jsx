@@ -17,8 +17,10 @@ import {
 } from 'lucide-react';
 
 import { adminService } from '../../services/adminService';
+import ExportButton from '../../components/ExportButton';
 
 const Finance = () => {
+  const tableRef = React.useRef(null);
   const [settlements, setSettlements] = React.useState([]);
   const [isLoading, setIsLoading] = React.useState(true);
 
@@ -57,6 +59,7 @@ const Finance = () => {
           <p className="text-gray-400 font-bold text-[11px] mt-1 uppercase tracking-widest leading-none">Net Revenue, Commissions & Payouts</p>
         </div>
         <div className="flex items-center gap-3">
+           <ExportButton filename="settlements" tableRef={tableRef} />
            <button className="bg-gray-50 border border-gray-200 text-gray-600 px-4 py-2 rounded-lg text-[13px] font-bold hover:bg-gray-100 flex items-center gap-2">
              <Download size={16} /> Tax Reports
            </button>
@@ -160,7 +163,7 @@ const Finance = () => {
             <h3 className="text-lg font-bold text-gray-900">Recent Settlements</h3>
             <button className="text-[11px] font-black text-primary uppercase tracking-widest hover:underline">Full Statement</button>
          </div>
-         <table className="w-full text-left">
+         <table ref={tableRef} className="w-full text-left">
             <thead>
                <tr className="bg-gray-50/50 text-[10px] font-black text-gray-400 uppercase border-b border-gray-50">
                   <th className="px-6 py-4">Transaction ID</th>

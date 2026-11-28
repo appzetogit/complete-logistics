@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { ChevronRight, Eye, FileSearch, MoreHorizontal, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const BASE = () => `${globalThis.__LEGACY_BACKEND_ORIGIN__}/api/v1/admin/wallet/drivers/negative-balance`;
 
 const NegativeBalanceDrivers = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [itemsPerPage, setItemsPerPage] = useState(10);
@@ -82,8 +84,11 @@ const NegativeBalanceDrivers = () => {
         </div>
         <div className="flex items-center justify-between gap-4">
           <h1 className="text-xl text-gray-900 font-bold">Negative Balance Drivers</h1>
+          <div className="flex items-center gap-3">
+          <ExportButton filename="negative_balance_drivers" tableRef={tableRef} />
           <div className="text-sm text-gray-500">
             Total Outstanding: <span className="font-semibold text-rose-600">₹ {Number(summary.total_outstanding || 0).toFixed(2)}</span>
+          </div>
           </div>
         </div>
       </div>
@@ -119,7 +124,7 @@ const NegativeBalanceDrivers = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left">            <thead className="bg-gray-50">
+          <table ref={tableRef} className="w-full text-left">            <thead className="bg-gray-50">
               <tr className="text-xs font-semibold text-gray-500">
                 <th className="px-6 py-4">Name</th>
                 <th className="px-6 py-4">Driver Code</th>

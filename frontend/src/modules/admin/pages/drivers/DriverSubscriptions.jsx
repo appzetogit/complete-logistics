@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { 
   Zap, 
   Search, 
   ChevronRight, 
   Plus, 
   Filter, 
-  Download, 
   Car,
   MoreVertical,
   List,
@@ -15,7 +15,24 @@ import { Link, useNavigate } from 'react-router-dom';
 import { adminService } from '../../services/adminService';
 import toast from 'react-hot-toast';
 
+// The page used <ToggleSwitch> without defining it, so the whole admin crashed on this page.
+const ToggleSwitch = ({ label, enabled, onToggle }) => (
+  <button
+    type="button"
+    onClick={onToggle}
+    className={`flex items-center gap-3 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors ${
+      enabled ? 'border-yellow-400 bg-yellow-50 text-gray-900' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+    }`}
+  >
+    <span className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${enabled ? 'bg-yellow-400' : 'bg-gray-300'}`}>
+      <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+    </span>
+    {label}
+  </button>
+);
+
 const DriverSubscriptions = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [config, setConfig] = useState({
@@ -83,9 +100,7 @@ const DriverSubscriptions = () => {
         <div className="flex items-center justify-between gap-4">
           <h1 className="text-xl text-gray-900 font-bold">Subscription</h1>
           <div className="flex items-center gap-3">
-            <button className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
-              <Download size={15} /> Export List
-            </button>
+            <ExportButton filename="driver_subscription_plans" tableRef={tableRef} />
           </div>
         </div>
       </div>
@@ -194,7 +209,7 @@ const DriverSubscriptions = () => {
 
         {/* TABLE */}
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table ref={tableRef} className="w-full">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>

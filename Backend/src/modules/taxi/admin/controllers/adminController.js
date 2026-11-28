@@ -606,6 +606,9 @@ export const updateReferralSettings = asyncHandler(async (req, res) =>
   ok(res, await adminService.updateReferralSettings(req.params.type, req.body)),
 );
 
+export const listReferredAccounts = asyncHandler(async (req, res) =>
+  ok(res, await adminService.listReferredAccounts({ status: String(req.query.status || 'active') })),
+);
 export const getReferralDashboard = asyncHandler(async (_req, res) =>
   ok(res, await adminService.getReferralDashboard()),
 );
@@ -790,6 +793,9 @@ export const getOverallEarnings = asyncHandler(async (_req, res) =>
 );
 export const getAdminEarnings = asyncHandler(async (req, res) =>
   ok(res, await adminService.getAdminEarnings(req.query)),
+);
+export const getSettlementSummary = asyncHandler(async (req, res) =>
+  ok(res, await adminService.getSettlementSummary({ period: String(req.query.period || 'all') })),
 );
 export const getTodayEarnings = asyncHandler(async (_req, res) =>
   ok(res, await adminService.getTodayEarnings()),

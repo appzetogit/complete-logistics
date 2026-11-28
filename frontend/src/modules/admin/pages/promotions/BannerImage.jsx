@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   ArrowLeft,
   ChevronRight,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation, useNavigate } from 'react-router-dom';
+import ExportButton from '../../components/ExportButton';
 
 const Motion = motion;
 const LIST_PATH = '/admin/promotions/banner-image';
@@ -28,6 +29,7 @@ const BannerImage = () => {
   const location = useLocation();
   const isCreateRoute = location.pathname === CREATE_PATH;
 
+  const tableRef = useRef(null);
   const [banners, setBanners] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -261,6 +263,7 @@ const BannerImage = () => {
           <h1 className="text-[17px] font-black text-[#2D3A6E] uppercase tracking-tight italic leading-none mb-1">
             {isCreateRoute ? 'CREATE' : 'BANNER IMAGE'}
           </h1>
+          <ExportButton filename="banners" tableRef={tableRef} />
           <div className="flex items-center gap-2 text-[11px] font-bold text-gray-400 uppercase tracking-widest leading-none">
             <span>Banner Image</span>
             <ChevronRight size={12} className="opacity-50" />
@@ -310,7 +313,7 @@ const BannerImage = () => {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-left">
+                <table ref={tableRef} className="w-full text-left">
                   <thead className="bg-gray-50">
                     <tr className="text-[13px] font-bold text-gray-700">
                       <th className="px-6 py-4">Icon</th>

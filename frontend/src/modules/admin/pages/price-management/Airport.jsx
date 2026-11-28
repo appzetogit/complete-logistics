@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Autocomplete, DrawingManager, GoogleMap, MarkerF, Polygon } from '@react-google-maps/api';
@@ -50,6 +51,7 @@ const defaultFormData = {
 };
 
 const Airport = ({ mode: initialMode = "list" }) => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const { id } = useParams();
   const [view, setView] = useState(initialMode);
@@ -287,6 +289,8 @@ const Airport = ({ mode: initialMode = "list" }) => {
               </div>
               <div className="flex items-center justify-between">
                 <h1 className="text-xl text-gray-900 font-bold">Airport Management</h1>
+                <div className="flex items-center gap-2">
+                  <ExportButton filename="airports" tableRef={tableRef} />
                 <button 
                   type="button"
                   onClick={() => navigate("create")}
@@ -294,6 +298,7 @@ const Airport = ({ mode: initialMode = "list" }) => {
                 >
                   <Plus size={16} /> Add Airport
                 </button>
+                </div>
               </div>
             </div>
 
@@ -403,7 +408,7 @@ const Airport = ({ mode: initialMode = "list" }) => {
               ) : null}
 
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table ref={tableRef} className="w-full text-sm">
                   <thead>
                     <tr className="bg-gray-50 border-b border-gray-200">
                       <th className="px-6 py-4 text-left font-semibold text-gray-700">Airport Name</th>

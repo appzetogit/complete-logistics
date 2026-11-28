@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { ChevronRight, Eye, FileSearch, QrCode, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -12,6 +13,7 @@ const formatDateTime = (value) => {
 };
 
 const WithdrawalRequestDrivers = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [itemsPerPage, setItemsPerPage] = useState(10);
@@ -83,6 +85,7 @@ const WithdrawalRequestDrivers = () => {
         </div>
         <div className="flex items-center justify-between">
           <h1 className="text-xl text-gray-900 font-bold">Withdrawal Request Drivers</h1>
+          <ExportButton filename="driver_withdrawal_requests" tableRef={tableRef} />
         </div>
       </div>
 
@@ -117,7 +120,7 @@ const WithdrawalRequestDrivers = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
+          <table ref={tableRef} className="w-full text-left">
             <thead className="bg-gray-50">
               <tr className="text-xs font-semibold text-gray-500">
                 <th className="px-6 py-4">Date</th>

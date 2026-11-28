@@ -83,6 +83,7 @@ import {
   getAdminBusBookingCalendar,
   getAdminBusBookings,
   getAdminEarnings,
+  getSettlementSummary,
   getAirports,
   getPendingBusDriverSignups,
   getPendingServiceCenterStaffSignups,
@@ -146,6 +147,7 @@ import {
   getReferralSettings,
   updateReferralSettings,
   getReferralDashboard,
+  listReferredAccounts,
   getSetPriceById,
   getSetPrices,
   getServiceLocations,
@@ -493,10 +495,12 @@ adminRouter.patch('/admin/referrals/translation/:languageCode', updateReferralTr
 adminRouter.get('/admin/referrals/settings/:type', getReferralSettings);
 adminRouter.patch('/admin/referrals/settings/:type', updateReferralSettings);
 adminRouter.get('/admin/referral/dashboard', getReferralDashboard);
+adminRouter.get('/admin/referral/referred-accounts', listReferredAccounts);
 
 adminRouter.get('/admin/dashboard/data', getDashboardData);
 
 adminRouter.get('/admin/dashboard/admin-earnings', getAdminEarnings);
+adminRouter.get('/admin/dashboard/settlement-summary', getSettlementSummary);
 adminRouter.get('/admin/dashboard/overall-earnings', getOverallEarnings);
 adminRouter.get('/admin/dashboard/today-earnings', getTodayEarnings);
 adminRouter.get('/admin/dashboard/cancel-chart', getCancelChart);

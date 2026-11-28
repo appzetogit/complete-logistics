@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useRef, useEffect, useMemo, useState } from "react";
+import ExportButton from '../../components/ExportButton';
 import {
   ChevronDown,
   ChevronRight,
@@ -20,6 +21,7 @@ const getOwnerMobile = (owner) =>
   owner?.mobile || owner?.user_id?.mobile || "-";
 
 const DeletedOwners = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const token = localStorage.getItem("adminToken") || "";
 
@@ -142,11 +144,12 @@ const DeletedOwners = () => {
                   </div>
                   <span>entries</span>
                 </div>
+                <ExportButton filename="deleted_owners" tableRef={tableRef} />
               </div>
 
               <div className="px-5">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left">
+                  <table ref={tableRef} className="w-full text-left">
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-3 py-4 text-sm font-bold text-gray-950">

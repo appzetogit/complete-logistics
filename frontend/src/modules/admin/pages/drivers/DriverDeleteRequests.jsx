@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, ChevronRight, Search, UserX, CheckCircle2, XCircle } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 
 const DriverDeleteRequests = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [drivers, setDrivers] = useState([]);
@@ -108,7 +110,10 @@ const DriverDeleteRequests = () => {
             <ChevronRight size={10} />
             <span className="text-gray-700 font-medium">Delete Requests</span>
           </div>
-          <h1 className="text-base font-bold text-gray-900">Delete requests</h1>
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-base font-bold text-gray-900">Delete requests</h1>
+            <ExportButton filename="driver_delete_requests" tableRef={tableRef} />
+          </div>
         </div>
       </div>
 
@@ -145,7 +150,7 @@ const DriverDeleteRequests = () => {
 
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse whitespace-nowrap">
+          <table ref={tableRef} className="w-full text-left border-collapse whitespace-nowrap">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
                 <th className="px-3 py-2">Driver</th>

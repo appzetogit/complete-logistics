@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import {
   ChevronDown,
   ChevronRight,
@@ -46,6 +47,7 @@ const getMobile = (driver) => {
 const getEmail = (driver) => driver?.email || driver?.user_id?.email || '-';
 
 const FleetDrivers = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
   const [drivers, setDrivers] = useState([]);
@@ -161,6 +163,7 @@ const FleetDrivers = () => {
               >
                 <Filter size={15} /> Filters
               </button>
+              <ExportButton filename="fleet_drivers" tableRef={tableRef} />
               <button
                 type="button"
                 onClick={() => navigate('/admin/fleet/drivers/create')}
@@ -233,7 +236,7 @@ const FleetDrivers = () => {
 
           <div className="px-5">
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
+              <table ref={tableRef} className="w-full text-left">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-3 py-3 text-sm font-bold text-gray-950">Name</th>

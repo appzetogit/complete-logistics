@@ -19,6 +19,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { adminService } from '../../services/adminService';
+import ExportButton, { fetchAllPages } from '../../components/ExportButton';
 
 const ACTION_MENU_WIDTH = 220;
 const ACTION_MENU_GAP = 8;
@@ -227,12 +228,37 @@ const PendingDrivers = () => {
         </div>
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-base text-gray-900 font-bold">Pending Drivers</h1>
+          <div className="flex items-center gap-2">
+          <ExportButton
+            filename="pending_drivers"
+            getRows={async () => {
+              const rows = await fetchAllPages(
+                (nextPage, limit) => adminService.getDrivers(nextPage, limit, {
+                  approve: false,
+                  search: String(searchTerm || '').trim(),
+                }),
+                (res) => ({ results: res?.data?.results || [], lastPage: res?.data?.paginator?.last_page }),
+                { limit: 100 },
+              );
+              return rows.filter((d) => String(d?.onboarding_role || '').toLowerCase() !== 'owner');
+            }}
+            columns={[
+              { label: 'Name', value: (d) => d.name || '' },
+              { label: 'Code', value: (d) => d.driver_code || d.referralCode || '' },
+              { label: 'Location', value: (d) => d.service_location_name || d.city || '' },
+              { label: 'Mobile', value: (d) => d.phone || d.mobile || '' },
+              { label: 'Type', value: (d) => d.transport_type || d.register_for || '' },
+              { label: 'Status', value: (d) => d.status || 'Pending' },
+              { label: 'Registered', value: (d) => (d.createdAt ? new Date(d.createdAt).toLocaleString('en-IN') : '') },
+            ]}
+          />
           <button
             onClick={() => navigate('/admin/drivers/create')}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-black font-semibold bg-yellow-400 rounded-md shadow-sm hover:bg-yellow-500 transition-colors"
           >
             <Plus size={14} /> Add Drivers
           </button>
+          </div>
         </div>
       </div>
 

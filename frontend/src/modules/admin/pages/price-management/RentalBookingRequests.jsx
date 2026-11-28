@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { GoogleMap, MarkerF } from '@react-google-maps/api';
 import {
   CalendarDays,
@@ -62,6 +62,7 @@ import {
 import toast from 'react-hot-toast';
 import { adminService } from '../../services/adminService';
 import { useBaseGoogleMapsLoader } from '../../utils/googleMaps';
+import ExportButton from '../../components/ExportButton';
 
 const mapContainerStyle = { width: '100%', height: '100%' };
 
@@ -131,6 +132,7 @@ const toRentalRequestList = (response) => {
 };
 
 const RentalBookingRequests = () => {
+  const tableRef = useRef(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState('');
@@ -577,6 +579,7 @@ const RentalBookingRequests = () => {
               <ClipboardList size={18} />
             </div>
             <h1 className="text-xl lg:text-[22px] font-bold text-slate-900 tracking-tight">Rental Requests</h1>
+            <ExportButton filename="rental_requests" tableRef={tableRef} />
           </div>
           <p className="mt-0.5 text-xs text-slate-500">
             Enterprise overview of customer rental request flows, tracking status, store assignments, and live maps.
@@ -882,7 +885,7 @@ const RentalBookingRequests = () => {
             </div>
           ) : (
             <div className="overflow-x-auto relative scrollbar-thin">
-              <table className="w-full text-left border-collapse whitespace-nowrap min-w-max">
+              <table ref={tableRef} className="w-full text-left border-collapse whitespace-nowrap min-w-max">
                 <thead>
                   <tr className="border-b border-slate-100 bg-slate-50/80 text-left sticky top-0 z-10 select-none">
                     

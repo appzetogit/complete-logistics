@@ -3,6 +3,7 @@ import { ChevronRight, Loader2, Pencil, Plus, Search, UserRound } from 'lucide-r
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { adminService } from '../../services/adminService';
+import ExportButton, { fetchAllPages } from '../../components/ExportButton';
 
 const EmployeeList = () => {
   const navigate = useNavigate();
@@ -89,6 +90,25 @@ const EmployeeList = () => {
             </p>
           </div>
 
+          <div className="flex items-center gap-2">
+          <ExportButton
+            filename="employees"
+            getRows={() => fetchAllPages(
+              (nextPage, limit) => adminService.getEmployees(nextPage, limit, String(searchTerm || '').trim()),
+              (res) => ({ results: res?.data?.results || [], lastPage: res?.data?.paginator?.last_page }),
+              { limit: 100 },
+            )}
+            columns={[
+              { label: 'Employee', value: (e) => e.name || '' },
+              { label: 'Joined', value: (e) => (e.createdAt ? new Date(e.createdAt).toLocaleString('en-IN') : '') },
+              { label: 'Phone', value: (e) => e.phone || '' },
+              { label: 'Code', value: (e) => e.employeeCode || '' },
+              { label: 'Users', value: (e) => e.totalUsersAcquired ?? 0 },
+              { label: 'Drivers', value: (e) => e.totalDriversAcquired ?? 0 },
+              { label: 'Total', value: (e) => e.totalAcquired ?? 0 },
+              { label: 'Status', value: (e) => (e.active ? 'Active' : 'Inactive') },
+            ]}
+          />
           <button
             type="button"
             onClick={() => navigate('/admin/employees/create')}
@@ -97,6 +117,7 @@ const EmployeeList = () => {
             <Plus size={16} />
             Add Employee
           </button>
+          </div>
         </div>
 
         <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">

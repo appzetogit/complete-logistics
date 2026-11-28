@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ChevronDown, Filter, LoaderCircle, MoreVertical, Search, CheckCircle, Clock, XCircle, MapPin, Truck, ChevronRight, X, FileText, UserPlus, Eye, Download, User, CreditCard } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import toast from 'react-hot-toast';
+import ExportButton from '../../components/ExportButton';
 
 const STATUS_STYLES = {
   COMPLETED: 'bg-green-100 text-green-700 border border-green-200',
@@ -288,6 +289,7 @@ const StatCard = ({ title, value, icon: Icon, colorClass }) => (
 );
 
 const Deliveries = () => {
+  const tableRef = useRef(null);
   const [selectedDelivery, setSelectedDelivery] = useState(null);
   const [activeTab, setActiveTab] = useState('All');
   const [pageSize, setPageSize] = useState('10');
@@ -400,6 +402,7 @@ const Deliveries = () => {
         <div className="flex items-center justify-between px-4 py-3 bg-white rounded-xl shadow-sm border border-gray-100">
           <div>
             <h1 className="text-lg font-bold tracking-tight text-gray-900">Delivery Requests</h1>
+            <ExportButton filename="deliveries" tableRef={tableRef} />
             <p className="text-xs text-gray-500 mt-0.5 font-medium">Manage and monitor all delivery requests across the platform.</p>
           </div>
           <div className="hidden md:flex items-center gap-2 text-xs font-medium text-gray-400">
@@ -569,7 +572,7 @@ const Deliveries = () => {
 
           {/* Table Container */}
           <div className="overflow-x-auto min-h-[400px]">
-            <table className="w-full text-left border-collapse whitespace-nowrap">
+            <table ref={tableRef} className="w-full text-left border-collapse whitespace-nowrap">
               <thead className="sticky top-0 z-10 bg-white">
                 <tr className="bg-gray-50/80 border-b border-gray-100">
                   {['Request ID', 'Date', 'User Name', 'Driver Name', 'Transport Type', 'Trip Status', 'Payment Option', 'Actions'].map((heading, i) => (

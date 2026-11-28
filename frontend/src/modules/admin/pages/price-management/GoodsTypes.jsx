@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import {
   Plus,
   Search,
@@ -90,6 +91,7 @@ const StatusToggle = ({ active, onToggle }) => (
 );
 
 const GoodsTypes = ({ mode }) => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const { id } = useParams();
   const isEditor = mode === 'create' || mode === 'edit';
@@ -312,6 +314,8 @@ const GoodsTypes = ({ mode }) => {
               <h1 className="text-2xl font-bold text-slate-900">Goods Types</h1>
               <p className="mt-1 text-sm text-slate-500">Manage cargo categories and their compatible vehicle types.</p>
             </div>
+            <div className="flex items-center gap-2">
+              <ExportButton filename="goods_types" tableRef={tableRef} />
             <button
               onClick={() => navigate('/admin/pricing/goods-types/create')}
               className="inline-flex items-center gap-2 rounded-xl bg-[#ff6b4a] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-200 transition hover:bg-[#f55a37]"
@@ -319,6 +323,7 @@ const GoodsTypes = ({ mode }) => {
               <Plus size={18} />
               Add Goods Type
             </button>
+            </div>
           </div>
         </div>
 
@@ -343,7 +348,7 @@ const GoodsTypes = ({ mode }) => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
+            <table ref={tableRef} className="w-full text-left">
               <thead className="bg-slate-50">
                 <tr>
                   <th className="px-6 py-4 text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Name</th>

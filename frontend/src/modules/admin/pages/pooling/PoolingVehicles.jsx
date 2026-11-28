@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Plus,
   Search,
@@ -17,9 +17,11 @@ import {
 import { adminService } from '../../services/adminService';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import ExportButton from '../../components/ExportButton';
 
 const PoolingVehicles = () => {
   const navigate = useNavigate();
+  const tableRef = useRef(null);
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -95,6 +97,7 @@ const PoolingVehicles = () => {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-black text-slate-900">Pooling Vehicles</h1>
+            <ExportButton filename="pooling_vehicles" tableRef={tableRef} />
             <p className="text-sm font-medium text-slate-500">Manage dedicated fleet for car pooling services</p>
           </div>
           <button
@@ -188,7 +191,7 @@ const PoolingVehicles = () => {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-100">
+              <table ref={tableRef} className="min-w-full divide-y divide-slate-100">
                 <thead className="bg-white">
                   <tr className="text-left text-xs font-bold text-slate-500">
                     <th className="px-3 py-2">Vehicle</th>

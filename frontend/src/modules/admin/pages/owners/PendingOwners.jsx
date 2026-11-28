@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import {
   ChevronRight,
   Eye,
@@ -69,6 +70,7 @@ const isOwnerApproved = (owner) => {
 };
 
 const PendingOwners = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [itemsPerPage, setItemsPerPage] = useState(10);
@@ -297,12 +299,15 @@ const PendingOwners = () => {
               <option value={200}>200</option>
             </select>
           </div>
+          <div className="flex items-center gap-2">
+          <ExportButton filename="pending_owners" tableRef={tableRef} />
           <button 
             onClick={() => setShowFilters(!showFilters)}
             className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-black bg-yellow-400 rounded-lg hover:bg-yellow-500 transition-colors"
           >
             <Filter size={16} /> Filters
           </button>
+          </div>
         </div>
       </div>
 
@@ -333,7 +338,7 @@ const PendingOwners = () => {
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-visible">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table ref={tableRef} className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-500">
                 <th className="px-6 py-4">Owner Name</th>

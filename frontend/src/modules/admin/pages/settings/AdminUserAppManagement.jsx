@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
+import ExportButton from '../../components/ExportButton';
 import {
   ChevronRight,
   Save,
@@ -72,6 +73,7 @@ const SectionCard = ({ title, children }) => (
 );
 
 const AdminUserAppManagement = ({ tab: initialTab }) => {
+  const tableRef = useRef(null);
   const [activeTab, setActiveTab] = useState(initialTab || 'home-sections');
   const { refreshSettings } = useSettings();
   const [loading, setLoading] = useState(true);
@@ -683,16 +685,19 @@ const AdminUserAppManagement = ({ tab: initialTab }) => {
               {!editItem && !isAdding && (
                 <SectionCard title={`${tabsConfig.find(t => t.id === activeTab)?.label} List`}>
                   <div className="mb-4 flex justify-end">
+                    <div className="flex items-center gap-2">
+                      <ExportButton filename="user_app_cards" tableRef={tableRef} />
                     <button
                       onClick={() => setIsAdding(true)}
                       className="inline-flex items-center gap-1.5 px-4 py-2 bg-yellow-400 hover:bg-yellow-500 text-black rounded-xl text-xs font-bold font-bold transition-all"
                     >
                       <Plus size={14} /> Add New Card
                     </button>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="w-full text-[13px] text-left">
+                    <table ref={tableRef} className="w-full text-[13px] text-left">
                       <thead>
                         <tr className="border-b border-gray-200 text-gray-400 font-bold font-bold">
                           <th className="pb-3 pl-2 w-24">Order</th>

@@ -111,6 +111,7 @@ export const adminService = {
   getOwnerWalletHistory: (id) => api.get(`/admin/wallet/owners/${id}/history`),
 
   getReferralDashboard: () => api.get('/admin/referral/dashboard'),
+  listReferredAccounts: (status = 'active') => api.get('/admin/referral/referred-accounts', { params: { status } }),
 
   /**
    * Subscription Management
@@ -207,6 +208,7 @@ export const adminService = {
   getDashboardPage: () => api.get('/admin/dashboard/page'),
   getDashboardData: () => api.get('/admin/dashboard/data'),
   getAdminEarnings: (params = {}) => api.get('/admin/dashboard/admin-earnings', { params }),
+  getSettlementSummary: (period = 'all') => api.get('/admin/dashboard/settlement-summary', { params: { period } }),
   getTodayEarnings: () => api.get('/admin/dashboard/today-earnings'),
   getOverallEarnings: () => api.get('/admin/dashboard/overall-earnings'),
   getCancelChart: () => api.get('/admin/dashboard/cancel-chart'),

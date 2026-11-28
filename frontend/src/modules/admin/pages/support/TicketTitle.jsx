@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { ChevronRight, Edit2, Plus, Trash2 } from 'lucide-react';
 import { adminSupportService } from '../../../shared/services/supportTicketService';
+import ExportButton from '../../components/ExportButton';
 
 const USER_TYPES = ['user', 'driver', 'owner'];
 
@@ -11,6 +12,7 @@ const initialForm = {
 };
 
 const TicketTitle = () => {
+  const tableRef = useRef(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -123,6 +125,7 @@ const TicketTitle = () => {
         </div>
         <div className="flex items-center justify-between gap-4">
           <h1 className="text-xl text-gray-900 font-bold">Ticket Title</h1>
+          <ExportButton filename="ticket_titles" tableRef={tableRef} />
         </div>
       </div>
 
@@ -216,7 +219,7 @@ const TicketTitle = () => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table ref={tableRef} className="w-full">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50">
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Title</th>

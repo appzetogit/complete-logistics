@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { 
   Plus, 
   Search, 
@@ -37,6 +38,7 @@ const StatusToggle = ({ active, onToggle }) => (
 );
 
 const AppModules = ({ mode: propMode }) => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const { id } = useParams();
   const location = useLocation();
@@ -260,12 +262,15 @@ const AppModules = ({ mode: propMode }) => {
                   >
                     <Filter size={16} /> {isFilterOpen ? 'Hide Filters' : 'Filters'}
                   </button>
+                  <div className="flex items-center gap-2">
+                    <ExportButton filename="app_modules" tableRef={tableRef} />
                   <button 
                     onClick={() => navigate("create")}
                     className="flex items-center gap-2 px-5 py-2.5 bg-yellow-400 text-black rounded-lg text-[13px] font-bold shadow-md hover:bg-yellow-500 transition-colors"
                   >
                     <Plus size={18} /> Add App Modules
                   </button>
+                  </div>
                 </div>
               </div>
 
@@ -353,7 +358,7 @@ const AppModules = ({ mode: propMode }) => {
               {/* Table Body matches Image 1 */}
               <div className="px-8 pb-8">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left">
+                  <table ref={tableRef} className="w-full text-left">
                     <thead>
                       <tr className="bg-gray-50 border-y border-gray-200">
                         <th className="px-6 py-4 text-[13px] font-bold text-slate-700">Name</th>

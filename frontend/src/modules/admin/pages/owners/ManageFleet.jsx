@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
+import ExportButton from '../../components/ExportButton';
 import {
   Plus,
   ChevronRight,
@@ -91,6 +92,7 @@ const inputClass = 'h-10 w-full rounded border border-gray-300 bg-white px-3 tex
 const labelClass = 'mb-1.5 block text-xs font-bold text-gray-950';
 
 const ManageFleet = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [view, setView] = useState('list'); // 'list' | 'create' | 'edit'
   const [editingId, setEditingId] = useState(null);
@@ -675,6 +677,7 @@ const ManageFleet = () => {
                     className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-700"
                   />
                 </div>
+                <ExportButton filename="fleet_vehicles" tableRef={tableRef} />
                 <button
                   type="button"
                   onClick={() => navigate('/admin/fleet/manage/create')}
@@ -688,7 +691,7 @@ const ManageFleet = () => {
             {/* Table */}
             <div className="px-5">
               <div className="overflow-x-auto">
-                <table className="w-full text-left">
+                <table ref={tableRef} className="w-full text-left">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-3 py-4 text-sm font-bold text-gray-950">Vehicle Type</th>

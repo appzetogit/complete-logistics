@@ -20,7 +20,6 @@ import {
   ChevronRight,
   ArrowRight,
   Zap,
-  TrendingUp,
   BarChart3,
   RefreshCw,
   Server,
@@ -39,7 +38,6 @@ import {
   CheckCircle,
   Eye,
   Info,
-  Building2,
   Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -114,9 +112,8 @@ const MainDashboard = () => {
   // Backend Mapped Variables
   const totalUsers = dashboard?.totalUsers || 0;
   const totalDrivers = dashboard?.totalDrivers?.total || 0;
-  const approvedDrivers = dashboard?.totalDrivers?.approved || 0;
+  const onlineDrivers = dashboard?.totalDrivers?.online || 0;
   const declinedDrivers = dashboard?.totalDrivers?.declined || 0;
-  const totalOwners = dashboard?.totalOwners || 0;
 
   const todayEarnings = dashboard?.todayEarnings || {};
   const overallEarnings = dashboard?.overallEarnings || {};
@@ -124,11 +121,6 @@ const MainDashboard = () => {
   const todayTrips = dashboard?.todayTrips || {};
   const overallTrips = dashboard?.overallTrips || {};
 
-  // Operational metrics calculations
-  const fleetUtilization = useMemo(() => {
-    if (totalDrivers === 0) return 0;
-    return Math.round((approvedDrivers / totalDrivers) * 100);
-  }, [totalDrivers, approvedDrivers]);
 
   // SVG Area Chart Points mapping for Revenue Trajectory
   const chartWidth = 500;
@@ -243,14 +235,11 @@ const MainDashboard = () => {
           {[
             { label: "Total Customers", value: totalUsers, icon: Users, tone: "violet", to: "/admin/users", permission: "users.view" },
             { label: "Total Drivers", value: totalDrivers, icon: Car, tone: "sky", to: "/admin/drivers", permission: "drivers.view" },
-            { label: "Active Drivers", value: approvedDrivers, icon: UserCheck, tone: "emerald", to: "/admin/drivers/active", permission: "drivers.view" },
-            { label: "Active Vendors", value: totalOwners, icon: Building2, tone: "rose", to: "/admin/owners", permission: "owners.view" },
+            { label: "Active Drivers", value: onlineDrivers, icon: UserCheck, tone: "emerald", to: "/admin/drivers/active", permission: "drivers.view" },
             { label: "Online Customers", value: Math.max(1, Math.round(totalUsers * 0.15)), icon: Sparkles, tone: "orange", to: "/admin/users", permission: "users.view" },
             { label: "Ongoing Trips", value: todayTrips.scheduled || 0, icon: Activity, tone: "blue", to: "/admin/ongoing", permission: "ongoing.view" },
             { label: "Today's Revenue", value: `₹${currency(todayEarnings.total)}`, icon: IndianRupee, tone: "emerald", to: "/admin/earnings", permission: "earnings.view" },
             // a static figure with no page behind it: not clickable
-            { label: "Platform Uptime", value: "99.98%", icon: Server, tone: "violet" },
-            { label: "Fleet Utilization", value: `${fleetUtilization}%`, icon: TrendingUp, tone: "teal", to: "/admin/fleet/drivers", permission: "owners.view" },
             { label: "Pending Approvals", value: declinedDrivers, icon: Clock, tone: "red", to: "/admin/drivers/pending", permission: "drivers.view" }
           ].map((kpi, idx) => {
             const tone = KPI_TONES[kpi.tone] || KPI_TONES.blue;
@@ -489,23 +478,25 @@ const MainDashboard = () => {
               </h3>
               
               <div className="space-y-3.5">
-                {[
-                  { name: "Rydon Driver Node A", rating: "4.95", trips: 48, status: "Active", color: "bg-emerald-500" },
-                  { name: "City Fleet Partner B", rating: "4.89", trips: 42, status: "Active", color: "bg-emerald-500" },
-                  { name: "Rydon Courier Node C", rating: "4.82", trips: 36, status: "Active", color: "bg-emerald-500" },
-                  { name: "Partner Fleet Partner D", rating: "4.75", trips: 31, status: "Active", color: "bg-[#FFC400]" }
-                ].map((lead, i) => (
-                  <div key={i} className="flex items-center justify-between text-xs pb-2 border-b border-[#F1F5F9] last:border-0 last:pb-0">
+                {(dashboard?.topDrivers || []).length === 0 && (
+                  <p className="text-xs text-slate-400">No completed trips yet.</p>
+                )}
+                {(dashboard?.topDrivers || []).map((lead, i) => (
+                  <div
+                    key={lead.id || i}
+                    onClick={() => lead.id && navigate(`/admin/drivers/${lead.id}`)}
+                    className="flex items-center justify-between text-xs pb-2 border-b border-[#F1F5F9] last:border-0 last:pb-0 cursor-pointer"
+                  >
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 rounded-full bg-slate-50 flex items-center justify-center font-bold text-[10px] text-[#0B1220] border">
                         {i + 1}
                       </div>
                       <div>
                         <span className="font-semibold block text-[#0B1220]">{lead.name}</span>
-                        <span className="text-[9px] text-slate-400 block mt-0.5">Rating: {lead.rating} ⭐</span>
+                        <span className="text-[9px] text-slate-400 block mt-0.5">{lead.ratingCount > 0 ? `Rating: ${Number(lead.rating).toFixed(2)} ⭐ (${lead.ratingCount})` : 'No ratings yet'}</span>
                       </div>
                     </div>
-                    <span className="font-bold text-[#0B1220]">{lead.trips} trips</span>
+                    <span className="font-bold text-[#0B1220]">{lead.trips} {lead.trips === 1 ? 'trip' : 'trips'}</span>
                   </div>
                 ))}
               </div>

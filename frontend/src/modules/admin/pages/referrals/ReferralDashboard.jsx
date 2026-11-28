@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Users, 
   ArrowUpRight, 
@@ -12,8 +13,14 @@ import { adminService } from '../../services/adminService';
 import toast from 'react-hot-toast';
 import { useSettings } from '../../../../shared/context/SettingsContext';
 
-const StatCard = ({ title, value, change, icon: Icon }) => (
-  <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm flex flex-col justify-between h-full group hover:border-yellow-200 hover:shadow-md transition-all">
+const StatCard = ({ title, value, change, icon: Icon, onClick }) => (
+  <div
+    onClick={onClick}
+    role={onClick ? 'button' : undefined}
+    tabIndex={onClick ? 0 : undefined}
+    onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+    className={`bg-white rounded-xl p-5 border border-gray-100 shadow-sm flex flex-col justify-between h-full group hover:border-yellow-200 hover:shadow-md transition-all ${onClick ? 'cursor-pointer' : ''}`}
+  >
     <div className="flex items-start justify-between">
       <div className="flex flex-col">
         <p className="text-sm font-bold text-gray-500 mb-1">{title}</p>
@@ -152,6 +159,36 @@ const ReferralDashboard = () => {
   const appName = settings.general?.app_name || 'App';
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [showReferred, setShowReferred] = useState(false);
+  const [referredStatus, setReferredStatus] = useState('active');
+  const [referred, setReferred] = useState({ total: 0, results: [] });
+  const [referredLoading, setReferredLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showReferred) return undefined;
+    let cancelled = false;
+    setReferredLoading(true);
+    adminService.listReferredAccounts(referredStatus)
+      .then((res) => {
+        if (!cancelled) setReferred(res?.data || { total: 0, results: [] });
+      })
+      .catch(() => {
+        if (!cancelled) toast.error('Failed to load referred accounts');
+      })
+      .finally(() => {
+        if (!cancelled) setReferredLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showReferred, referredStatus]);
+
+  useEffect(() => {
+    if (!showReferred) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setShowReferred(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showReferred]);
 
   useEffect(() => {
     const fetchDashboard = async () => {
@@ -199,10 +236,11 @@ const ReferralDashboard = () => {
           value={data?.total_users || "0"} 
           icon={UserCheck} 
         />
-        <StatCard 
-          title="Active Referrals" 
-          value={data?.active_referrals || "0"} 
-          icon={Zap} 
+        <StatCard
+          title="Active Referrals"
+          value={data?.active_referrals || "0"}
+          icon={Zap}
+          onClick={() => setShowReferred(true)}
         />
         <StatCard 
           title="Referral Earning" 
@@ -254,6 +292,98 @@ const ReferralDashboard = () => {
             </ChartContainer>
          </div>
       </div>
+
+      {/* REFERRED ACCOUNTS LIST (opened from the Active Referrals card) */}
+      {showReferred && createPortal(
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 p-4" onClick={() => setShowReferred(false)}>
+          <div
+            className="w-full max-w-4xl max-h-[85vh] flex flex-col bg-white rounded-xl shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="Referred accounts"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-gray-100">
+              <div>
+                <h3 className="text-base font-bold text-gray-900">
+                  {referredStatus === 'active' ? 'Active Referrals' : 'All Referred Accounts'}
+                </h3>
+                <p className="text-xs text-gray-500">
+                  {referredStatus === 'active'
+                    ? 'Joined through a referral and completed a ride (or got the referral reward).'
+                    : 'Everyone who joined through a referral.'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {[{ key: 'active', label: 'Active' }, { key: 'all', label: 'All referred' }].map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => setReferredStatus(option.key)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-semibold border ${
+                      referredStatus === option.key
+                        ? 'bg-yellow-400 border-yellow-400 text-black'
+                        : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setShowReferred(false)}
+                  className="ml-1 px-3 py-1.5 rounded-md text-xs font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="overflow-auto">
+              {referredLoading ? (
+                <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-500">
+                  <Loader2 className="animate-spin text-yellow-500" size={18} /> Loading...
+                </div>
+              ) : referred.results.length === 0 ? (
+                <p className="py-12 text-center text-sm text-gray-500">No referred accounts.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-gray-50 text-left text-xs uppercase text-gray-500">
+                    <tr>
+                      <th className="px-4 py-2 font-semibold">Referred account</th>
+                      <th className="px-4 py-2 font-semibold">Type</th>
+                      <th className="px-4 py-2 font-semibold">Referred by</th>
+                      <th className="px-4 py-2 font-semibold">Joined</th>
+                      <th className="px-4 py-2 font-semibold text-right">Rides</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {referred.results.map((row) => (
+                      <tr key={`${row.type}-${row.id}`} className="border-t border-gray-100">
+                        <td className="px-4 py-2.5">
+                          <div className="font-semibold text-gray-900">{row.name || 'Unnamed'}</div>
+                          <div className="text-xs text-gray-500">{row.phone}</div>
+                        </td>
+                        <td className="px-4 py-2.5 capitalize text-gray-700">{row.type}</td>
+                        <td className="px-4 py-2.5">
+                          <div className="font-semibold text-gray-900">{row.referrer?.name || 'Unnamed'}</div>
+                          <div className="text-xs text-gray-500">
+                            {[row.referrer?.phone, row.referrer?.type].filter(Boolean).join(' · ')}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-700">
+                          {row.joinedAt ? new Date(row.joinedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{row.completedRides}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="px-4 py-2 border-t border-gray-100 text-xs text-gray-500">{referred.total} accounts</div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {/* FOOTER */}
       <footer className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-medium text-gray-500 border-t border-gray-200 pt-4">

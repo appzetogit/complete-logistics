@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ExportButton, { fetchAllPages } from '../../components/ExportButton';
 import { 
   Plus, 
   Search, 
@@ -642,9 +643,41 @@ const SetPrices = ({ mode }) => {
                       >
                         <Filter size={14} /> Filters
                       </button>
+                      <div className="flex items-center gap-2">
+                        <ExportButton
+                          filename="set_prices"
+                          getRows={async () => {
+                            const all = await fetchAllPages(
+                              (page, limit) => adminService.getSetPrices({
+                                scope: 'ride',
+                                page,
+                                limit,
+                                search: searchTerm,
+                                transport_type: transportFilter || undefined,
+                                status: statusFilter || undefined,
+                                zone_id: zoneFilter && zoneFilter !== ALL_ZONES_OPTION_VALUE ? zoneFilter : undefined,
+                                vehicle_type: vehicleFilter || undefined,
+                              }),
+                              (res) => ({
+                                results: res?.data?.results || res?.data?.data?.results || [],
+                                lastPage: res?.data?.paginator?.last_page,
+                              }),
+                              { limit: 100 },
+                            );
+                            const collapsed = collapseAllZonesSetPrices(all);
+                            return zoneFilter === ALL_ZONES_OPTION_VALUE ? collapsed.filter((item) => item.is_all_zones) : collapsed;
+                          }}
+                          columns={[
+                            { label: 'Zone', value: (row) => row.zone_name || '' },
+                            { label: 'Transport Type', value: (row) => (row.transport_type === 'both' ? 'All' : row.transport_type === 'taxi' ? 'Ride Hailing' : row.transport_type || 'All') },
+                            { label: 'Vehicle Type', value: (row) => row.vehicle_type_name || '' },
+                            { label: 'Status', value: (row) => (Number(row.active) === 1 ? 'Active' : 'Inactive') },
+                          ]}
+                        />
                       <button onClick={() => navigate('/admin/pricing/set-price/create')} className="flex items-center gap-1.5 px-4 py-1.5 bg-yellow-400 hover:bg-yellow-500 text-black rounded text-xs font-bold shadow-sm">
                         <Plus size={14} /> Add Set Price
                       </button>
+                      </div>
                     </div>
                   </div>
 

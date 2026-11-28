@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Car,
   CheckCircle2,
@@ -12,9 +12,11 @@ import {
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { adminService } from '../../services/adminService';
+import ExportButton from '../../components/ExportButton';
 
 const PendingPoolingDrivers = () => {
   const navigate = useNavigate();
+  const tableRef = useRef(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -88,6 +90,7 @@ const PendingPoolingDrivers = () => {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-black text-slate-900">Pending Pooling Drivers</h1>
+            <ExportButton filename="pending_pooling_drivers" tableRef={tableRef} />
             <p className="text-sm font-medium text-slate-500">Review self-signup pooling drivers before they go live</p>
           </div>
         </div>
@@ -136,7 +139,7 @@ const PendingPoolingDrivers = () => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-100">
+            <table ref={tableRef} className="min-w-full divide-y divide-slate-100">
               <thead className="bg-white">
                 <tr className="text-left text-xs font-bold text-slate-500">
                   <th className="px-4 py-3">Driver</th>

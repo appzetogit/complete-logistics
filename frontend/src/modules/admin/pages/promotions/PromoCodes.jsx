@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import ExportButton from '../../components/ExportButton';
 
 const BASE = globalThis.__LEGACY_BACKEND_ORIGIN__ + '/api/v1/admin/promos';
 const LIST_PATH = '/admin/promotions/promo-codes';
@@ -260,6 +261,7 @@ const PromoCodes = () => {
   const isEditRoute = location.pathname.includes('/edit/');
   const isFormView = isCreateRoute || isEditRoute;
 
+  const tableRef = useRef(null);
   const [promos, setPromos] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -589,9 +591,10 @@ const PromoCodes = () => {
               ) : null}
             </div>
 
+            <div className="flex justify-end"><ExportButton filename="promo_codes" tableRef={tableRef} /></div>
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left">
+                <table ref={tableRef} className="w-full text-left">
                   <thead className="bg-gray-50">
                     <tr className="text-xs font-medium text-gray-500 uppercase tracking-wider">
                       <th className="px-3 py-2">Code</th>

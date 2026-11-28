@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { 
   Bus, Percent, Receipt, RefreshCcw, Save, Search, 
   Filter, MoreVertical, X, Check, Edit, History, 
@@ -8,12 +8,14 @@ import {
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getAdminBuses, upsertAdminBus } from '../../services/busService';
+import ExportButton from '../../components/ExportButton';
 
 const inputClass =
   'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-800 shadow-sm outline-none transition focus:border-yellow-400 focus:ring-4 focus:ring-yellow-400/10';
 
 const BusCommissionManager = () => {
   const navigate = useNavigate();
+  const tableRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [savingId, setSavingId] = useState('');
@@ -162,6 +164,7 @@ const BusCommissionManager = () => {
               Bus Commission
             </div>
             <h1 className="mt-3 text-3xl font-black text-slate-900 tracking-tight">Commission Management</h1>
+            <ExportButton filename="bus_commissions" tableRef={tableRef} />
             <p className="mt-2 text-sm font-medium text-slate-500 max-w-2xl">
               Enterprise dashboard for managing individual commission and service tax percentages across the fleet.
             </p>
@@ -326,7 +329,7 @@ const BusCommissionManager = () => {
           </div>
         ) : (
           <div className="overflow-x-auto rounded-[2.5rem] border border-slate-200 bg-white shadow-sm">
-            <table className="w-full text-left text-sm">
+            <table ref={tableRef} className="w-full text-left text-sm">
               <thead className="bg-slate-50 border-b border-slate-200 text-xs font-black uppercase tracking-widest text-slate-500">
                 <tr>
                   <th className="px-4 py-3">Bus & Operator</th>

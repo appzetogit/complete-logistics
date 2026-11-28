@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   ArrowLeft,
   CalendarDays,
@@ -21,6 +21,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { adminService } from '../../services/adminService';
+import ExportButton from '../../components/ExportButton';
 
 const inputClass =
   'w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition-all focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100/60';
@@ -241,6 +242,7 @@ const PoolingManager = ({ mode: propMode }) => {
   const navigate = useNavigate();
   const { id } = useParams();
   const isEditor = propMode === 'create' || propMode === 'edit';
+  const tableRef = useRef(null);
   const [routes, setRoutes] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -640,6 +642,7 @@ const PoolingManager = ({ mode: propMode }) => {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="text-xl font-black text-slate-900">Pooling Routes</h1>
+              <ExportButton filename="pooling_routes" tableRef={tableRef} />
               <p className="text-xs font-medium text-slate-500">
                 Manage pooled ride destinations, stops, schedules, and assigned vehicles.
               </p>
@@ -737,7 +740,7 @@ const PoolingManager = ({ mode: propMode }) => {
               </div>
             ) : (
             <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-100">
+                <table ref={tableRef} className="min-w-full divide-y divide-slate-100">
                   <thead className="bg-slate-50">
                     <tr className="text-left">
                       <th className="px-3 py-2 !normal-case !tracking-normal !text-xs !font-bold">Route Name</th>

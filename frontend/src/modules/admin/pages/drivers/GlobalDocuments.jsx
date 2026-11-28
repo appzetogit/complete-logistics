@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { ChevronRight, PencilLine, Plus, Search, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { adminService } from '../../services/adminService';
@@ -35,6 +36,8 @@ const getVehicleFieldPriority = (fieldKey = '') => {
 };
 
 const GlobalDocuments = () => {
+  const tableRef = useRef(null);
+  const vehicleTableRef = useRef(null);
   const navigate = useNavigate();
   const [documents, setDocuments] = useState([]);
   const [vehicleFields, setVehicleFields] = useState([]);
@@ -282,14 +285,17 @@ const GlobalDocuments = () => {
 
       <div className="space-y-4">
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-          <div className="border-b border-gray-100 px-4 py-3">
+          <div className="border-b border-gray-100 px-4 py-3 flex items-start justify-between gap-3">
+            <div>
             <h2 className="text-sm text-gray-900 font-bold">Driver Needed Documents</h2>
             <p className="mt-0.5 text-xs text-gray-500">
               Templates used by the documents step of onboarding. Turn a document inactive here to hide it from `/taxi/driver/step-documents`.
             </p>
+            </div>
+            <ExportButton filename="driver_needed_documents" tableRef={tableRef} />
           </div>
           <div className="overflow-x-auto">
-            <table className="min-w-full">
+            <table ref={tableRef} className="min-w-full">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-2.5 text-left text-xs font-bold text-gray-600">Name</th>
@@ -325,14 +331,17 @@ const GlobalDocuments = () => {
         </div>
 
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-          <div className="border-b border-gray-100 px-4 py-3">
+          <div className="border-b border-gray-100 px-4 py-3 flex items-start justify-between gap-3">
+            <div>
             <h2 className="text-sm text-gray-900 font-bold">Vehicle Step Fields</h2>
             <p className="mt-0.5 text-xs text-gray-500">
               These control which fields appear on `/taxi/driver/step-vehicle`, their labels, placeholders, order, and required state.
             </p>
+            </div>
+            <ExportButton filename="driver_vehicle_fields" tableRef={vehicleTableRef} />
           </div>
           <div className="overflow-x-auto">
-            <table className="min-w-full">
+            <table ref={vehicleTableRef} className="min-w-full">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-2.5 text-left text-xs font-bold text-gray-600">Label</th>

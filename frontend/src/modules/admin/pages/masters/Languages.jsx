@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { Plus, Search, Globe, Trash2, ChevronRight, Loader2, Edit2, X, AlertTriangle } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import toast from 'react-hot-toast';
@@ -13,6 +14,7 @@ const StatusToggle = ({ active, onToggle }) => (
 );
 
 const Languages = () => {
+  const tableRef = useRef(null);
   const [languages, setLanguages] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -185,12 +187,15 @@ const Languages = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-semibold text-gray-900">Languages</h1>
+        <div className="flex items-center gap-2">
+          <ExportButton filename="languages" tableRef={tableRef} />
         <button 
           onClick={openAddModal}
           className="flex items-center justify-center gap-2 px-5 py-2.5 bg-yellow-400 text-black text-sm font-semibold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm w-full sm:w-auto"
         >
           <Plus size={18} /> Add Language
         </button>
+        </div>
       </div>
 
       {/* Table Card */}
@@ -235,7 +240,7 @@ const Languages = () => {
               <button onClick={fetchLanguages} className="text-sm text-yellow-600 font-semibold hover:underline">Retry</button>
             </div>
           ) : (
-            <table className="w-full text-left min-w-[600px]">
+            <table ref={tableRef} className="w-full text-left min-w-[600px]">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="px-6 py-4 text-xs font-semibold text-gray-600 whitespace-nowrap">Name</th>

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { ArrowLeft, Edit2, Loader2, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { adminService } from '../../services/adminService';
@@ -23,6 +24,7 @@ const defaultFormData = {
 };
 
 const OwnerBookings = () => {
+  const tableRef = useRef(null);
   const [view, setView] = useState('list');
   const [bookings, setBookings] = useState([]);
   const [owners, setOwners] = useState([]);
@@ -153,6 +155,8 @@ const OwnerBookings = () => {
                 <h1 className="text-2xl font-black tracking-tight text-slate-900">Owner Bookings</h1>
                 <p className="mt-1 text-sm font-medium text-slate-500">Manage bookings assigned to owners and fleets.</p>
               </div>
+              <div className="flex items-center gap-2">
+              <ExportButton filename="owner_bookings" tableRef={tableRef} />
               <button
                 type="button"
                 onClick={() => {
@@ -164,6 +168,7 @@ const OwnerBookings = () => {
                 <Plus size={16} />
                 Add Booking
               </button>
+              </div>
             </div>
 
             <div className="rounded-[28px] border border-slate-200 bg-white shadow-sm">
@@ -187,7 +192,7 @@ const OwnerBookings = () => {
                   </div>
                 ) : filteredBookings.length > 0 ? (
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[1100px] border-collapse">
+                    <table ref={tableRef} className="w-full min-w-[1100px] border-collapse">
                       <thead>
                         <tr className="border-b border-slate-100 text-left">
                           <th className="px-4 py-3 text-[11px] font-black uppercase tracking-widest text-slate-400">Reference</th>

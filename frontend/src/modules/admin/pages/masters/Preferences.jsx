@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { ChevronRight, Upload, Plus, Trash2, Edit2, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 
@@ -12,6 +13,7 @@ const StatusToggle = ({ active, onToggle }) => (
 );
 
 const Preferences = () => {
+  const tableRef = useRef(null);
   const [preferences, setPreferences] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [formData, setFormData] = useState({ name: '', icon: null });
@@ -89,7 +91,10 @@ const Preferences = () => {
         <ChevronRight size={12} />
         <span className="text-gray-700">Preferences</span>
       </div>
-      <h1 className="text-xl text-gray-900 mb-6 font-bold">Preferences</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-xl text-gray-900 font-bold">Preferences</h1>
+        <ExportButton filename="preferences" tableRef={tableRef} />
+      </div>
 
       {/* Create Form */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
@@ -140,7 +145,7 @@ const Preferences = () => {
             <p className="text-sm text-gray-400">Loading preferences...</p>
           </div>
         ) : (
-          <table className="w-full">
+          <table ref={tableRef} className="w-full">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">#</th>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import {
   CalendarDays,
   Search,
@@ -16,8 +16,10 @@ import {
 } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import toast from 'react-hot-toast';
+import ExportButton from '../../components/ExportButton';
 
 const PoolingBookings = () => {
+  const tableRef = useRef(null);
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -99,6 +101,7 @@ const PoolingBookings = () => {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-black text-slate-900">Pooling Bookings</h1>
+            <ExportButton filename="pooling_bookings" tableRef={tableRef} />
             <p className="text-xs font-medium text-slate-500">Monitor and manage all pooled ride reservations</p>
           </div>
           <div className="flex items-center gap-2">
@@ -157,7 +160,7 @@ const PoolingBookings = () => {
       {/* Bookings Table */}
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-100">
+          <table ref={tableRef} className="min-w-full divide-y divide-slate-100">
             <thead className="bg-slate-50">
               <tr className="text-left">
                 <th className="px-3 py-2 !normal-case !tracking-normal !text-xs !font-bold">Booking ID</th>

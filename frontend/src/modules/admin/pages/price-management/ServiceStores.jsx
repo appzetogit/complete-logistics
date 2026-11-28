@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Autocomplete, GoogleMap, MarkerF, Polygon } from '@react-google-maps/api';
@@ -55,6 +56,7 @@ const getZoneBoundary = (zone) =>
     : [];
 
 const ServiceStores = ({ mode: initialMode = 'list' }) => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const { id } = useParams();
   const [view, setView] = useState(initialMode);
@@ -338,9 +340,12 @@ const ServiceStores = ({ mode: initialMode = 'list' }) => {
                 </div>
                 <h1 className="text-xl font-bold text-slate-900">Service Stores</h1>
               </div>
+              <div className="flex items-center gap-2">
+                <ExportButton filename="service_stores" tableRef={tableRef} />
               <button onClick={() => navigate('/admin/pricing/service-stores/add')} className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white shadow-md transition-all hover:scale-105">
                 <Plus size={16} /> Add New Store
               </button>
+              </div>
             </div>
             <div className="grid gap-4 md:grid-cols-3">
               {[{ label: 'Total Registry', val: stores.length, icon: Building2 }, { label: 'Pending Requests', val: pendingStores.length + pendingStaff.length, icon: Users }, { label: 'Active', val: stores.filter(s => s.status === 'active').length, icon: ShieldCheck }].map((s, i) => (
@@ -400,7 +405,7 @@ const ServiceStores = ({ mode: initialMode = 'list' }) => {
               </div>
               <div className="overflow-x-auto no-scrollbar">
                 {loading ? <div className="py-24 text-center"><Loader2 size={32} className="animate-spin text-slate-900 mx-auto" /></div> : (
-                  <table className="w-full text-left">
+                  <table ref={tableRef} className="w-full text-left">
                     <thead><tr className="bg-slate-50/30 border-b border-slate-100">{['Identity', 'Zone', 'Owner', 'Fleet', 'Status', ''].map(h => <th key={h} className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400">{h}</th>)}</tr></thead>
                     <tbody className="divide-y divide-slate-50">
                       {filteredStores.map(s => (

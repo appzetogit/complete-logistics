@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Filter, MoreVertical, Search, Loader2, ChevronRight, Menu, X, Eye, UserPlus, MapPin, XCircle, FileText } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { adminService } from '../../services/adminService';
+import ExportButton, { fetchAllPages } from '../../components/ExportButton';
 
 const STATUS_STYLES = {
   CANCELLED: 'bg-red-100 text-red-700',
@@ -377,6 +378,29 @@ const Trips = () => {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 bg-white rounded-xl shadow-sm border border-gray-100">
           <h1 className="text-xl font-bold tracking-tight text-gray-900">Trip Requests</h1>
+          <ExportButton
+            filename="trip_requests"
+            getRows={async () => {
+              const raw = await fetchAllPages(
+                (p, l) => adminService.getRideRequests({ page: p, limit: l, tab: normalizeTab(activeTab), search }),
+                (res) => {
+                  const payload = res?.data?.data || res?.data || res || {};
+                  return { results: Array.isArray(payload?.results) ? payload.results : [], lastPage: payload?.paginator?.last_page };
+                },
+                { limit: 100 },
+              );
+              return raw.map(normalizeRow);
+            }}
+            columns={[
+              { label: 'Request ID', value: (row) => row.requestId },
+              { label: 'Date', value: (row) => (row.date ? new Date(row.date).toLocaleString('en-IN') : '') },
+              { label: 'User Name', value: (row) => row.userName },
+              { label: 'Driver Name', value: (row) => row.driverName },
+              { label: 'Transport Type', value: (row) => row.transportType },
+              { label: 'Trip Status', value: (row) => row.tripStatus },
+              { label: 'Payment Option', value: (row) => row.paymentOption },
+            ]}
+          />
           <div className="hidden md:flex items-center gap-2 text-xs font-medium text-gray-400">
             <span>Operations</span>
             <ChevronRight size={14} className="text-gray-300" />

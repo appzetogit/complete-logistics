@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { ChevronRight, Edit2, Plus, Trash2, Briefcase } from 'lucide-react';
 import api from '../../../../shared/api/axiosInstance';
 import toast from 'react-hot-toast';
+import ExportButton from '../../components/ExportButton';
 
 const JOB_TYPES = ['Full-time', 'Part-time', 'Contract', 'Internship'];
 
@@ -15,6 +16,7 @@ const initialForm = {
 };
 
 const JobPositions = () => {
+  const tableRef = useRef(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -138,6 +140,7 @@ const JobPositions = () => {
         </div>
         <div className="flex items-center justify-between gap-4">
           <h1 className="text-xl font-bold text-gray-900 uppercase tracking-tight">Job Positions</h1>
+          <ExportButton filename="job_positions" tableRef={tableRef} />
         </div>
       </div>
 
@@ -266,7 +269,7 @@ const JobPositions = () => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table ref={tableRef} className="w-full">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50">
                   <th className="px-6 py-3.5 text-left text-xs font-bold text-gray-500">Title</th>

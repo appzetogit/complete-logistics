@@ -18,7 +18,10 @@ const EmployeeCreate = () => {
     employeeCode: '',
     active: true,
     notes: '',
+    manualUsersCount: '',
+    manualDriversCount: '',
   });
+  const [autoCounts, setAutoCounts] = useState(null);
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
 
@@ -45,6 +48,12 @@ const EmployeeCreate = () => {
           employeeCode: employee.employeeCode || '',
           active: employee.active !== false,
           notes: employee.notes || '',
+          manualUsersCount: employee.manualUsersCount ?? '',
+          manualDriversCount: employee.manualDriversCount ?? '',
+        });
+        setAutoCounts({
+          users: Number(employee.autoUsersAcquired ?? 0),
+          drivers: Number(employee.autoDriversAcquired ?? 0),
         });
       } catch (error) {
         toast.error(error?.message || 'Unable to load employee.');
@@ -87,6 +96,9 @@ const EmployeeCreate = () => {
         employeeCode: form.employeeCode.trim().toUpperCase(),
         active: form.active,
         notes: form.notes.trim(),
+        // empty = use the automatic count again
+        manualUsersCount: String(form.manualUsersCount).trim() === '' ? null : Number(form.manualUsersCount),
+        manualDriversCount: String(form.manualDriversCount).trim() === '' ? null : Number(form.manualDriversCount),
       };
 
       if (isEdit) {
@@ -204,6 +216,34 @@ const EmployeeCreate = () => {
                   {form.active ? 'Accepting codes' : 'Blocked'}
                 </span>
               </button>
+            </div>
+
+            <div>
+              <label className={labelClass}>Users</label>
+              <input
+                inputMode="numeric"
+                value={form.manualUsersCount}
+                onChange={(event) => setField('manualUsersCount', event.target.value.replace(/\D/g, '').slice(0, 7))}
+                placeholder={autoCounts ? `Automatic: ${autoCounts.users}` : 'Leave empty for automatic count'}
+                className={inputClass}
+              />
+              <p className="mt-1.5 text-[11px] font-semibold text-slate-400">
+                Shown in the employee list. Leave empty to count users who signed up with this code.
+              </p>
+            </div>
+
+            <div>
+              <label className={labelClass}>Drivers</label>
+              <input
+                inputMode="numeric"
+                value={form.manualDriversCount}
+                onChange={(event) => setField('manualDriversCount', event.target.value.replace(/\D/g, '').slice(0, 7))}
+                placeholder={autoCounts ? `Automatic: ${autoCounts.drivers}` : 'Leave empty for automatic count'}
+                className={inputClass}
+              />
+              <p className="mt-1.5 text-[11px] font-semibold text-slate-400">
+                Shown in the employee list. Leave empty to count drivers who signed up with this code.
+              </p>
             </div>
           </div>
 

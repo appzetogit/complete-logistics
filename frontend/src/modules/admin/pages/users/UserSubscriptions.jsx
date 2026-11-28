@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { ChevronRight, Loader2, Plus, Search, Ticket } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -15,6 +16,7 @@ const vehicleNames = (plan) => {
 };
 
 const UserSubscriptions = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [plans, setPlans] = useState([]);
@@ -51,6 +53,8 @@ const UserSubscriptions = () => {
           </div>
           <h1 className="text-xl font-bold text-gray-900">Customer Subscription Management</h1>
         </div>
+        <div className="flex items-center gap-2">
+        <ExportButton filename="user_subscription_plans" tableRef={tableRef} />
         <button
           type="button"
           onClick={() => navigate('/admin/users/subscriptions/create')}
@@ -59,6 +63,7 @@ const UserSubscriptions = () => {
           <Plus size={16} />
           Add Subscription
         </button>
+        </div>
       </div>
 
       <div className="rounded-xl bg-white p-5 border border-gray-200 shadow-sm">
@@ -80,7 +85,7 @@ const UserSubscriptions = () => {
           <div className="py-16 text-center text-sm font-semibold text-slate-400">No customer subscription plans found.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table ref={tableRef} className="w-full">
               <thead>
                 <tr className="border-b border-gray-200 text-left text-xs font-bold text-gray-600">
                   <th className="px-4 py-3">Plan</th>

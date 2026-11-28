@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { ChevronRight, Eye, Loader2, MoreVertical, Search, Star } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const DriverRatings = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [drivers, setDrivers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -52,6 +54,7 @@ const DriverRatings = () => {
         </div>
         <div className="flex items-center justify-between">
           <h1 className="text-xl text-gray-900 font-bold">Driver Rating</h1>
+          <ExportButton filename="driver_ratings" tableRef={tableRef} />
         </div>
       </div>
 
@@ -77,7 +80,7 @@ const DriverRatings = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table ref={tableRef} className="w-full">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-500">
                 <th className="px-6 py-3 text-left">Name</th>

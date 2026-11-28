@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { ChevronRight, Shield, Edit2, Trash2, Search, UserCheck, Loader2, Plus } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 
 const Roles = () => {
+  const tableRef = useRef(null);
   const [roles, setRoles] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [formData, setFormData] = useState({ name: '', description: '' });
@@ -104,7 +106,8 @@ const Roles = () => {
       {/* Table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {/* Toolbar */}
-        <div className="p-4 border-b border-gray-100 flex items-center justify-end">
+        <div className="p-4 border-b border-gray-100 flex items-center justify-end gap-2">
+          <ExportButton filename="roles" tableRef={tableRef} />
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
@@ -123,7 +126,7 @@ const Roles = () => {
             <p className="text-sm text-gray-400">Loading roles...</p>
           </div>
         ) : (
-          <table className="w-full">
+          <table ref={tableRef} className="w-full">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">#</th>

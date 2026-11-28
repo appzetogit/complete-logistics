@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { adminService } from '../../services/adminService';
+import ExportButton from '../../components/ExportButton';
 
 // Rider payments the app refunded automatically (the ride was already paid, wrong amount...).
 // "Needs attention": Razorpay rejected the refund (or it got stuck), so the rider has not got the money back.
@@ -40,6 +41,7 @@ const formatDateTime = (value) => {
 };
 
 const PaymentRefunds = () => {
+  const tableRef = useRef(null);
   const [filter, setFilter] = useState('attention');
   const [rows, setRows] = useState([]);
   const [attentionCount, setAttentionCount] = useState(0);
@@ -103,6 +105,7 @@ const PaymentRefunds = () => {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Payment Refunds</h1>
+          <ExportButton filename="payment_refunds" tableRef={tableRef} />
           <p className="text-sm text-gray-500">
             Rider payments refunded automatically because the ride was already paid. Failed ones need you: retry, or
             return the money another way and mark it done.
@@ -142,7 +145,7 @@ const PaymentRefunds = () => {
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="min-w-full text-sm">
+        <table ref={tableRef} className="min-w-full text-sm">
           <thead className="bg-gray-50 text-left text-xs font-semibold uppercase text-gray-500">
             <tr>
               <th className="px-4 py-3">Date</th>

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { 
   ArrowLeft, 
   Edit2, 
@@ -53,6 +54,7 @@ const getCountryName = (value) => {
 };
 
 const ServiceLocation = ({ mode }) => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const { id, jurisdictionName } = useParams();
   const isCreate = mode === 'create';
@@ -512,12 +514,15 @@ const ServiceLocation = ({ mode }) => {
                 <h1 className="text-lg font-bold text-gray-900 tracking-tight">Active Service Areas</h1>
                 <p className="text-xs text-gray-500 mt-1 font-medium">Manage localized settings including currency, timezone, and regional clusters.</p>
               </div>
+              <div className="flex items-center gap-2">
+                <ExportButton filename="service_locations" tableRef={tableRef} />
               <button 
                 onClick={() => navigate('/admin/pricing/service-location/add')}
                 className="flex items-center gap-2 px-5 py-2.5 bg-[#FFC400] text-[#0B1220] rounded-xl text-sm font-semibold hover:brightness-95 transition-all shadow-md active:scale-95"
               >
                 <Plus size={18} /> Add Location
               </button>
+              </div>
             </div>
           </div>
 
@@ -569,7 +574,7 @@ const ServiceLocation = ({ mode }) => {
                     <p className="text-[10px] uppercase font-black text-gray-400 tracking-widest">Validating Market Access</p>
                  </div>
               ) : filteredLocations.length > 0 ? (
-                <table className="w-full text-left">
+                <table ref={tableRef} className="w-full text-left">
                   <thead>
                     <tr className="bg-gray-50/50 border-b border-gray-100 text-[10px] uppercase font-bold text-gray-400 tracking-widest">
                       <th className="px-4 py-3">Sector Name</th>

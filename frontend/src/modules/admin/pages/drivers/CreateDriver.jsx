@@ -136,11 +136,12 @@ const extractResults = (payload) => {
   return [];
 };
 
+// "Taxi" covers both city taxi and outstation rides: it turns on (or off) both categories together.
 const serviceCategoryChoices = [
-  { id: 'taxi', label: 'Taxi' },
-  { id: 'outstation', label: 'Outstation' },
+  { id: 'taxi', label: 'Taxi', values: ['taxi', 'outstation'] },
+  // { id: 'outstation', label: 'Outstation' }, // merged into Taxi
   { id: 'delivery', label: 'Delivery' },
-  { id: 'pooling', label: 'Pooling' },
+  // { id: 'pooling', label: 'Pooling' }, // hidden for now
 ];
 
 const initialFormData = {
@@ -152,7 +153,7 @@ const initialFormData = {
   password: '',
   password_confirmation: '',
   transport_type: 'taxi',
-  service_categories: ['taxi'],
+  service_categories: ['taxi', 'outstation'],
   vehicle_type_id: '',
   vehicle_make: '',
   vehicle_model: '',
@@ -373,16 +374,21 @@ const CreateDriver = () => {
       service_categories:
         nextTransportType === 'both'
           ? ['taxi', 'outstation']
-          : [nextTransportType === 'delivery' ? 'delivery' : nextTransportType === 'pooling' ? 'pooling' : 'taxi'],
+          : nextTransportType === 'delivery'
+            ? ['delivery']
+            : nextTransportType === 'pooling'
+              ? ['pooling']
+              : ['taxi', 'outstation'], // Taxi = city taxi + outstation
     }));
   };
 
-  const toggleServiceCategory = (categoryId) => {
+  const toggleServiceCategory = (categoryIds) => {
+    const list = Array.isArray(categoryIds) ? categoryIds : [categoryIds];
     setFormData((current) => {
-      const exists = current.service_categories.includes(categoryId);
+      const exists = list.some((id) => current.service_categories.includes(id));
       const nextValues = exists
-        ? current.service_categories.filter((item) => item !== categoryId)
-        : [...current.service_categories, categoryId];
+        ? current.service_categories.filter((item) => !list.includes(item))
+        : [...new Set([...current.service_categories, ...list])];
 
       return {
         ...current,
@@ -836,7 +842,8 @@ const CreateDriver = () => {
                 <label className="mb-2 block text-[11px] font-black uppercase tracking-widest text-slate-400">Transport Type</label>
                 <select value={formData.transport_type} onChange={handleTransportChange} className={selectClass}>
                   <option value="">Select transport type</option>
-                  {transportTypes.map((type) => (
+                  {/* Pooling hidden for now: remove this filter to show it again. */}
+                  {transportTypes.filter((type) => String(type.name || '').toLowerCase() !== 'pooling').map((type) => (
                     <option key={type.id || type._id || type.name} value={type.name}>
                       {type.display_name || type.name}
                     </option>
@@ -850,12 +857,13 @@ const CreateDriver = () => {
                 <label className="mb-3 block text-[11px] font-black uppercase tracking-widest text-slate-400">{serviceCategoryField.name}</label>
                 <div className="flex flex-wrap gap-3">
                   {serviceCategoryChoices.map((item) => {
-                    const selected = formData.service_categories.includes(item.id);
+                    const itemValues = item.values || [item.id];
+                    const selected = itemValues.some((value) => formData.service_categories.includes(value));
                     return (
                       <button
                         key={item.id}
                         type="button"
-                        onClick={() => toggleServiceCategory(item.id)}
+                        onClick={() => toggleServiceCategory(itemValues)}
                         className={`rounded-full px-4 py-2 text-xs font-black uppercase tracking-widest transition-all ${
                           selected
                             ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/10'

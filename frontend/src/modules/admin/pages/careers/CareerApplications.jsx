@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { ChevronRight, Eye, Briefcase, Mail, Phone, Calendar, Clock, Download, ExternalLink, Trash2 } from 'lucide-react';
 import api from '../../../../shared/api/axiosInstance';
 import toast from 'react-hot-toast';
+import ExportButton from '../../components/ExportButton';
 
 const STATUS_OPTIONS = ['pending', 'reviewed', 'shortlisted', 'rejected'];
 
 const CareerApplications = () => {
+  const tableRef = useRef(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -79,6 +81,7 @@ const CareerApplications = () => {
         </div>
         <div className="flex items-center justify-between gap-4">
           <h1 className="text-xl font-bold text-gray-900 uppercase tracking-tight">Applications Received</h1>
+          <ExportButton filename="career_applications" tableRef={tableRef} />
         </div>
       </div>
 
@@ -115,7 +118,7 @@ const CareerApplications = () => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table ref={tableRef} className="w-full">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50">
                   <th className="px-6 py-3.5 text-left text-xs font-bold uppercase tracking-wider text-gray-500">Applicant</th>

@@ -18,11 +18,12 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { adminService } from '../../services/adminService';
 import { useTaxiTransportTypes } from '../../../../shared/hooks/useTaxiTransportTypes';
 
+// "Taxi" covers both city taxi and outstation rides: it turns on (or off) both categories together.
 const serviceCategoryOptions = [
-  { value: 'taxi', label: 'Taxi' },
-  { value: 'outstation', label: 'Outstation' },
+  { value: 'taxi', label: 'Taxi', values: ['taxi', 'outstation'] },
+  // { value: 'outstation', label: 'Outstation' }, // merged into Taxi
   { value: 'delivery', label: 'Delivery' },
-  { value: 'pooling', label: 'Pooling' },
+  // { value: 'pooling', label: 'Pooling' }, // hidden for now
 ];
 
 const normalizeTransportTypeForSelect = (value, options = []) => {
@@ -56,10 +57,15 @@ const normalizeServiceCategories = (value, fallback = 'taxi') => {
     rawValues
       .map((item) => String(item || '').trim().toLowerCase())
       .flatMap((item) => item === 'both' ? ['taxi', 'outstation'] : item ? [item] : [])
-      .filter((item) => serviceCategoryOptions.some((option) => option.value === item)),
+      // keep every known category (also hidden ones like pooling) so saving never drops them silently
+      .filter((item) => ['taxi', 'outstation', 'delivery', 'pooling'].includes(item)),
   )];
 
   if (normalized.length > 0) {
+    // Taxi and Outstation are one choice now: having either means both.
+    if (normalized.includes('taxi') || normalized.includes('outstation')) {
+      return [...new Set([...normalized, 'taxi', 'outstation'])];
+    }
     return normalized;
   }
 
@@ -68,7 +74,8 @@ const normalizeServiceCategories = (value, fallback = 'taxi') => {
     return ['taxi', 'outstation'];
   }
 
-  return serviceCategoryOptions.some((option) => option.value === fallbackValue) ? [fallbackValue] : ['taxi'];
+  if (fallbackValue === 'delivery') return ['delivery'];
+  return ['taxi', 'outstation'];
 };
 
 const getVehicleTypeId = (item = {}) => String(item?._id || item?.id || '');
@@ -291,12 +298,13 @@ const EditDriver = () => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const toggleServiceCategory = (value) => {
+  const toggleServiceCategory = (values) => {
+    const list = Array.isArray(values) ? values : [values];
     setFormData((prev) => {
-      const exists = prev.serviceCategories.includes(value);
+      const exists = list.some((value) => prev.serviceCategories.includes(value));
       const nextServiceCategories = exists
-        ? prev.serviceCategories.filter((item) => item !== value)
-        : [...prev.serviceCategories, value];
+        ? prev.serviceCategories.filter((item) => !list.includes(item))
+        : [...new Set([...prev.serviceCategories, ...list])];
 
       return {
         ...prev,
@@ -581,7 +589,8 @@ const EditDriver = () => {
                   className={inputClass}
                 >
                   <option value="">Select Transport Type</option>
-                  {transportTypes.map(t => (
+                  {/* Pooling hidden for now: remove this filter to show it again. */}
+                  {transportTypes.filter((t) => String(t.name || '').toLowerCase() !== 'pooling').map(t => (
                     <option key={t.id || t._id} value={t.name}>{t.display_name}</option>
                   ))}
                 </select>
@@ -591,12 +600,13 @@ const EditDriver = () => {
                 <label className={labelClass}>Service Categories</label>
                 <div className="flex flex-wrap gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
                   {serviceCategoryOptions.map((option) => {
-                    const selected = formData.serviceCategories.includes(option.value);
+                    const optionValues = option.values || [option.value];
+                    const selected = optionValues.some((value) => formData.serviceCategories.includes(value));
                     return (
                       <button
                         key={option.value}
                         type="button"
-                        onClick={() => toggleServiceCategory(option.value)}
+                        onClick={() => toggleServiceCategory(optionValues)}
                         className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
                           selected
                             ? 'bg-yellow-400 text-black'

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import {
   Plus,
   ChevronRight,
@@ -24,6 +25,7 @@ const emptyForm = {
 };
 
 const OnboardingScreens = () => {
+  const tableRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [screens, setScreens] = useState([]);
@@ -167,6 +169,8 @@ const OnboardingScreens = () => {
         <div className="flex items-center justify-between">
           <h1 className="text-xl text-gray-900 font-bold">Landing & Onboarding</h1>
           <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <ExportButton filename="onboarding_screens" tableRef={tableRef} />
             <button
               type="button"
               onClick={openCreateModal}
@@ -174,6 +178,7 @@ const OnboardingScreens = () => {
             >
               <Plus size={16} /> Add Screen
             </button>
+            </div>
             <button
               onClick={() => window.history.back()}
               className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
@@ -228,7 +233,7 @@ const OnboardingScreens = () => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table ref={tableRef} className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-gray-50 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
                   <th className="px-6 py-4">Audience</th>

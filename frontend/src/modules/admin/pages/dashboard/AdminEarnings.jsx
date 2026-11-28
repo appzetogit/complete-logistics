@@ -184,6 +184,28 @@ const AdminEarnings = () => {
     }
   }, []);
 
+  const [settlementPeriod, setSettlementPeriod] = useState('today');
+  const [settlement, setSettlement] = useState(null);
+  const [settlementLoading, setSettlementLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSettlementLoading(true);
+    adminService.getSettlementSummary(settlementPeriod)
+      .then((response) => {
+        if (!cancelled) setSettlement(response?.data || response || null);
+      })
+      .catch(() => {
+        if (!cancelled) setSettlement(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSettlementLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settlementPeriod]);
+
   const loadEarnings = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -594,31 +616,57 @@ const AdminEarnings = () => {
         
         {/* Settlement Summary */}
         <div className="admin-card bg-white border border-[#E5E7EB] rounded-lg">
-          <div className="flex items-center gap-2 mb-4">
-            <h3 className="text-xs font-bold text-[#0B1220] uppercase tracking-wider">Settlement Ledger Summary</h3>
-            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-bold text-[#0B1220] uppercase tracking-wider">Settlement Ledger Summary</h3>
+              <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            </div>
+            <div className="flex gap-1">
+              {[
+                { key: 'today', label: 'Today' },
+                { key: 'week', label: 'Week' },
+                { key: 'month', label: 'Month' },
+                { key: 'all', label: 'All' },
+              ].map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setSettlementPeriod(option.key)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border transition-colors ${
+                    settlementPeriod === option.key
+                      ? 'bg-[#FFC400] border-[#FFC400] text-[#0B1220]'
+                      : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="grid grid-cols-2 gap-4 text-xs mb-4">
+          <div className={`grid grid-cols-2 gap-4 text-xs mb-4 ${settlementLoading ? 'opacity-50' : ''}`}>
             <div>
               <span className="text-slate-400 block uppercase font-semibold text-[9px] tracking-wider">Total Driver Payable</span>
-              <span className="text-base font-bold text-[#0B1220] block mt-0.5">{currency(driverEarnings)}</span>
+              <span className="text-base font-bold text-[#0B1220] block mt-0.5">{currency(settlement?.driverPayable || 0)}</span>
+              <span className="text-[10px] text-slate-400">{settlement?.completedTrips || 0} completed trips</span>
             </div>
             <div>
               <span className="text-slate-400 block uppercase font-semibold text-[9px] tracking-wider">Paid to Drivers</span>
-              <span className="text-base font-bold text-emerald-600 block mt-0.5">{currency(driverEarnings * 0.92)}</span>
+              <span className="text-base font-bold text-emerald-600 block mt-0.5">{currency(settlement?.paidToDrivers || 0)}</span>
+              <span className="text-[10px] text-slate-400">{settlement?.paidCount || 0} withdrawals completed</span>
             </div>
             <div>
               <span className="text-slate-400 block uppercase font-semibold text-[9px] tracking-wider">Pending Payout</span>
-              <span className="text-base font-bold text-amber-500 block mt-0.5">{currency(pendingSettlements)}</span>
+              <span className="text-base font-bold text-amber-500 block mt-0.5">{currency(settlement?.pendingPayout || 0)}</span>
+              <span className="text-[10px] text-slate-400">{settlement?.pendingCount || 0} withdrawals pending</span>
             </div>
             <div>
               <span className="text-slate-400 block uppercase font-semibold text-[9px] tracking-wider">Failed Payout</span>
-              <span className="text-base font-bold text-rose-500 block mt-0.5">{currency(0)}</span>
+              <span className="text-base font-bold text-rose-500 block mt-0.5">{currency(settlement?.failedPayout || 0)}</span>
+              <span className="text-[10px] text-slate-400">{settlement?.failedCount || 0} withdrawals cancelled</span>
             </div>
           </div>
-          <div className="bg-slate-50 border border-slate-100 rounded-lg p-2.5 flex justify-between items-center text-[10px] text-slate-500 font-semibold">
-            <span>Next Settlement Target Date</span>
-            <span className="text-[#0B1220] font-bold">Friday, 10:00 AM</span>
+          <div className="bg-slate-50 border border-slate-100 rounded-lg p-2.5 text-[10px] text-slate-500 font-semibold">
+            Payable = driver earnings from completed trips. Paid, pending and failed come from driver withdrawal requests.
           </div>
         </div>
 

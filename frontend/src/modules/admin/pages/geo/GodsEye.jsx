@@ -18,6 +18,12 @@ import { adminService } from '../../services/adminService';
 import CarIcon from '@/assets/icons/car.png';
 import BikeIcon from '@/assets/icons/bike.png';
 import AutoIcon from '@/assets/icons/auto.png';
+import ScootyIcon from '@/assets/icons/scooty.png';
+import BusIcon from '@/assets/icons/bus.png';
+import MiniBusIcon from '@/assets/icons/mini_bus.png';
+import TruckIcon from '@/assets/icons/truck.png';
+import LcvIcon from '@/assets/icons/LCV.png';
+import HcvIcon from '@/assets/icons/hcv.png';
 
 const INDIA_CENTER = { lat: 22.7196, lng: 75.8577 };
 
@@ -49,8 +55,14 @@ const mapOptions = {
 
 const getMapIconForVehicle = (iconType = '') => {
   const value = String(iconType || '').trim().toLowerCase();
+  if (value.includes('scooty') || value.includes('scooter')) return ScootyIcon;
   if (value.includes('bike')) return BikeIcon;
   if (value.includes('auto')) return AutoIcon;
+  if (value.includes('mini_bus') || value.includes('minibus')) return MiniBusIcon;
+  if (value.includes('bus')) return BusIcon;
+  if (value.includes('hcv')) return HcvIcon;
+  if (value.includes('lcv')) return LcvIcon;
+  if (value.includes('truck')) return TruckIcon;
   return CarIcon;
 };
 

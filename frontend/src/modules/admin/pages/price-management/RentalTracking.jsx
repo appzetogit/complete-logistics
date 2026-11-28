@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   AlertTriangle,
   CarFront,
@@ -19,6 +19,7 @@ import toast from 'react-hot-toast';
 import AdminPageHeader from '../../components/ui/AdminPageHeader';
 import { socketService } from '../../../../shared/api/socket';
 import { adminService } from '../../services/adminService';
+import ExportButton from '../../components/ExportButton';
 
 // ─── Status / Zone colour maps ────────────────────────────────────────────────
 const STATUS_TONE = {
@@ -162,6 +163,7 @@ const RentalTracking = () => {
   const navigate = useNavigate();
 
   // ── Data ──────────────────────────────────────────────────────────────────
+  const tableRef = useRef(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -426,6 +428,7 @@ const RentalTracking = () => {
         page="Fleet Dashboard"
         title="Fleet Tracking Dashboard"
       />
+      <div className="mb-4 flex justify-end"><ExportButton filename="rental_tracking" tableRef={tableRef} /></div>
 
       {/* ── KPI Cards ──────────────────────────────────────────────────────── */}
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4 xl:grid-cols-7">
@@ -582,7 +585,7 @@ const RentalTracking = () => {
             </div>
           ) : (
             <div className="overflow-x-auto rounded-[24px]">
-              <table className="w-full min-w-[1300px] border-collapse">
+              <table ref={tableRef} className="w-full min-w-[1300px] border-collapse">
                 <thead>
                   <tr className="border-b border-slate-100 bg-slate-50 text-left">
                     <th className="px-5 py-4 text-xs font-bold text-slate-500">Booking ID</th>

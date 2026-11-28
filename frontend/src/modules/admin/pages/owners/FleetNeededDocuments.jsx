@@ -1,4 +1,5 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useRef, useCallback, useState, useEffect } from 'react';
+import ExportButton from '../../components/ExportButton';
 import {
   Plus, ChevronRight, Edit2, Trash2, FileText, Save, Check,
   ChevronDown, LayoutGrid, Loader2, AlertCircle, ArrowLeft,
@@ -12,6 +13,7 @@ const BASE = globalThis.__LEGACY_BACKEND_ORIGIN__ + '/api/v1/admin/owner-managem
 const MotionDiv = motion.div;
 
 const FleetNeededDocuments = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [view, setView] = useState('list');
   const [documents, setDocuments] = useState([]);
@@ -223,6 +225,7 @@ const FleetNeededDocuments = () => {
                     />
                     <FileSearch size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   </div>
+                  <ExportButton filename="fleet_needed_documents" tableRef={tableRef} />
                   <button
                     type="button"
                     onClick={() => navigate('/admin/fleet/documents/create')}
@@ -235,7 +238,7 @@ const FleetNeededDocuments = () => {
 
               <div className="px-5">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left">
+                  <table ref={tableRef} className="w-full text-left">
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-3 py-3 text-sm font-bold text-gray-950">Name</th>

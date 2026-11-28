@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import ExportButton from '../../components/ExportButton';
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -44,6 +45,7 @@ const cardClass = "bg-white rounded-xl border border-gray-200 p-6 shadow-sm";
 const ADMIN_LANGUAGE_OPTIONS = ['English', 'Hindi', 'Arabic', 'French', 'Spanish'];
 
 const ZoneManagement = ({ mode: initialMode = "list" }) => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const { id } = useParams();
   const [view, setView] = useState(initialMode);
@@ -478,6 +480,8 @@ const ZoneManagement = ({ mode: initialMode = "list" }) => {
                   <h1 className="text-xl text-gray-900 font-bold">Zone Management</h1>
                   <p className="text-xs text-gray-400 mt-1">Configure geofenced boundaries for operational control.</p>
                 </div>
+                <div className="flex items-center gap-2">
+                  <ExportButton filename="zones" tableRef={tableRef} />
                 <button 
                   type="button"
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate("/admin/pricing/zone/create"); }}
@@ -485,6 +489,7 @@ const ZoneManagement = ({ mode: initialMode = "list" }) => {
                 >
                   <Plus size={16} /> Add Market Zone
                 </button>
+                </div>
               </div>
             </div>
 
@@ -527,7 +532,7 @@ const ZoneManagement = ({ mode: initialMode = "list" }) => {
                     <p className="text-xs text-gray-400 font-medium">Loading data...</p>
                   </div>
                 ) : filteredZones.length > 0 ? (
-                  <table className="w-full text-sm">
+                  <table ref={tableRef} className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50/50 border-b border-gray-100">
                         <th className="px-6 py-3.5 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">S.No</th>

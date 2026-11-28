@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { ChevronDown, ChevronRight, Eye, FileSearch, Loader2, Menu } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -44,6 +45,7 @@ const getStatusClass = (status) => {
 };
 
 const WithdrawalRequestOwners = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [page, setPage] = useState(1);
@@ -112,11 +114,14 @@ const WithdrawalRequestOwners = () => {
               />
             </div>
             <span>Entries</span>
+            <div className="ml-auto">
+              <ExportButton filename="owner_withdrawal_requests" tableRef={tableRef} />
+            </div>
           </div>
 
           <div className="px-5">
             <div className="overflow-x-auto">
-              <table className="w-full text-left">
+              <table ref={tableRef} className="w-full text-left">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-3 py-4 text-sm font-bold text-gray-950">Date</th>

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import ExportButton from '../../components/ExportButton';
 import { ChevronRight, Edit2, Loader2, MapPin, Plus, Trash2, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -15,6 +16,7 @@ const statusClass = (active) =>
     : 'bg-slate-100 text-slate-500 border-slate-200';
 
 const SetPackagePrices = () => {
+  const tableRef = useRef(null);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState([]);
@@ -91,6 +93,8 @@ const SetPackagePrices = () => {
               className="w-full lg:w-80 rounded-lg border border-gray-200 pl-10 pr-4 py-2 text-sm text-slate-700 outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 font-medium bg-white shadow-sm"
             />
           </div>
+          <div className="flex items-center gap-2">
+            <ExportButton filename="package_prices" tableRef={tableRef} />
           <button
             onClick={() => navigate('/admin/pricing/package-pricing/create')}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-400 px-5 py-2.5 text-sm font-bold text-slate-900 transition hover:bg-amber-500 shadow-sm"
@@ -98,10 +102,11 @@ const SetPackagePrices = () => {
             <Plus size={16} />
             Add Package Pricing
           </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[880px] text-left">
+          <table ref={tableRef} className="w-full min-w-[880px] text-left">
             <thead className="bg-[#FBFCFF]">
               <tr className="border-b border-gray-100 text-sm font-semibold text-slate-700">
                 <th className="px-6 py-4">Package</th>
