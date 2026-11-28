@@ -1711,7 +1711,8 @@ const VehicleType = ({ mode: propMode }) => {
             <label className={labelClass}>Operational Scope *</label>
             <select value={formData.is_taxi} onChange={(e) => updateForm('is_taxi', e.target.value)} className={inputClass}>
               <option value="">Select Scope</option>
-              {transportTypes.map(t => (
+              {/* Pooling hidden for now: remove this filter to show it again. */}
+              {transportTypes.filter((t) => String(t.name || '').toLowerCase() !== 'pooling').map(t => (
                 <option key={t.id || t._id} value={t.name}>{t.display_name}</option>
               ))}
             </select>
