@@ -990,6 +990,7 @@ const AdminLayout = () => {
               { label: 'Support Tickets', path: '/admin/support/tickets', permission: 'support.view' },
             ],
           },
+          /* Careers Management hidden from the sidebar for now
           {
             icon: Briefcase,
             label: 'Careers Management',
@@ -998,6 +999,7 @@ const AdminLayout = () => {
               { label: 'Applications', path: '/admin/careers/applications', permission: 'support.view' },
             ],
           },
+          */
         ],
       },
       {
