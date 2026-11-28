@@ -315,3 +315,46 @@ test('advances settled before this change still read correctly', () => {
   assert.equal(split.keptAmount, 150);
   assert.equal(split.refundedAmount, 50);
 });
+
+// ------------------------------------------------------------------ cancel preview
+test('cancel preview shows exactly what the real cancel then does (keep 15, 30 and 0)', async () => {
+  for (const keep of ['15', '30', '0']) {
+    await t.setSettings('transport_ride', { goods_advance_cancel_keep_percent: keep });
+    const ctx = await setup();
+    const delivery = await bookAndPay(ctx);
+
+    const preview = await t.api('GET', `/rides/${delivery.rideId}/cancel-preview`, { token: ctx.rider.token });
+    assert.equal(preview.status, 200, preview.text);
+    const p = preview.body.data;
+    const expected = expectedSplit(delivery, Number(keep));
+    assert.equal(p.advanceKeptAmount, expected.kept, `keep ${keep}`);
+    assert.equal(p.advanceRefundAmount, expected.refunded, `keep ${keep}`);
+    assert.equal(p.advanceCancelKeepPercent, Number(keep));
+    assert.equal(round2(p.advanceKeptAmount + p.advanceRefundAmount), p.advanceAmount);
+    assert.equal(p.advanceForfeited, p.advanceKeptAmount > 0);
+    assert.equal(p.advanceRefundable, p.advanceRefundAmount > 0);
+    assert.equal(p.advanceRefundDestination, p.advanceRefundAmount > 0 ? 'refund_wallet' : '');
+
+    const done = await cancel(ctx.rider, delivery.rideId);
+    assert.equal(done.status, 200, done.text);
+    assert.equal(done.body.data.advanceKeptAmount, p.advanceKeptAmount);
+    assert.equal(done.body.data.advanceRefundedAmount, p.advanceRefundAmount);
+    assert.equal(done.body.data.advanceRefundDestination, p.advanceRefundDestination);
+  }
+});
+
+test('cancel preview: destination follows the refund setting, nothing for an unpaid advance', async () => {
+  await t.setSettings('transport_ride', { goods_advance_refund_to: 'wallet' });
+  const ctx = await setup();
+  const delivery = await book(ctx);
+
+  const before = await t.api('GET', `/rides/${delivery.rideId}/cancel-preview`, { token: ctx.rider.token });
+  assert.equal(before.body.data.advanceAmount, 0);
+  assert.equal(before.body.data.advanceCancelKeepPercent, 0);
+  assert.equal(before.body.data.advanceRefundDestination, '');
+
+  await t.api('POST', '/deliveries/advance/wallet', { token: ctx.rider.token, body: { rideId: delivery.rideId } });
+  const after = await t.api('GET', `/rides/${delivery.rideId}/cancel-preview`, { token: ctx.rider.token });
+  assert.equal(after.body.data.advanceRefundDestination, 'wallet');
+  assert.equal((await loadRide(delivery.rideId)).goodsAdvance.status, 'paid', 'the preview changes nothing');
+});

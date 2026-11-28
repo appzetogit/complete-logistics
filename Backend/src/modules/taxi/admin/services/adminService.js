@@ -39,6 +39,9 @@ import { RentalVehicleType } from '../models/RentalVehicleType.js';
 import { RentalQuoteRequest } from '../models/RentalQuoteRequest.js';
 import { SetPrice } from '../models/SetPrice.js';
 import { ServiceLocation } from '../models/ServiceLocation.js';
+import { State } from '../models/State.js';
+import { ReferralReward } from '../../referral/models/ReferralReward.js';
+import { clearAdminScopeCache, getActiveScope, getScopedLocationIds, isLocationInScope, withoutAdminScope } from './adminScopeService.js';
 import { ServiceCenterStaff } from '../models/ServiceCenterStaff.js';
 import { ServiceStore } from '../models/ServiceStore.js';
 import { Vehicle } from '../models/Vehicle.js';
@@ -68,6 +71,8 @@ import {
   serializeDriverWallet,
 } from '../../driver/services/walletService.js';
 import { RIDE_LIVE_STATUS, RIDE_STATUS, VEHICLE_TYPES } from '../../constants/index.js';
+import { SUPPORTED_REFERRAL_TYPES } from '../../referral/constants.js';
+import { RADIUS_SETTING_KEYS, validateAdminRadiusSettings } from '../../services/driverRadius.js';
 import {
   cancelRideByAdmin,
   emitToDriver,
@@ -91,9 +96,11 @@ let publicVehicleCatalogCache = {
   value: null,
 };
 const DASHBOARD_CACHE_TTL_MS = 60 * 1000;
-let dashboardCache = {
-  expiresAt: 0,
-  value: null,
+// One snapshot per admin scope (all states, or one set of cities): a state admin must never get another view's totals.
+const dashboardCache = new Map();
+const dashboardCacheKey = () => {
+  const ids = getScopedLocationIds();
+  return ids ? `scope:${[...ids].sort().join(',')}` : 'all';
 };
 
 const deepMerge = (target, source) => {
@@ -269,16 +276,36 @@ const normalizeBoolean = (value) => {
   return false;
 };
 
+/**
+ * Vehicle year as stored on the driver: '' (not known yet) or four digits from 1980 to this year. Same rule as the
+ * driver signup. strict=false (bulk import) turns an invalid value into '' instead of failing the whole row.
+ */
+const normalizeVehicleYearInput = (value, { strict = true } = {}) => {
+  const year = String(value ?? '').trim();
+  if (!year) return '';
+  const currentYear = new Date().getFullYear();
+  if (!/^\d{4}$/.test(year) || Number(year) < 1980 || Number(year) > currentYear) {
+    if (!strict) return '';
+    throw new ApiError(400, `Vehicle year must be between 1980 and ${currentYear}`);
+  }
+  return year;
+};
+
 const normalizeObjectIdList = (values = []) =>
   [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || '').trim()).filter(Boolean))]
     .map(toObjectId)
     .filter(Boolean);
 
-const getAdminScope = (admin = {}) => ({
-  adminType: normalizeAdminType(admin.admin_type || admin.role),
-  serviceLocationIds: normalizeObjectIdList(admin.service_location_ids),
-  zoneIds: normalizeObjectIdList(admin.zone_ids),
-});
+// The cities an admin request may touch. For a state/city-limited request that is the resolved scope (assigned
+// states + cities + zones, narrowed by the panel's state selector); otherwise the cities on the account.
+const getAdminScope = (admin = {}) => {
+  const active = getActiveScope();
+  return {
+    adminType: normalizeAdminType(admin.admin_type || admin.role),
+    serviceLocationIds: active ? active.locationIds : normalizeObjectIdList(admin.service_location_ids),
+    zoneIds: normalizeObjectIdList(admin.zone_ids),
+  };
+};
 
 const isSuperAdmin = (admin = {}) => getAdminScope(admin).adminType === 'superadmin';
 
@@ -301,7 +328,7 @@ const getScopedZoneIds = async (admin = {}) => {
 
   const zoneIdsFromLocations = await Zone.find({
     service_location_id: { $in: serviceLocationIds },
-  }).distinct('_id');
+  }).setOptions({ skipAdminScope: true }).distinct('_id');
 
   return zoneIdsFromLocations.map((value) => toObjectId(value)).filter(Boolean);
 };
@@ -380,7 +407,8 @@ const assertZoneAccess = async (admin = {}, zoneId) => {
   }
 };
 
-const serializeAdminSummary = (admin, serviceLocationMap = new Map(), zoneMap = new Map()) => {
+const serializeAdminSummary = (admin, serviceLocationMap = new Map(), zoneMap = new Map(), stateMap = new Map()) => {
+  const stateIds = normalizeObjectIdList(admin.state_ids).map(String);
   const serviceLocationIds = normalizeObjectIdList(admin.service_location_ids).map(String);
   const zoneIds = normalizeObjectIdList(admin.zone_ids).map(String);
 
@@ -393,6 +421,11 @@ const serializeAdminSummary = (admin, serviceLocationMap = new Map(), zoneMap = 
     role: admin.role || '',
     admin_type: normalizeAdminType(admin.admin_type || admin.role),
     permissions: normalizeAdminPermissions(admin.permissions || []),
+    state_ids: stateIds,
+    states: stateIds
+      .map((id) => stateMap.get(id))
+      .filter(Boolean)
+      .map((item) => ({ id: String(item._id), name: item.name || '', code: item.code || '' })),
     service_location_ids: serviceLocationIds,
     zone_ids: zoneIds,
     service_locations: serviceLocationIds
@@ -430,6 +463,12 @@ const enrichAdminSummaries = async (admins = []) => {
     ),
   ];
 
+  const stateIds = [...new Set(admins.flatMap((admin) => normalizeObjectIdList(admin.state_ids).map(String)))];
+  const states = stateIds.length > 0
+    ? await State.find({ _id: { $in: stateIds } }).select('_id name code').lean()
+    : [];
+  const stateMap = new Map(states.map((item) => [String(item._id), item]));
+
   const [serviceLocations, zones] = await Promise.all([
     serviceLocationIds.length > 0
       ? ServiceLocation.find({ _id: { $in: serviceLocationIds } })
@@ -446,7 +485,7 @@ const enrichAdminSummaries = async (admins = []) => {
   const serviceLocationMap = new Map(serviceLocations.map((item) => [String(item._id), item]));
   const zoneMap = new Map(zones.map((item) => [String(item._id), item]));
 
-  return admins.map((admin) => serializeAdminSummary(admin, serviceLocationMap, zoneMap));
+  return admins.map((admin) => serializeAdminSummary(admin, serviceLocationMap, zoneMap, stateMap));
 };
 
 const normalizeDriverAccountType = (value) => {
@@ -2753,6 +2792,7 @@ const serializeDriver = (driver) => ({
   vehicle_model: driver.vehicleModel || '',
   vehicle_number: driver.vehicleNumber || '',
   vehicle_color: driver.vehicleColor || '',
+  vehicle_year: driver.vehicleYear || '',
   rating:
     Number(driver.ratingCount || 0) > 0
       ? Number(driver.rating || 0)
@@ -2793,6 +2833,7 @@ const DRIVER_LIST_SELECT = [
   'vehicleIconType',
   'vehicleNumber',
   'vehicleColor',
+  'vehicleYear',
   'rating',
   'ratingCount',
   'isOnline',
@@ -2833,6 +2874,7 @@ const serializeDriverListItem = (driver) => ({
   vehicle_icon_type: driver.vehicleIconType || driver.vehicleType || '',
   vehicle_number: driver.vehicleNumber || '',
   vehicle_color: driver.vehicleColor || '',
+  vehicle_year: driver.vehicleYear || '',
   rating:
     Number(driver.ratingCount || 0) > 0
       ? Number(driver.rating || 0)
@@ -2938,8 +2980,12 @@ const normalizeServiceLocationPayload = (payload = {}, fallback = {}) => {
   const currencyCode = String(payload.currency_code ?? fallback.currency_code ?? 'INR').toUpperCase();
   const status = payload.status ?? fallback.status ?? 'active';
 
+  const rawState = payload.state_id !== undefined ? payload.state_id : fallback.state_id;
+  const stateId = rawState && mongoose.isValidObjectId(String(rawState?._id || rawState)) ? String(rawState?._id || rawState) : null;
+
   return {
     name,
+    state_id: stateId,
     service_location_name: name,
     address: payload.address ?? fallback.address ?? '',
     country: payload.country ?? fallback.country ?? 'India',
@@ -3361,14 +3407,17 @@ const seedInitialData = async () => {
   await ensureFleetOwnersSeeded();
 };
 
-export const ensureServiceLocationsSeeded = async () => {
+// The seeding routines below look at the WHOLE database (is the default city / owner there yet?). They must not run
+// inside a state-limited admin's scope: the filter would make everything look missing and they would try to create it
+// again (duplicate key errors), or be refused by the 'only inside your area' guard.
+export const ensureServiceLocationsSeeded = () => withoutAdminScope(async () => {
   if (await ServiceLocation.countDocuments() === 0) {
     const defaults = createDefaultAdminState();
     await ServiceLocation.insertMany(defaults.serviceLocations);
   }
-};
+});
 
-export const ensureFleetOwnersSeeded = async () => {
+export const ensureFleetOwnersSeeded = () => withoutAdminScope(async () => {
   const now = new Date();
 
   const serviceLocation = await ServiceLocation.findOneAndUpdate(
@@ -3419,13 +3468,13 @@ export const ensureFleetOwnersSeeded = async () => {
 
     await Owner.create(seed);
   }
-};
+});
 
-export const ensureAdminState = async () => {
+export const ensureAdminState = () => withoutAdminScope(async () => {
   await bootstrapFirstAdmin();
   await seedInitialData();
   return { ready: true };
-};
+});
 
 export const getAdminModuleInfo = async () => {
   const [
@@ -3488,12 +3537,33 @@ export const listAdminPermissions = async () =>
 export const listAdmins = async (currentAdmin) => {
   assertAdminPermission(currentAdmin, 'subadmins.manage', 'subadmins');
 
-  const admins = await Admin.find()
+  let admins = await Admin.find()
     .select('-resetPasswordOtp -resetPasswordExpires')
     .sort({ createdAt: -1 })
     .lean();
 
+  // A state/city-limited admin only sees the sub-admins whose area is inside their own.
+  if (getActiveScope()) {
+    const inside = await Promise.all(admins.map(async (item) => {
+      if (normalizeAdminType(item.admin_type || item.role) === 'superadmin') return false;
+      const locations = await resolveAssignedLocationIds(item);
+      return locations.length > 0 && locations.every((id) => isLocationInScope(id));
+    }));
+    admins = admins.filter((_, index) => inside[index]);
+  }
+
   return enrichAdminSummaries(admins);
+};
+
+// Every service location an admin account reaches: assigned states, cities and zones.
+const resolveAssignedLocationIds = async ({ state_ids = [], service_location_ids = [], zone_ids = [] } = {}) => {
+  const stateLocations = state_ids.length > 0
+    ? await ServiceLocation.find({ state_id: { $in: normalizeObjectIdList(state_ids) } }).setOptions({ skipAdminScope: true }).distinct('_id')
+    : [];
+  const zoneLocations = zone_ids.length > 0
+    ? await Zone.find({ _id: { $in: normalizeObjectIdList(zone_ids) } }).setOptions({ skipAdminScope: true }).distinct('service_location_id')
+    : [];
+  return [...new Set([...service_location_ids, ...stateLocations, ...zoneLocations].filter(Boolean).map(String))];
 };
 
 const validateSubadminPayload = async (payload = {}, existingAdminId = null, currentAdmin = null) => {
@@ -3510,6 +3580,7 @@ const validateSubadminPayload = async (payload = {}, existingAdminId = null, cur
   const permissions = normalizeAdminPermissions(
     adminType === 'superadmin' ? [SUPERADMIN_PERMISSION] : payload.permissions || [],
   );
+  const stateIds = normalizeObjectIdList(payload.state_ids);
   const serviceLocationIds = normalizeObjectIdList(payload.service_location_ids);
   const zoneIds = normalizeObjectIdList(payload.zone_ids);
   const active = payload.active === undefined ? true : normalizeBoolean(payload.active);
@@ -3538,8 +3609,15 @@ const validateSubadminPayload = async (payload = {}, existingAdminId = null, cur
     throw new ApiError(400, 'Select at least one permission for the subadmin');
   }
 
-  if (adminType === 'subadmin' && serviceLocationIds.length === 0) {
-    throw new ApiError(400, 'Assign at least one service location to the subadmin');
+  if (adminType === 'subadmin' && serviceLocationIds.length === 0 && stateIds.length === 0) {
+    throw new ApiError(400, 'Assign at least one state or service location to the subadmin');
+  }
+
+  if (stateIds.length > 0) {
+    const stateCount = await State.countDocuments({ _id: { $in: stateIds } });
+    if (stateCount !== stateIds.length) {
+      throw new ApiError(400, 'One or more selected states are invalid');
+    }
   }
 
   if (serviceLocationIds.length > 0) {
@@ -3557,9 +3635,18 @@ const validateSubadminPayload = async (payload = {}, existingAdminId = null, cur
 
     if (
       adminType === 'subadmin' &&
+      serviceLocationIds.length > 0 &&
       zones.some((zone) => !serviceLocationIds.some((id) => String(id) === String(zone.service_location_id || '')))
     ) {
       throw new ApiError(400, 'Assigned zones must belong to the selected service locations');
+    }
+  }
+
+  // An admin limited to some states / cities can only hand out access inside their own area.
+  if (getActiveScope() && adminType === 'subadmin') {
+    const reach = await resolveAssignedLocationIds({ state_ids: stateIds, service_location_ids: serviceLocationIds, zone_ids: zoneIds });
+    if (reach.length === 0 || !reach.every((id) => isLocationInScope(id))) {
+      throw new ApiError(403, 'You can only assign states and cities inside your own area');
     }
   }
 
@@ -3570,6 +3657,7 @@ const validateSubadminPayload = async (payload = {}, existingAdminId = null, cur
     phone,
     role,
     permissions,
+    state_ids: adminType === 'superadmin' ? [] : stateIds,
     service_location_ids: adminType === 'superadmin' ? [] : serviceLocationIds,
     zone_ids: adminType === 'superadmin' ? [] : zoneIds,
     active,
@@ -3633,6 +3721,7 @@ export const updateAdminAccount = async (currentAdmin, id, payload = {}) => {
   }
 
   await admin.save();
+  clearAdminScopeCache();
   const [serializedAdmin] = await enrichAdminSummaries([admin]);
   return serializedAdmin;
 };
@@ -3967,6 +4056,7 @@ export const bulkImportDrivers = async (payload = {}) => {
         vehicleMake: String(raw.vehicle_make || raw.vehicleMake || '').trim(),
         vehicleModel: String(raw.vehicle_model || raw.vehicleModel || '').trim(),
         vehicleColor: String(raw.vehicle_color || raw.vehicleColor || '').trim(),
+        vehicleYear: normalizeVehicleYearInput(raw.vehicle_year ?? raw.vehicleYear ?? raw.car_year, { strict: false }),
         vehicleNumber: String(raw.vehicle_number || raw.vehicleNumber || '').trim(),
         registerFor: transportType,
         city:
@@ -4450,7 +4540,9 @@ export const listDrivers = async ({ page = 1, limit = 50, status, search, approv
   const query = { deletedAt: null };
   if (currentAdmin) {
     assertAdminPermission(currentAdmin, 'drivers.view', 'drivers');
-    Object.assign(query, buildServiceLocationScopeQuery(currentAdmin));
+    // A state / city-limited admin is already limited by the scope plugin (the driver's area label). The dispatch-city
+    // filter would hide drivers whose dispatch city is a country-wide zone, so it only applies without that scope.
+    if (!getActiveScope()) Object.assign(query, buildServiceLocationScopeQuery(currentAdmin));
   }
 
   if (status) {
@@ -5337,6 +5429,10 @@ export const createDriver = async (payload = {}, currentAdmin = null) => {
     vehicleMake: String(payload.vehicle_make || payload.vehicleMake || payload.car_make || '').trim(),
     vehicleModel: String(payload.vehicle_model || payload.vehicleModel || payload.car_model || '').trim(),
     vehicleColor: String(payload.vehicle_color || payload.vehicleColor || payload.car_color || '').trim(),
+    // the panel sends it as vehicle_year, car_year or inside onboarding: all land in the one canonical field
+    vehicleYear: normalizeVehicleYearInput(
+      payload.vehicle_year ?? payload.vehicleYear ?? payload.car_year ?? payload.onboarding?.vehicleYear ?? payload.onboarding?.vehicle?.year,
+    ),
     vehicleNumber: String(payload.vehicle_number || payload.vehicleNumber || payload.car_number || '').trim(),
     registerFor,
     serviceCategories,
@@ -5357,11 +5453,11 @@ export const createDriver = async (payload = {}, currentAdmin = null) => {
 export const updateDriver = async (id, payload, currentAdmin = null) => {
   if (currentAdmin) {
     assertAdminPermission(currentAdmin, 'drivers.view', 'drivers');
-    const existingDriver = await Driver.findById(id).select('service_location_id').lean();
+    const existingDriver = await Driver.findById(id).select('service_location_id area_location_id').lean();
     if (!existingDriver) {
       throw new ApiError(404, 'Driver not found');
     }
-    assertServiceLocationAccess(currentAdmin, existingDriver.service_location_id);
+    assertServiceLocationAccess(currentAdmin, existingDriver.area_location_id || existingDriver.service_location_id);
   }
 
   const update = {};
@@ -5422,6 +5518,11 @@ export const updateDriver = async (id, payload, currentAdmin = null) => {
     update.vehicleColor = String(payload.vehicle_color ?? payload.vehicleColor ?? payload.car_color ?? '').trim();
   }
 
+  const yearInput = payload.vehicle_year ?? payload.vehicleYear ?? payload.car_year ?? payload.onboarding?.vehicle?.year ?? payload.onboarding?.vehicleYear;
+  if (yearInput !== undefined) {
+    update.vehicleYear = normalizeVehicleYearInput(yearInput);
+  }
+
   if (payload.vehicle_number !== undefined || payload.vehicleNumber !== undefined || payload.car_number !== undefined) {
     update.vehicleNumber = String(payload.vehicle_number ?? payload.vehicleNumber ?? payload.car_number ?? '').trim();
   }
@@ -5453,6 +5554,12 @@ export const updateDriver = async (id, payload, currentAdmin = null) => {
     } else {
       update.zoneId = null;
     }
+  }
+
+  // A driver belongs to the state of the city he is put in: when the admin gives him a city (directly or through a
+  // zone), the state-wise label follows it.
+  if (update.service_location_id) {
+    update.area_location_id = update.service_location_id;
   }
 
   if (payload.country !== undefined) {
@@ -5520,20 +5627,20 @@ export const getDriverById = async (id, currentAdmin = null) => {
   }
   if (currentAdmin) {
     assertAdminPermission(currentAdmin, 'drivers.view', 'drivers');
-    assertServiceLocationAccess(currentAdmin, driver.service_location_id);
+    assertServiceLocationAccess(currentAdmin, driver.area_location_id || driver.service_location_id);
   }
   return serializeDriver(driver);
 };
 
 // Lifts a driver's "too many cancels" block and resets today's count.
 export const clearDriverCancelBlockForAdmin = async (id, currentAdmin = null) => {
-  const driver = await Driver.findById(id).select('service_location_id').lean();
+  const driver = await Driver.findById(id).select('service_location_id area_location_id').lean();
   if (!driver) {
     throw new ApiError(404, 'Driver not found');
   }
   if (currentAdmin) {
     assertAdminPermission(currentAdmin, 'drivers.view', 'drivers');
-    assertServiceLocationAccess(currentAdmin, driver.service_location_id);
+    assertServiceLocationAccess(currentAdmin, driver.area_location_id || driver.service_location_id);
   }
 
   const status = await clearDriverCancelBlock({ driverId: id });
@@ -5619,6 +5726,7 @@ export const getDriverProfile = async (id) => {
       model: driver.vehicleModel || '',
       color: driver.vehicleColor || '',
       number: driver.vehicleNumber || '',
+      year: driver.vehicleYear || '',
     },
     image: driver.profile_image || driver.avatar || '',
     online_selfie: driver.onlineSelfie || {},
@@ -5676,6 +5784,22 @@ export const updateSubscriptionSettings = async (payload) => {
   return setting.subscription;
 };
 
+// What the apps need to show the program: no admin-only configuration (milestone and reward-feature setup).
+export const getPublicReferralSettings = async (type) => {
+  const toPublic = (value = {}) => ({
+    enabled: Boolean(value.enabled),
+    type: value.type || 'instant_referrer',
+    amount: Number(value.amount || 0),
+    ride_count: Number(value.ride_count || 0),
+    ...(value.milestone_program_enabled !== undefined
+      ? { milestone_program_enabled: Boolean(value.milestone_program_enabled) }
+      : {}),
+  });
+
+  const all = await getReferralSettings();
+  return type ? toPublic(all?.[type]) : { user: toPublic(all?.user), driver: toPublic(all?.driver) };
+};
+
 export const getReferralSettings = async (type) => {
   const setting = await AdminBusinessSetting.findOne({ scope: 'default' }).lean();
   const referral = setting?.referral || { driver: { enabled: false, type: 'instant_referrer', amount: 0 }, user: { enabled: false, type: 'instant_referrer', amount: 0 } };
@@ -5711,13 +5835,23 @@ const sanitizeReferralRewardFeatures = (items = []) =>
     .filter((item) => item.label);
 
 export const updateReferralSettings = async (type, payload) => {
+  if (!['user', 'driver'].includes(type)) {
+    throw new ApiError(400, 'Referral program must be "user" or "driver"');
+  }
+
+  const rewardType = String(payload?.type ?? 'instant_referrer').trim().toLowerCase();
+  if (!SUPPORTED_REFERRAL_TYPES.includes(rewardType)) {
+    throw new ApiError(400, `Unsupported referral type. Use one of: ${SUPPORTED_REFERRAL_TYPES.join(', ')}`);
+  }
+
   const updateKey = `referral.${type}`;
 
   // Sanitize data
   const updateData = {
     ...payload,
+    type: rewardType,
     enabled: Boolean(payload.enabled),
-    amount: Number(payload.amount || 0),
+    amount: Math.max(0, Number(payload.amount || 0) || 0),
   };
 
   if (payload.ride_count !== undefined) {
@@ -5739,28 +5873,65 @@ export const updateReferralSettings = async (type, payload) => {
   return setting.referral[type];
 };
 
+/**
+ * Referral dashboard: real numbers from the accounts and the reward ledger (it used to return zeros).
+ *   referral users / drivers   accounts that signed up through someone's referral (referredBy is set)
+ *   monthly                    those sign-ups per month (Jan..Dec) of the current year, India time
+ *   active referrals           referred accounts that have taken a ride or already earned the referrer a reward
+ *   referral earning           credited referral rewards (rupees)
+ * Every count follows the admin's state / city scope (the account queries are scoped by the active scope).
+ */
 export const getReferralDashboard = async () => {
-  const [totalDrivers, totalUsers] = await Promise.all([
+  const year = new Date().getFullYear();
+  const referred = { referredBy: { $ne: null } };
+  const monthly = async (Model) => {
+    const rows = await Model.aggregate([
+      { $match: { ...referred, createdAt: { $gte: new Date(`${year}-01-01T00:00:00+05:30`), $lt: new Date(`${year + 1}-01-01T00:00:00+05:30`) } } },
+      { $group: { _id: { $month: { date: '$createdAt', timezone: 'Asia/Kolkata' } }, count: { $sum: 1 } } },
+    ]);
+    const series = Array(12).fill(0);
+    rows.forEach((row) => { series[row._id - 1] = row.count; });
+    return series;
+  };
+  const activeFilter = { ...referred, $or: [{ referredRideCompletionCount: { $gt: 0 } }, { referralRewardGrantedAt: { $ne: null } }] };
+
+  const [totalDrivers, totalUsers, referralUsers, referralDrivers, userMonthly, driverMonthly, activeUsers, activeDrivers] = await Promise.all([
     Driver.countDocuments(),
     User.countDocuments(),
+    User.countDocuments(referred),
+    Driver.countDocuments(referred),
+    monthly(User),
+    monthly(Driver),
+    User.countDocuments(activeFilter),
+    Driver.countDocuments(activeFilter),
   ]);
 
-  // Mocking some parts for the dashboard view
+  // The reward ledger has no city of its own: a limited admin only counts payouts to accounts inside their area.
+  const rewardFilter = { status: 'CREDITED' };
+  if (getActiveScope()) {
+    const [userIds, driverIds] = await Promise.all([User.find({}).distinct('_id'), Driver.find({}).distinct('_id')]);
+    rewardFilter.payeeId = { $in: [...userIds, ...driverIds] };
+  }
+  const [earning] = await ReferralReward.aggregate([
+    { $match: rewardFilter },
+    { $group: { _id: null, total: { $sum: '$amount' } } },
+  ]);
+
   return {
     total_drivers: totalDrivers,
     total_users: totalUsers,
-    active_referrals: 0,
-    referral_earning: 0,
+    active_referrals: activeUsers + activeDrivers,
+    referral_earning: Math.round((earning?.total || 0) * 100) / 100,
     user_referrals: {
-      normal_user: totalUsers,
-      referral_user: 0,
-      monthly: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      normal_user: Math.max(0, totalUsers - referralUsers),
+      referral_user: referralUsers,
+      monthly: userMonthly,
     },
     driver_referrals: {
-      normal_driver: totalDrivers,
-      referral_driver: 0,
-      monthly: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    }
+      normal_driver: Math.max(0, totalDrivers - referralDrivers),
+      referral_driver: referralDrivers,
+      monthly: driverMonthly,
+    },
   };
 };
 
@@ -5981,8 +6152,8 @@ export const listServiceLocations = async (currentAdmin = null) => {
   if (currentAdmin) {
     assertAdminPermission(currentAdmin, 'service_locations.view', 'service locations');
   }
-  const query = currentAdmin ? buildServiceLocationScopeQuery(currentAdmin) : {};
-  return ServiceLocation.find(query).sort({ createdAt: -1 }).lean();
+  // the active admin scope (state-wise view) already limits this query
+  return ServiceLocation.find({}).populate('state_id', 'name code').sort({ createdAt: -1 }).lean();
 };
 
 export const listCountries = async () => {
@@ -6065,6 +6236,7 @@ export const updateServiceLocation = async (id, payload, currentAdmin = null) =>
   }
   Object.assign(persistedLocation, normalizeServiceLocationPayload(payload, persistedLocation.toObject()));
   await persistedLocation.save();
+  clearAdminScopeCache();
   return persistedLocation.toObject();
 
   const state = await ensureAdminState();
@@ -8576,8 +8748,10 @@ export const getAdminEarnings = async (query = {}) => {
 };
 
 export const getDashboardData = async () => {
-  if (dashboardCache.value && dashboardCache.expiresAt > Date.now()) {
-    return dashboardCache.value;
+  const cacheKey = dashboardCacheKey();
+  const cachedDashboard = dashboardCache.get(cacheKey);
+  if (cachedDashboard && cachedDashboard.expiresAt > Date.now()) {
+    return cachedDashboard.value;
   }
 
   const [totalUsers, totalDrivers, totalOwners, approvedDrivers, rides, supportTicketStats] = await Promise.all([
@@ -8810,10 +8984,8 @@ export const getDashboardData = async () => {
       : 0,
   };
 
-  dashboardCache = {
-    expiresAt: Date.now() + DASHBOARD_CACHE_TTL_MS,
-    value: snapshot,
-  };
+  if (dashboardCache.size > 200) dashboardCache.clear();
+  dashboardCache.set(cacheKey, { expiresAt: Date.now() + DASHBOARD_CACHE_TTL_MS, value: snapshot });
 
   return snapshot;
 };
@@ -10944,7 +11116,12 @@ export const deletePaymentMethod = async (id) => {
 export const getPaymentSettings = async () => {
   const settings = await ensureThirdPartySettings();
   const activeGateway = await getActivePaymentGateway();
-  return { settings: settings.payment || {}, active_gateway: activeGateway };
+  // Servers set up before Cashfree existed have no cashfree block: show the empty defaults.
+  const payment = { ...(settings.payment || {}) };
+  if (!payment.cashfree) {
+    payment.cashfree = createDefaultThirdPartySettings().payment.cashfree;
+  }
+  return { settings: payment, active_gateway: activeGateway };
 };
 
 export const updatePaymentSettings = async (payload) => {
@@ -11487,13 +11664,18 @@ export const getGeneralSettings = async (category) => {
     };
   }
 
-  return {
-    settings: await getProjectedSettingsSection(
-      AdminBusinessSetting,
-      createDefaultBusinessSettings,
-      businessKey,
-    ),
-  };
+  const section = await getProjectedSettingsSection(
+    AdminBusinessSetting,
+    createDefaultBusinessSettings,
+    businessKey,
+  );
+
+  // Older saved settings lack the hybrid-radius keys: show the real defaults so the page never has to guess them.
+  if (businessKey === 'transport_ride') {
+    return { settings: { ...(createDefaultBusinessSettings().transport_ride || {}), ...section } };
+  }
+
+  return { settings: section };
 };
 
 export const updateGeneralSettings = async (category, payload) => {
@@ -11510,6 +11692,26 @@ export const updateGeneralSettings = async (category, payload) => {
     } catch (error) {
       throw new ApiError(400, error.message);
     }
+  }
+
+  // Radius settings: the switch is stored as '1'/'0', and the default must sit inside the min..max range.
+  if (category === 'transport-ride' && RADIUS_SETTING_KEYS.some((key) => Object.prototype.hasOwnProperty.call(newValues || {}, key))) {
+    const defaults = createDefaultBusinessSettings().transport_ride || {};
+    const merged = { ...defaults, ...(bizSettings.transport_ride || {}), ...newValues };
+    const problem = validateAdminRadiusSettings(merged);
+
+    if (problem) {
+      throw new ApiError(400, problem);
+    }
+
+    newValues = {
+      ...newValues,
+      allow_driver_custom_search_radius: ['1', 'true', 'yes', 'on'].includes(
+        String(merged.allow_driver_custom_search_radius ?? '').trim().toLowerCase(),
+      )
+        ? '1'
+        : '0',
+    };
   }
 
   if (appSettingsCategoryMap[category]) {
@@ -11724,4 +11926,82 @@ export const seedTransportTypes = async () => {
     }
   }
   return results;
+};
+
+// ---- states (state-wise admin view) ------------------------------------------------------------------------------
+
+const serializeState = (state, serviceLocationCount = 0) => ({
+  _id: state._id,
+  id: state._id,
+  name: state.name || '',
+  code: state.code || '',
+  status: state.status || (state.active === false ? 'inactive' : 'active'),
+  active: state.active !== false,
+  service_location_count: serviceLocationCount,
+  createdAt: state.createdAt || null,
+  updatedAt: state.updatedAt || null,
+});
+
+/** All states for a super admin; for a state/city-limited admin only the states their cities belong to. */
+export const listStates = async () => {
+  // ServiceLocation queries below are already limited by the active admin scope
+  const counts = await ServiceLocation.aggregate([{ $group: { _id: '$state_id', count: { $sum: 1 } } }]);
+  const countByState = new Map(counts.map((row) => [String(row._id || ''), row.count]));
+  const filter = getActiveScope()
+    ? { _id: { $in: normalizeObjectIdList(counts.map((row) => row._id).filter(Boolean)) } }
+    : {};
+  const states = await State.find(filter).sort({ name: 1 }).lean();
+  return states.map((state) => serializeState(state, countByState.get(String(state._id)) || 0));
+};
+
+const assertCanManageStates = (currentAdmin) => {
+  if (!isSuperAdmin(currentAdmin || {}) || getActiveScope()) {
+    throw new ApiError(403, 'Only the superadmin can manage states');
+  }
+};
+
+const normalizeStatePayload = (payload = {}, fallback = {}) => {
+  const name = String(payload.name ?? fallback.name ?? '').trim();
+  const code = String(payload.code ?? fallback.code ?? '').trim().toUpperCase();
+  const status = String(payload.status ?? fallback.status ?? 'active').trim().toLowerCase() === 'inactive' ? 'inactive' : 'active';
+  if (!name) throw new ApiError(400, 'State name is required');
+  if (!/^[A-Z0-9]{2,6}$/.test(code)) throw new ApiError(400, 'State code must be 2 to 6 letters or digits (for example MP)');
+  return { name, code, status, active: status === 'active' };
+};
+
+export const createState = async (currentAdmin, payload = {}) => {
+  assertCanManageStates(currentAdmin);
+  const data = normalizeStatePayload(payload);
+  if (await State.exists({ code: data.code })) throw new ApiError(409, 'A state with this code already exists');
+  const created = await State.create(data);
+  return serializeState(created.toObject(), 0);
+};
+
+export const updateState = async (currentAdmin, id, payload = {}) => {
+  assertCanManageStates(currentAdmin);
+  const state = await State.findById(id);
+  if (!state) throw new ApiError(404, 'State not found');
+  const data = normalizeStatePayload(payload, state.toObject());
+  if (data.code !== state.code && (await State.exists({ code: data.code, _id: { $ne: state._id } }))) {
+    throw new ApiError(409, 'A state with this code already exists');
+  }
+  Object.assign(state, data);
+  await state.save();
+  clearAdminScopeCache();
+  return serializeState(state.toObject(), await ServiceLocation.countDocuments({ state_id: state._id }));
+};
+
+export const deleteState = async (currentAdmin, id) => {
+  assertCanManageStates(currentAdmin);
+  const state = await State.findById(id).lean();
+  if (!state) throw new ApiError(404, 'State not found');
+  if (await ServiceLocation.exists({ state_id: state._id })) {
+    throw new ApiError(409, 'Move or remove the service locations of this state first');
+  }
+  if (await Admin.exists({ state_ids: state._id })) {
+    throw new ApiError(409, 'Remove this state from the admin accounts first');
+  }
+  await State.deleteOne({ _id: state._id });
+  clearAdminScopeCache();
+  return { deleted: true };
 };

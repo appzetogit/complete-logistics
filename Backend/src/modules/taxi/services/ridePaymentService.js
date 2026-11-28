@@ -5,6 +5,7 @@ import { applyDriverWalletAdjustment } from '../driver/services/walletService.js
 import { Ride } from '../user/models/Ride.js';
 import { emitRideStateToParticipants, emitToDriver } from './dispatchService.js';
 import { razorpayRequest, resolveRazorpayCredentials, signaturesMatch } from './razorpayClient.js';
+import { cancelCashfreePaymentLink, createCashfreeRefund, fetchCashfreeRefund } from './cashfreeClient.js';
 import { getTransportRideSettings } from './transportSettingsService.js';
 import { getRideDetails } from './rideService.js';
 import {
@@ -180,6 +181,19 @@ const closeOpenCollection = async (collection = {}) => {
   if (!providerId || !OPEN_COLLECTION_STATUSES.has(String(collection.status || '')) || !/qr|payment_link/.test(mode)) {
     return;
   }
+  // Cashfree is the collect gateway: cancel the payment link so its QR can no longer be paid.
+  if (collection.provider === 'cashfree' || mode.startsWith('cashfree')) {
+    try {
+      await cancelCashfreePaymentLink(providerId);
+    } catch (error) {
+      // Best effort: a link paid after this point is caught by the webhook / reconcile and refunded.
+      console.error('[ride-payment] could not cancel the open Cashfree payment link', providerId, error?.message || error);
+    }
+    return;
+  }
+
+  /* RAZORPAY: disabled. The driver's collect QR now runs on Cashfree only (Razorpay is switched off while Cashfree
+     is the active gateway, so these calls always answered 403). Kept here to bring Razorpay back for this flow.
   try {
     const { keyId, keySecret } = await resolveRazorpayCredentials();
     await razorpayRequest({
@@ -194,6 +208,7 @@ const closeOpenCollection = async (collection = {}) => {
     // Best effort: a QR paid after this point is caught by the webhook and refunded.
     console.error('[ride-payment] could not close the open QR / payment link', providerId, error?.message || error);
   }
+  */
 };
 
 export { closeOpenCollection as closeRidePaymentCollection };
@@ -202,7 +217,10 @@ export { closeOpenCollection as closeRidePaymentCollection };
  * Refunds a Razorpay payment we cannot use for this ride (already paid, wrong amount, ride cancelled) and
  * records it on the ride. Never refunds the same payment twice.
  */
-const callRazorpayRefund = async ({ rideId, paymentId, amount, reason }) => {
+const callRazorpayRefund = async ({ rideId, paymentId, amount, reason, provider = 'razorpay', orderId = '' }) => {
+  if (provider === 'cashfree') {
+    return callCashfreeRefund({ rideId, orderId, paymentId, amount, reason });
+  }
   try {
     const { keyId, keySecret } = await resolveRazorpayCredentials();
     const refund = await razorpayRequest({
@@ -216,6 +234,28 @@ const callRazorpayRefund = async ({ rideId, paymentId, amount, reason }) => {
   } catch (error) {
     const message = String(error?.message || error).slice(0, 300);
     console.error('[ride-payment] refund failed, an admin must retry or refund it by hand', String(rideId), paymentId, message);
+    return { status: 'failed', refundId: '', error: message };
+  }
+};
+
+/** Cashfree refunds are made against the order. One refund id per payment: a retry never refunds twice. */
+const callCashfreeRefund = async ({ rideId, orderId, paymentId, amount, reason }) => {
+  const refundId = `rfr_${paymentId}`.slice(0, 40);
+  try {
+    if (!orderId) throw new Error('the Cashfree order of this payment is unknown');
+    let refund;
+    try {
+      refund = await createCashfreeRefund({ orderId, refundId, amount, note: reason });
+    } catch (error) {
+      // a repeated refund id is an error at Cashfree: if it exists an earlier attempt already went through
+      refund = await fetchCashfreeRefund({ orderId, refundId }).catch(() => null);
+      if (!refund?.refund_id) throw error;
+    }
+    const status = String(refund?.refund_status || '').toUpperCase();
+    return { status: ['FAILED', 'CANCELLED'].includes(status) ? 'failed' : 'processed', refundId: String(refund?.refund_id || refundId), error: '' };
+  } catch (error) {
+    const message = String(error?.message || error).slice(0, 300);
+    console.error('[ride-payment] Cashfree refund failed, an admin must retry or refund it by hand', String(rideId), paymentId, message);
     return { status: 'failed', refundId: '', error: message };
   }
 };
@@ -238,10 +278,10 @@ const saveRefundOutcome = (rideId, paymentId, outcome) => Ride.updateOne(
  * so verify and the webhook handling the same extra payment at the same moment refund it once.
  * A refund Razorpay rejects stays 'failed' and shows up in Admin > Payment Refunds.
  */
-export const refundUnusedRidePayment = async ({ rideId, paymentId, amount, reason }) => {
+export const refundUnusedRidePayment = async ({ rideId, paymentId, amount, reason, provider = 'razorpay', orderId = '' }) => {
   if (!paymentId || !(Number(amount) > 0)) return null;
   const now = new Date();
-  const entry = { paymentId, amount: roundMoney(amount), reason, refundId: '', status: 'pending', error: '', at: now, updatedAt: now };
+  const entry = { paymentId, provider, orderId, amount: roundMoney(amount), reason, refundId: '', status: 'pending', error: '', at: now, updatedAt: now };
   const claimed = await Ride.updateOne(
     { _id: rideId, 'paymentRefunds.paymentId': { $ne: paymentId } },
     { $push: { paymentRefunds: entry } },
@@ -250,7 +290,7 @@ export const refundUnusedRidePayment = async ({ rideId, paymentId, amount, reaso
     return { paymentId, alreadyRefunded: true };
   }
 
-  const outcome = await callRazorpayRefund({ rideId, paymentId, amount, reason });
+  const outcome = await callRazorpayRefund({ rideId, paymentId, amount, reason, provider, orderId });
   await saveRefundOutcome(rideId, paymentId, outcome);
   return { ...entry, ...outcome };
 };
@@ -278,7 +318,7 @@ export const retryRidePaymentRefund = async ({ rideId, paymentId }) => {
     throw new ApiError(409, 'This refund is not waiting for a retry (already refunded, in progress or resolved)');
   }
   const entry = ride.paymentRefunds.find((item) => item.paymentId === paymentId);
-  const outcome = await callRazorpayRefund({ rideId, paymentId, amount: entry.amount, reason: entry.reason });
+  const outcome = await callRazorpayRefund({ rideId, paymentId, amount: entry.amount, reason: entry.reason, provider: entry.provider || 'razorpay', orderId: entry.orderId || '' });
   await saveRefundOutcome(rideId, paymentId, outcome);
   return { ...entry, ...outcome };
 };
@@ -353,11 +393,15 @@ export const applyRidePayment = async ({ refundIfUnused = true, ...args }) => {
   if (result.status === 'applied') {
     await afterRidePaymentApplied(result, { notificationId: `ride-payment-${args.payment?.providerPaymentId || ''}` });
   } else if (refundIfUnused && ['duplicate', 'amount_mismatch', 'not_payable'].includes(result.status)
-    // only a real payment id can be refunded (the QR poll may only know the QR id)
-    && args.payment?.provider === 'razorpay' && String(args.payment?.providerPaymentId || '').startsWith('pay_')) {
+    // only a real payment can be refunded: a Razorpay payment id, or a Cashfree payment with its order (the QR poll
+    // may only know the QR / link id)
+    && ((args.payment?.provider === 'razorpay' && String(args.payment?.providerPaymentId || '').startsWith('pay_'))
+      || (args.payment?.provider === 'cashfree' && args.payment?.providerOrderId && args.payment?.providerPaymentId))) {
     result.refund = await refundUnusedRidePayment({
       rideId: result.ride._id,
       paymentId: args.payment.providerPaymentId,
+      provider: args.payment.provider,
+      orderId: args.payment.providerOrderId || '',
       amount: roundMoney(Number(args.fareAmount || 0) + Number(args.tipAmount || 0)),
       reason: result.status === 'duplicate' ? 'ride_already_paid' : result.status,
     });

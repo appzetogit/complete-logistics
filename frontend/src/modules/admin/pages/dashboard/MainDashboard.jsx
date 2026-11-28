@@ -45,14 +45,35 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { GoogleMap, MarkerF } from '@react-google-maps/api';
 import { adminService } from '../../services/adminService';
+import { hasAdminPermission } from '../../constants/adminAccess';
 import { BACKEND_LABEL } from '../../../../shared/api/runtimeConfig';
 import { GOOGLE_MAPS_API_KEY, HAS_VALID_GOOGLE_MAPS_KEY, INDIA_CENTER, useBaseGoogleMapsLoader } from '../../utils/googleMaps';
 
 const currency = (value) => Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 0 });
 const DASHBOARD_REFRESH_INTERVAL_MS = 60000;
 
+// KPI card accents: a thin coloured edge and a tinted icon chip on a white card (full class names so Tailwind keeps them)
+const KPI_TONES = {
+  violet: { border: 'border-l-violet-500', chip: 'bg-violet-50 text-violet-600' },
+  sky: { border: 'border-l-sky-500', chip: 'bg-sky-50 text-sky-600' },
+  emerald: { border: 'border-l-emerald-500', chip: 'bg-emerald-50 text-emerald-600' },
+  rose: { border: 'border-l-rose-500', chip: 'bg-rose-50 text-rose-600' },
+  orange: { border: 'border-l-orange-500', chip: 'bg-orange-50 text-orange-600' },
+  blue: { border: 'border-l-blue-500', chip: 'bg-blue-50 text-blue-600' },
+  teal: { border: 'border-l-teal-500', chip: 'bg-teal-50 text-teal-600' },
+  red: { border: 'border-l-red-500', chip: 'bg-red-50 text-red-600' },
+};
+
 const MainDashboard = () => {
   const navigate = useNavigate();
+  // Who is looking decides which cards open a page (the same permissions the sidebar uses).
+  const adminProfile = useMemo(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem('adminInfo') || 'null') || { admin_type: 'superadmin', permissions: ['*'] };
+    } catch {
+      return { admin_type: 'superadmin', permissions: ['*'] };
+    }
+  }, []);
   const [dashboard, setDashboard] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -220,27 +241,51 @@ const MainDashboard = () => {
         {/* 1. LIVE PLATFORM OVERVIEW (10 KPI Cards) */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           {[
-            { label: "Total Customers", value: totalUsers, icon: Users, cardBg: "!bg-violet-500" },
-            { label: "Total Drivers", value: totalDrivers, icon: Car, cardBg: "!bg-sky-500" },
-            { label: "Active Drivers", value: approvedDrivers, icon: UserCheck, cardBg: "!bg-emerald-500" },
-            { label: "Active Vendors", value: totalOwners, icon: Building2, cardBg: "!bg-rose-500" },
-            { label: "Online Customers", value: Math.max(1, Math.round(totalUsers * 0.15)), icon: Sparkles, cardBg: "!bg-orange-500" },
-            { label: "Ongoing Trips", value: todayTrips.scheduled || 0, icon: Activity, cardBg: "!bg-blue-500" },
-            { label: "Today's Revenue", value: `₹${currency(todayEarnings.total)}`, icon: IndianRupee, cardBg: "!bg-emerald-500" },
-            { label: "Platform Uptime", value: "99.98%", icon: Server, cardBg: "!bg-violet-500" },
-            { label: "Fleet Utilization", value: `${fleetUtilization}%`, icon: TrendingUp, cardBg: "!bg-teal-500" },
-            { label: "Pending Approvals", value: declinedDrivers, icon: Clock, cardBg: "!bg-red-500" }
-          ].map((kpi, idx) => (
-            <div key={idx} className={`admin-card !p-4 border-none !text-white hover:scale-[1.02] transition-transform shadow-lg ${kpi.cardBg}`}>
+            { label: "Total Customers", value: totalUsers, icon: Users, tone: "violet", to: "/admin/users", permission: "users.view" },
+            { label: "Total Drivers", value: totalDrivers, icon: Car, tone: "sky", to: "/admin/drivers", permission: "drivers.view" },
+            { label: "Active Drivers", value: approvedDrivers, icon: UserCheck, tone: "emerald", to: "/admin/drivers/active", permission: "drivers.view" },
+            { label: "Active Vendors", value: totalOwners, icon: Building2, tone: "rose", to: "/admin/owners", permission: "owners.view" },
+            { label: "Online Customers", value: Math.max(1, Math.round(totalUsers * 0.15)), icon: Sparkles, tone: "orange", to: "/admin/users", permission: "users.view" },
+            { label: "Ongoing Trips", value: todayTrips.scheduled || 0, icon: Activity, tone: "blue", to: "/admin/ongoing", permission: "ongoing.view" },
+            { label: "Today's Revenue", value: `₹${currency(todayEarnings.total)}`, icon: IndianRupee, tone: "emerald", to: "/admin/earnings", permission: "earnings.view" },
+            // a static figure with no page behind it: not clickable
+            { label: "Platform Uptime", value: "99.98%", icon: Server, tone: "violet" },
+            { label: "Fleet Utilization", value: `${fleetUtilization}%`, icon: TrendingUp, tone: "teal", to: "/admin/fleet/drivers", permission: "owners.view" },
+            { label: "Pending Approvals", value: declinedDrivers, icon: Clock, tone: "red", to: "/admin/drivers/pending", permission: "drivers.view" }
+          ].map((kpi, idx) => {
+            const tone = KPI_TONES[kpi.tone] || KPI_TONES.blue;
+            // only when there is a page for it AND this admin may open it (same permissions as the sidebar)
+            const clickable = Boolean(kpi.to) && hasAdminPermission(adminProfile, kpi.permission);
+            const open = () => navigate(kpi.to);
+            const clickProps = clickable
+              ? {
+                  role: 'link',
+                  tabIndex: 0,
+                  title: `Open ${kpi.label}`,
+                  onClick: open,
+                  onKeyDown: (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      open();
+                    }
+                  },
+                }
+              : {};
+            return (
+            <div key={idx} {...clickProps} className={`admin-card !p-4 border-l-4 ${tone.border} ${clickable ? 'cursor-pointer hover:border-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500' : ''}`}>
               <div className="flex items-center justify-between mb-2">
-                <span className="card-label text-[10px] font-bold opacity-80 uppercase tracking-wider">{kpi.label}</span>
-                <div className="p-2 rounded-full bg-white/20 backdrop-blur-sm">
+                <span className="card-label text-[11px] font-semibold text-slate-500 uppercase tracking-wider">{kpi.label}</span>
+                <div className={`p-2 rounded-lg ${tone.chip}`}>
                   <kpi.icon size={16} strokeWidth={2.5} />
                 </div>
               </div>
-              <h4 className="text-xl font-black tracking-tight mt-1">{isLoading ? '...' : kpi.value}</h4>
+              <div className="flex items-center justify-between">
+                <h4 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">{isLoading ? '...' : kpi.value}</h4>
+                {clickable && <ChevronRight size={16} className="mt-1 text-slate-400" aria-hidden="true" />}
+              </div>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* REVENUE & BOOKING ANALYTICS ROW */}

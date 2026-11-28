@@ -1,11 +1,30 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Target, Award, Users, ShieldCheck } from 'lucide-react';
 import { ContainerScroll } from '@/components/ui/container-scroll-animation';
 import { GlobalCommunitiesDashboard } from '@/components/ui/GlobalCommunitiesDashboard';
+import { fetchLegalDocument } from '../services/legalContentService';
+
+const isHeadingBlock = (block = '') => /^[A-Z][A-Z\s&()/-]{3,}$/.test(block.trim());
 
 const AboutPage = () => {
   const navigate = useNavigate();
+  const [remote, setRemote] = useState(null);
+
+  // The About text written in the admin panel replaces the built-in intro and mission text.
+  useEffect(() => {
+    let alive = true;
+    fetchLegalDocument('about', 'user').then((doc) => {
+      if (alive) setRemote(doc);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const blocks = remote ? remote.body.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean) : [];
+  const remoteIntro = blocks[0] || '';
+  const remoteRest = blocks.slice(1);
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-gray-900">
@@ -26,7 +45,7 @@ const AboutPage = () => {
             Driving the <span className="text-[#FFB300]">Future</span> of Mobility
           </h1>
           <p className="text-xl text-gray-400 leading-relaxed max-w-2xl mx-auto">
-            Appzeto 24 is a leading transportation and logistics platform dedicated to providing safe, reliable, and affordable mobility solutions for everyone.
+            {remote ? remoteIntro : 'Rentol is a leading transportation and logistics platform dedicated to providing safe, reliable, and affordable mobility solutions for everyone.'}
           </p>
         </div>
       </div>
@@ -35,13 +54,29 @@ const AboutPage = () => {
       <div className="max-w-6xl mx-auto px-6 py-20">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-16 items-center">
           <div>
-            <h2 className="text-3xl font-bold mb-6">Our Mission</h2>
-            <p className="text-lg text-gray-600 leading-relaxed mb-6">
-              Our mission is to transform the way people move by connecting them with professional drivers and efficient services. We believe that transportation should be seamless, secure, and accessible to all.
-            </p>
-            <p className="text-lg text-gray-600 leading-relaxed">
-              Whether you need a quick city ride, a comfortable outstation trip, or fast parcel delivery, our technology-driven approach ensures every journey is a great experience.
-            </p>
+            {remote ? (
+              remoteRest.map((block, index) => {
+                const [firstLine, ...restLines] = block.split('\n');
+                const hasHeading = isHeadingBlock(firstLine);
+                const text = hasHeading ? restLines.join('\n').trim() : block;
+                return (
+                  <React.Fragment key={index}>
+                    {hasHeading ? <h2 className="text-3xl font-bold mb-6">{firstLine}</h2> : null}
+                    {text ? <p className="text-lg text-gray-600 leading-relaxed mb-6 whitespace-pre-line">{text}</p> : null}
+                  </React.Fragment>
+                );
+              })
+            ) : (
+              <>
+                <h2 className="text-3xl font-bold mb-6">Our Mission</h2>
+                <p className="text-lg text-gray-600 leading-relaxed mb-6">
+                  Our mission is to transform the way people move by connecting them with professional drivers and efficient services. We believe that transportation should be seamless, secure, and accessible to all.
+                </p>
+                <p className="text-lg text-gray-600 leading-relaxed">
+                  Whether you need a quick city ride, a comfortable outstation trip, or fast parcel delivery, our technology-driven approach ensures every journey is a great experience.
+                </p>
+              </>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-6">
             <div className="bg-yellow-50 p-6 rounded-2xl shadow-sm border border-yellow-100">

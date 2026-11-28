@@ -1,3 +1,4 @@
+import { tagRideArea } from './serviceAreaService.js';
 import mongoose from 'mongoose';
 import { isDataUrl } from '../../../utils/localImageStore.js';
 import { ApiError } from '../../../utils/ApiError.js';
@@ -11,6 +12,8 @@ import { Driver } from '../driver/models/Driver.js';
 import { WalletTransaction } from '../driver/models/WalletTransaction.js';
 import { incrementDriverTodaySummaryForCompletedRide } from '../driver/services/driverTodaySummaryService.js';
 import { applyDriverWalletAdjustment, ensureDriverWalletCanAcceptRide, settleCompletedRideWallet } from '../driver/services/walletService.js';
+import { creditReferralReward, referralRewardAlreadyPaid } from '../referral/services/referralRewardService.js';
+import { SUPPORTED_REFERRAL_TYPES } from '../referral/constants.js';
 import { Delivery } from '../user/models/Delivery.js';
 import { RideBid } from '../user/models/RideBid.js';
 import { Ride } from '../user/models/Ride.js';
@@ -206,83 +209,29 @@ const getDriverReferralProgramSettings = async () => {
   };
 };
 
-const creditUserWalletByReference = async ({ userId, amount, title, referenceKey }) => {
-  const normalizedAmount = Math.max(0, Number(amount || 0) || 0);
-  const normalizedReferenceKey = String(referenceKey || '').trim();
-
-  if (!userId || normalizedAmount <= 0 || !normalizedReferenceKey) {
-    return 'skipped';
-  }
-
-  await ensureUserWallet(userId);
-
-  const existingTransaction = await UserWallet.findOne({
-    userId,
-    'transactions.referenceKey': normalizedReferenceKey,
-  })
-    .select('_id')
-    .lean();
-
-  if (existingTransaction) {
-    return 'existing';
-  }
-
-  await UserWallet.updateOne(
-    { userId },
-    {
-      $inc: { balance: normalizedAmount },
-      $push: {
-        transactions: {
-          $each: [
-            {
-              kind: 'credit',
-              amount: normalizedAmount,
-              title: String(title || 'Referral Reward').trim(),
-              referenceKey: normalizedReferenceKey,
-            },
-          ],
-          $slice: -50,
-        },
-      },
-    },
-  );
-
-  return 'credited';
-};
-
-const creditDriverWalletByReference = async ({ driverId, amount, title, referenceKey, metadata = {} }) => {
-  const normalizedAmount = Math.max(0, Number(amount || 0) || 0);
-  const normalizedReferenceKey = String(referenceKey || '').trim();
-
-  if (!driverId || normalizedAmount <= 0 || !normalizedReferenceKey) {
-    return 'skipped';
-  }
-
-  const existingTransaction = await WalletTransaction.findOne({
-    driverId,
-    'metadata.referenceKey': normalizedReferenceKey,
-  })
-    .select('_id')
-    .lean();
-
-  if (existingTransaction) {
-    return 'existing';
-  }
-
-  await applyDriverWalletAdjustment({
-    driverId,
-    amount: normalizedAmount,
-    type: 'adjustment',
-    description: String(title || 'Referral Reward').trim(),
-    metadata: {
-      ...metadata,
-      referenceKey: normalizedReferenceKey,
-      source: 'driver_referral',
-    },
+// Referral payouts go through the shared ledger: one row per referenceKey, paid once even under concurrent requests.
+const creditUserWalletByReference = ({ userId, amount, title, referenceKey, referrerId = null, referredId = null }) =>
+  creditReferralReward({
+    payeeType: 'user',
+    payeeId: userId,
+    amount,
+    title: String(title || 'Referral Reward').trim(),
+    referenceKey: String(referenceKey || '').trim(),
+    referrerId,
+    referredId,
   });
 
-  return 'credited';
-};
+const creditDriverWalletByReference = ({ driverId, amount, title, referenceKey, referrerId = null, referredId = null, metadata = {} }) =>
+  creditReferralReward({
+    payeeType: 'driver',
+    payeeId: driverId,
+    amount,
+    title: String(title || 'Referral Reward').trim(),
+    referenceKey: String(referenceKey || '').trim(),
+    referrerId,
+    referredId,
+    metadata,
+  });
 
 const processCompletedRideReferralReward = async (ride) => {
   if (!ride?.userId) {
@@ -298,11 +247,19 @@ const processCompletedRideReferralReward = async (ride) => {
   }
 
   const settings = await getUserReferralProgramSettings();
-  const isConditionalProgram =
-    settings.enabled &&
-    ['conditional_referrer', 'conditional_referrer_new'].includes(settings.type);
+  // Nothing is paid at signup: every program type pays when the referred person completes their ride(s).
+  if (!settings.enabled || !SUPPORTED_REFERRAL_TYPES.includes(settings.type)) {
+    return;
+  }
 
-  if (!isConditionalProgram) {
+  if (
+    await referralRewardAlreadyPaid({
+      payeeType: 'user',
+      payeeId: referredUser.referredBy,
+      referenceKey: `user-referral:signup:${String(ride.userId)}:referrer`,
+    })
+  ) {
+    await User.updateOne({ _id: ride.userId }, { $set: { referralRewardGrantedAt: new Date() } });
     return;
   }
 
@@ -312,7 +269,8 @@ const processCompletedRideReferralReward = async (ride) => {
     serviceType: { $in: ['ride', 'intercity'] },
   });
 
-  const requiredRideCount = Math.max(1, settings.rideCount || 1);
+  // instant_* programs pay on the first completed ride; conditional_* after the configured ride count
+  const requiredRideCount = settings.type.startsWith('instant') ? 1 : Math.max(1, settings.rideCount || 1);
 
   await User.updateOne(
     { _id: ride.userId },
@@ -329,21 +287,25 @@ const processCompletedRideReferralReward = async (ride) => {
     amount: settings.amount,
     title: `Referral reward after ${completedRideCount} completed rides by ${referredUser.phone || 'referred user'}`,
     referenceKey: `${rewardBaseKey}:referrer`,
+    referrerId: referredUser.referredBy,
+    referredId: ride.userId,
   });
 
   let newUserResult = 'skipped';
-  if (settings.type === 'conditional_referrer_new') {
+  if (settings.type.endsWith('_new')) {
     newUserResult = await creditUserWalletByReference({
       userId: ride.userId,
       amount: settings.amount,
       title: `Referral completion reward after ${completedRideCount} rides`,
       referenceKey: `${rewardBaseKey}:new-user`,
+      referrerId: referredUser.referredBy,
+      referredId: ride.userId,
     });
   }
 
   const rewardSatisfied =
     ['credited', 'existing'].includes(referrerResult) &&
-    (settings.type !== 'conditional_referrer_new' || ['credited', 'existing'].includes(newUserResult));
+    (!settings.type.endsWith('_new') || ['credited', 'existing'].includes(newUserResult));
 
   if (rewardSatisfied) {
     await User.updateOne(
@@ -367,11 +329,19 @@ const processCompletedDriverReferralReward = async (ride) => {
   }
 
   const settings = await getDriverReferralProgramSettings();
-  const isConditionalProgram =
-    settings.enabled &&
-    ['conditional_referrer', 'conditional_referrer_new'].includes(settings.type);
+  // Nothing is paid at signup: every program type pays when the referred person completes their ride(s).
+  if (!settings.enabled || !SUPPORTED_REFERRAL_TYPES.includes(settings.type)) {
+    return;
+  }
 
-  if (!isConditionalProgram) {
+  if (
+    await referralRewardAlreadyPaid({
+      payeeType: 'driver',
+      payeeId: referredDriver.referredBy,
+      referenceKey: `driver-referral:signup:${String(ride.driverId)}:referrer`,
+    })
+  ) {
+    await Driver.updateOne({ _id: ride.driverId }, { $set: { referralRewardGrantedAt: new Date() } });
     return;
   }
 
@@ -380,7 +350,8 @@ const processCompletedDriverReferralReward = async (ride) => {
     status: RIDE_STATUS.COMPLETED,
   });
 
-  const requiredRideCount = Math.max(1, settings.rideCount || 1);
+  // instant_* programs pay on the first completed ride; conditional_* after the configured ride count
+  const requiredRideCount = settings.type.startsWith('instant') ? 1 : Math.max(1, settings.rideCount || 1);
 
   await Driver.updateOne(
     { _id: ride.driverId },
@@ -397,6 +368,8 @@ const processCompletedDriverReferralReward = async (ride) => {
     amount: settings.amount,
     title: `Referral reward after ${completedRideCount} completed rides by ${referredDriver.phone || 'referred driver'}`,
     referenceKey: `${rewardBaseKey}:referrer`,
+    referrerId: referredDriver.referredBy,
+    referredId: ride.driverId,
     metadata: {
       referredDriverId: String(ride.driverId),
       completedRideCount,
@@ -404,12 +377,14 @@ const processCompletedDriverReferralReward = async (ride) => {
   });
 
   let newDriverResult = 'skipped';
-  if (settings.type === 'conditional_referrer_new') {
+  if (settings.type.endsWith('_new')) {
     newDriverResult = await creditDriverWalletByReference({
       driverId: ride.driverId,
       amount: settings.amount,
       title: `Referral completion reward after ${completedRideCount} rides`,
       referenceKey: `${rewardBaseKey}:new-driver`,
+      referrerId: referredDriver.referredBy,
+      referredId: ride.driverId,
       metadata: {
         referrerDriverId: String(referredDriver.referredBy),
         completedRideCount,
@@ -419,7 +394,7 @@ const processCompletedDriverReferralReward = async (ride) => {
 
   const rewardSatisfied =
     ['credited', 'existing'].includes(referrerResult) &&
-    (settings.type !== 'conditional_referrer_new' || ['credited', 'existing'].includes(newDriverResult));
+    (!settings.type.endsWith('_new') || ['credited', 'existing'].includes(newDriverResult));
 
   if (rewardSatisfied) {
     await Driver.updateOne(
@@ -1017,7 +992,7 @@ export const createRideRecord = async ({
 
   const primaryVehicleTypeId = dispatchVehicleTypeIds[0] || null;
   const primaryVehicle = primaryVehicleTypeId
-    ? await Vehicle.findById(primaryVehicleTypeId).select('icon map_icon image dispatch_type admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner').lean()
+    ? await Vehicle.findById(primaryVehicleTypeId).select('icon_types name icon map_icon image dispatch_type admin_commission_type_from_driver admin_commission_from_driver admin_commission_type_for_owner admin_commission_for_owner').lean()
     : null;
   // Take the first value that is a reference rather than the image itself. A
   // data: URL here lands in this ride and in the delivery synced from it, so a
@@ -1031,6 +1006,18 @@ export const createRideRecord = async ({
     asImageReference(primaryVehicle?.image) ||
     asImageReference(primaryVehicle?.map_icon) ||
     asImageReference(primaryVehicle?.icon);
+  // Resolved from the catalog the same way the icon URL above is, instead of
+  // only echoing the booking request. The rider app never sends it, so every
+  // ride was stored with an empty icon type and both apps fell back to the
+  // generic car marker whatever was actually booked. The vehicle's name is the
+  // last resort: 'Bike Direct', 'Tourist Bus' and the like still carry the
+  // family in plain words.
+  const resolvedVehicleName = String(primaryVehicle?.name || '').trim();
+  const resolvedVehicleIconType = [
+    vehicleIconType,
+    primaryVehicle?.icon_types,
+    primaryVehicle?.name,
+  ].map((value) => String(value || '').trim()).find(Boolean) || '';
   const normalizedTransportType = normalizeRideTransportType(transport_type);
   const resolvedZoneId =
     zone_id && mongoose.Types.ObjectId.isValid(zone_id)
@@ -1249,7 +1236,8 @@ export const createRideRecord = async ({
       userId,
       vehicleTypeId: primaryVehicleTypeId,
       dispatchVehicleTypeIds,
-      vehicleIconType: vehicleIconType || '',
+      vehicleType: resolvedVehicleName,
+      vehicleIconType: resolvedVehicleIconType,
       vehicleIconUrl: resolvedVehicleIconUrl,
       serviceType: normalizedServiceType,
       tripMode: String(tripMode || '').toLowerCase() === 'round_trip' ? 'round_trip' : 'one_way',
@@ -1309,7 +1297,8 @@ export const createRideRecord = async ({
             userId,
             vehicleTypeId: primaryVehicleTypeId,
             dispatchVehicleTypeIds,
-            vehicleIconType: vehicleIconType || '',
+            vehicleType: resolvedVehicleName,
+            vehicleIconType: resolvedVehicleIconType,
             vehicleIconUrl: resolvedVehicleIconUrl,
             serviceType: normalizedServiceType,
             pickupLocation: toPoint(pickupCoords, 'pickup'),
@@ -1388,6 +1377,8 @@ export const createRideRecord = async ({
   let createdRide;
   try {
     createdRide = await createRideDocuments();
+    // state-wise admin view: remember the city of this ride (and of a rider who has none yet); never blocks a booking
+    await tagRideArea({ ride: createdRide, userId, zoneId: resolvedZoneId, serviceLocationId: resolvedServiceLocationId });
   } catch (error) {
     if (walletHold) {
       // If the ride document was saved after all, release through its claim (so a later cancel cannot release it
@@ -1522,18 +1513,24 @@ const PAID_COLLECTION_STATUSES = new Set(['paid', 'captured', 'success', 'comple
  * The driver tapped "Cash received" when completing a cash ride: the fare is paid, so the rider can no longer pay
  * it online as well (ALREADY_PAID). Does nothing when the ride was already paid another way (the rider paid
  * online at the drop) or is not a cash ride. An open QR for the ride is closed.
+ *
+ * allowOnline: an ONLINE-booked ride the rider has not paid yet, where the driver explicitly took the fare in cash
+ * (driver app "Cash received"). It then becomes a cash ride (paymentSwitchedFrom 'online'): settled like any cash ride
+ * (commission from the driver's wallet, the driver keeps the cash) and the rider is not asked to pay again.
  */
-const markRideCashReceived = async (ride) => {
-  if (ride.paymentMethod !== 'cash') return false;
+const markRideCashReceived = async (ride, { allowOnline = false } = {}) => {
+  const switchFromOnline = allowOnline && ride.paymentMethod === 'online';
+  if (ride.paymentMethod !== 'cash' && !switchFromOnline) return false;
   const now = new Date();
   const collection = ride.driverPaymentCollection || {};
   const openCollection = collection.providerId
     ? { providerId: collection.providerId, providerMode: collection.providerMode, status: collection.status }
     : null;
   const result = await Ride.updateOne(
-    { _id: ride._id, paymentMethod: 'cash', ...UNPAID_COLLECTION_FILTER },
+    { _id: ride._id, paymentMethod: switchFromOnline ? 'online' : 'cash', ...UNPAID_COLLECTION_FILTER },
     {
       $set: {
+        ...(switchFromOnline ? { paymentMethod: 'cash', paymentSwitchedFrom: 'online' } : {}),
         driverPaymentCollection: {
           provider: 'cash',
           providerId: '',
@@ -1554,6 +1551,11 @@ const markRideCashReceived = async (ride) => {
   if (result.modifiedCount && openCollection) {
     const { closeRidePaymentCollection } = await import('./ridePaymentService.js');
     await closeRidePaymentCollection(openCollection);
+  }
+  if (result.modifiedCount && switchFromOnline) {
+    // keep the in-memory ride in step with the database for the settlement that follows
+    ride.paymentMethod = 'cash';
+    ride.paymentSwitchedFrom = 'online';
   }
   return Boolean(result.modifiedCount);
 };
@@ -1697,6 +1699,7 @@ export const serializeRideRealtime = (ride, { audience = RIDE_AUDIENCE.USER } = 
         resolvedAt: ride.pricingSnapshot.resolvedAt || null,
       }
     : null,
+  vehicleType: ride.vehicleType || '',
   vehicleIconType: ride.vehicleIconType || '',
   // URL only (older rides copied a base64 icon from the vehicle)
   vehicleIconUrl: isDataUrl(ride.vehicleIconUrl) ? '' : (ride.vehicleIconUrl || ''),
@@ -1960,6 +1963,7 @@ export const listRideHistoryForIdentity = async ({ role, entityId, limit = 50, p
               }
             : null,
         }),
+    vehicleType: ride.vehicleType || '',
     vehicleIconType: ride.vehicleIconType,
     // Keep history responses light; giant data URLs can stall the activity screen.
     vehicleIconUrl: String(ride.vehicleIconUrl || '').startsWith('data:') ? '' : (ride.vehicleIconUrl || ''),
@@ -2521,7 +2525,10 @@ export const updateRideLifecycle = async ({
     ? String(paymentMethod || '').trim().toLowerCase() === 'cash'
     : cashReceived === true || cashReceived === 'true';
   if (nextStatus === RIDE_LIVE_STATUS.COMPLETED && tookCash) {
-    await markRideCashReceived(ride);
+    // An online-booked ride only turns into a cash ride on an explicit cashReceived: true (the driver's choice);
+    // an app that merely sends paymentMethod: 'cash' never converts an online ride.
+    const explicitCashReceived = cashReceived === true || cashReceived === 'true';
+    await markRideCashReceived(ride, { allowOnline: explicitCashReceived });
   }
 
   let walletUpdate = null;
@@ -2571,7 +2578,8 @@ export const updateRideLifecycle = async ({
   return populatedRide;
 };
 
-export const appendRideMessage = async ({ rideId, role, senderId, message }) => {
+// Same as appendRideMessage, plus the ride's two participants (for the "new message" push).
+export const appendRideMessageWithParticipants = async ({ rideId, role, senderId, message }) => {
   const trimmedMessage = String(message || '').trim();
 
   if (!trimmedMessage) {
@@ -2605,14 +2613,23 @@ export const appendRideMessage = async ({ rideId, role, senderId, message }) => 
   const latestMessage = ride.messages[ride.messages.length - 1];
 
   return {
-    id: String(latestMessage._id),
-    rideId: String(ride._id),
-    senderRole: latestMessage.senderRole,
-    senderId: String(latestMessage.senderId),
-    message: latestMessage.message,
-    sentAt: latestMessage.sentAt,
+    message: {
+      id: String(latestMessage._id),
+      rideId: String(ride._id),
+      senderRole: latestMessage.senderRole,
+      senderId: String(latestMessage.senderId),
+      message: latestMessage.message,
+      sentAt: latestMessage.sentAt,
+    },
+    participants: {
+      userId: ride.userId ? String(ride.userId) : '',
+      driverId: ride.driverId ? String(ride.driverId) : '',
+      status: ride.status,
+    },
   };
 };
+
+export const appendRideMessage = async (args) => (await appendRideMessageWithParticipants(args)).message;
 
 // GPS points closer than this are jitter, and a jump faster than this is a bad fix: neither adds distance.
 const TRAVEL_MIN_STEP_METERS = 3;

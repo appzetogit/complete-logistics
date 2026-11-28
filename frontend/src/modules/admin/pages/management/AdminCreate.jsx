@@ -7,7 +7,7 @@ import { ADMIN_PERMISSION_GROUPS } from '../../constants/adminAccess';
 
 const inputClass =
   'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none transition-all placeholder:text-slate-400 focus:border-[#1D4ED8] focus:ring-4 focus:ring-blue-100';
-const labelClass = 'mb-2 block text-xs font-black uppercase tracking-[0.18em] text-slate-500';
+const labelClass = 'mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500';
 
 const initialForm = {
   name: '',
@@ -16,6 +16,7 @@ const initialForm = {
   role: 'Operations Subadmin',
   admin_type: 'subadmin',
   permissions: [],
+  state_ids: [],
   service_location_ids: [],
   zone_ids: [],
   password: '',
@@ -49,6 +50,7 @@ const AdminCreate = () => {
   const { id } = useParams();
   const isEdit = Boolean(id);
   const [form, setForm] = useState(initialForm);
+  const [states, setStates] = useState([]);
   const [serviceLocations, setServiceLocations] = useState([]);
   const [zones, setZones] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -60,7 +62,8 @@ const AdminCreate = () => {
     const load = async () => {
       setLoading(true);
       try {
-        const [serviceLocationResponse, zoneResponse, adminResponse] = await Promise.all([
+        const [stateResponse, serviceLocationResponse, zoneResponse, adminResponse] = await Promise.all([
+          adminService.getStates().catch(() => ({ data: [] })),
           adminService.getServiceLocations(),
           adminService.getZones(),
           isEdit ? adminService.getAdmins() : Promise.resolve(null),
@@ -73,6 +76,7 @@ const AdminCreate = () => {
           ? zoneResponse.data.results
           : zoneResponse?.data?.results || [];
 
+        setStates(Array.isArray(stateResponse?.data) ? stateResponse.data : stateResponse?.data?.results || []);
         setServiceLocations(nextServiceLocations);
         setZones(nextZones);
 
@@ -92,6 +96,7 @@ const AdminCreate = () => {
             role: existingAdmin.role || 'Operations Subadmin',
             admin_type: existingAdmin.admin_type || 'subadmin',
             permissions: Array.isArray(existingAdmin.permissions) ? existingAdmin.permissions.filter((item) => item !== '*') : [],
+            state_ids: Array.isArray(existingAdmin.state_ids) ? existingAdmin.state_ids : [],
             service_location_ids: Array.isArray(existingAdmin.service_location_ids) ? existingAdmin.service_location_ids : [],
             zone_ids: Array.isArray(existingAdmin.zone_ids) ? existingAdmin.zone_ids : [],
             password: '',
@@ -115,15 +120,22 @@ const AdminCreate = () => {
     }
 
     const serviceLocationSet = new Set((form.service_location_ids || []).map(String));
+    // the cities of the selected states are in scope too
+    const stateSet = new Set((form.state_ids || []).map(String));
+    serviceLocations.forEach((location) => {
+      const stateId = String(location.state_id?._id || location.state_id || '');
+      if (stateId && stateSet.has(stateId)) serviceLocationSet.add(String(location._id || location.id || ''));
+    });
     return zones.filter((zone) => serviceLocationSet.has(String(zone.service_location_id || '')));
-  }, [form.admin_type, form.service_location_ids, zones]);
+  }, [form.admin_type, form.service_location_ids, form.state_ids, serviceLocations, zones]);
 
   useEffect(() => {
     if (form.admin_type === 'superadmin') {
-      if (form.permissions.length > 0 || form.service_location_ids.length > 0 || form.zone_ids.length > 0) {
+      if (form.permissions.length > 0 || form.state_ids.length > 0 || form.service_location_ids.length > 0 || form.zone_ids.length > 0) {
         setForm((current) => ({
           ...current,
           permissions: [],
+          state_ids: [],
           service_location_ids: [],
           zone_ids: [],
         }));
@@ -136,7 +148,7 @@ const AdminCreate = () => {
       ...current,
       zone_ids: current.zone_ids.filter((zoneId) => allowedZoneIds.has(String(zoneId))),
     }));
-  }, [form.admin_type, form.permissions.length, form.service_location_ids.length, form.zone_ids.length, visibleZones]);
+  }, [form.admin_type, form.permissions.length, form.state_ids.length, form.service_location_ids.length, form.zone_ids.length, visibleZones]);
 
   const handlePermissionToggle = (permission) => {
     setForm((current) => ({
@@ -186,6 +198,7 @@ const AdminCreate = () => {
       role: form.admin_type === 'superadmin' ? 'superadmin' : form.role.trim(),
       admin_type: form.admin_type,
       permissions: form.admin_type === 'superadmin' ? [] : form.permissions,
+      state_ids: form.admin_type === 'superadmin' ? [] : form.state_ids,
       service_location_ids: form.admin_type === 'superadmin' ? [] : form.service_location_ids,
       zone_ids: form.admin_type === 'superadmin' ? [] : form.zone_ids,
       active: form.active,
@@ -217,7 +230,7 @@ const AdminCreate = () => {
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
         <div className="flex flex-col items-center gap-3">
           <Loader2 size={30} className="animate-spin text-blue-600" />
-          <p className="text-xs font-black uppercase tracking-[0.24em] text-slate-400">Preparing access form</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Preparing access form</p>
         </div>
       </div>
     );
@@ -228,12 +241,12 @@ const AdminCreate = () => {
       <div className="mx-auto max-w-7xl space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <div className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.22em] text-slate-400">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
               <span>Admin Management</span>
               <ChevronRight size={12} />
               <span className="text-slate-700">{isEdit ? 'Edit Admin' : 'Create Subadmin'}</span>
             </div>
-            <h1 className="text-3xl font-black tracking-tight text-slate-950">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-950">
               {isEdit ? 'Update Scoped Access' : 'Create Scoped Subadmin'}
             </h1>
             <p className="mt-2 max-w-2xl text-sm font-semibold text-slate-500">
@@ -244,7 +257,7 @@ const AdminCreate = () => {
           <button
             type="button"
             onClick={() => navigate('/admin/management/admins')}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 transition-all hover:bg-slate-50"
+            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition-all hover:bg-slate-50"
           >
             <ArrowLeft size={16} />
             Back to Admins
@@ -253,13 +266,13 @@ const AdminCreate = () => {
 
         <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-6 xl:grid-cols-12">
           <div className="space-y-6 xl:col-span-4">
-            <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
               <div className="mb-6 flex items-center gap-3">
                 <div className="rounded-2xl bg-blue-50 p-3 text-blue-700">
                   <UserRound size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-[0.18em] text-slate-900">Identity</h3>
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-900">Identity</h3>
                   <p className="text-xs font-semibold text-slate-500">Who will use this access profile</p>
                 </div>
               </div>
@@ -276,7 +289,7 @@ const AdminCreate = () => {
                         key={option.key}
                         type="button"
                         onClick={() => setField('admin_type', option.key)}
-                        className={`rounded-2xl border px-4 py-3 text-sm font-black uppercase tracking-[0.14em] transition-all ${
+                        className={`rounded-2xl border px-4 py-3 text-sm font-semibold uppercase tracking-wide transition-all ${
                           form.admin_type === option.key
                             ? 'border-blue-200 bg-blue-50 text-blue-700'
                             : 'border-slate-200 bg-white text-slate-500'
@@ -316,7 +329,7 @@ const AdminCreate = () => {
                     }`}
                   >
                     <span>{form.active ? 'Active account' : 'Inactive account'}</span>
-                    <span className="text-xs font-black uppercase tracking-[0.18em]">
+                    <span className="text-xs font-semibold uppercase tracking-wider">
                       {form.active ? 'Enabled' : 'Disabled'}
                     </span>
                   </button>
@@ -324,13 +337,13 @@ const AdminCreate = () => {
               </div>
             </div>
 
-            <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
               <div className="mb-6 flex items-center gap-3">
                 <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">
                   <LockKeyhole size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-[0.18em] text-slate-900">Credentials</h3>
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-900">Credentials</h3>
                   <p className="text-xs font-semibold text-slate-500">
                     {isEdit ? 'Leave blank to keep the current password.' : 'Set initial login password.'}
                   </p>
@@ -361,13 +374,13 @@ const AdminCreate = () => {
           </div>
 
           <div className="space-y-6 xl:col-span-8">
-            <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
               <div className="mb-6 flex items-center gap-3">
                 <div className="rounded-2xl bg-violet-50 p-3 text-violet-700">
                   <Shield size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-[0.18em] text-slate-900">Sidebar Permissions</h3>
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-900">Sidebar Permissions</h3>
                   <p className="text-xs font-semibold text-slate-500">Choose which menu groups and modules the admin can access.</p>
                 </div>
               </div>
@@ -380,7 +393,7 @@ const AdminCreate = () => {
                 <div className="space-y-6">
                   {ADMIN_PERMISSION_GROUPS.map((group) => (
                     <div key={group.title} className="space-y-3">
-                      <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">{group.title}</div>
+                      <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">{group.title}</div>
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                         {group.items.map((permission) => (
                           <PermissionCheckbox
@@ -397,13 +410,13 @@ const AdminCreate = () => {
               )}
             </div>
 
-            <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50">
               <div className="mb-6 flex items-center gap-3">
                 <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
                   <MapPinned size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-[0.18em] text-slate-900">Service Location Scope</h3>
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-900">Service Location Scope</h3>
                   <p className="text-xs font-semibold text-slate-500">Subadmins only see records inside the locations and zones selected here.</p>
                 </div>
               </div>
@@ -414,6 +427,28 @@ const AdminCreate = () => {
                 </div>
               ) : (
                 <div className="space-y-6">
+                  <div>
+                    <div className={labelClass}>Assigned States</div>
+                    <p className="mb-3 text-xs font-semibold text-slate-500">A state gives access to all of its cities, now and later. Add single cities below only if the state is not enough.</p>
+                    {states.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-xs font-bold text-slate-500">No states yet. Add them under Management → States.</div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        {states.map((state) => {
+                          const value = String(state._id || state.id || '');
+                          return (
+                            <PermissionCheckbox
+                              key={value}
+                              checked={form.state_ids.includes(value)}
+                              label={`${state.name} • ${state.code}`}
+                              onChange={() => handleMultiSelect('state_ids', value)}
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
                   <div>
                     <div className={labelClass}>Assigned Service Locations</div>
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -457,18 +492,18 @@ const AdminCreate = () => {
               )}
             </div>
 
-            <div className="flex flex-col gap-3 rounded-[30px] border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50 sm:flex-row sm:justify-end">
+            <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-200/50 sm:flex-row sm:justify-end">
               <button
                 type="button"
                 onClick={() => navigate('/admin/management/admins')}
-                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition-all hover:bg-slate-50"
+                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition-all hover:bg-slate-50"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#1D4ED8] px-6 py-3 text-sm font-black text-white shadow-lg shadow-blue-200 transition-all hover:-translate-y-0.5 hover:bg-[#1E40AF] disabled:cursor-not-allowed disabled:opacity-70"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#1D4ED8] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-200 transition-all hover:-translate-y-0.5 hover:bg-[#1E40AF] disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {saving ? <Loader2 size={16} className="animate-spin" /> : null}
                 {isEdit ? 'Update Admin Access' : 'Create Admin Access'}

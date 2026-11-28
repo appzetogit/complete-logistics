@@ -240,12 +240,18 @@ test('C12: cancel preview shows the cancellation fee and the advance that would 
   assert.equal(unpaid.body.data.advanceForfeited, false, 'nothing paid yet, nothing to lose');
   assert.equal(unpaid.body.data.advanceAmount, 0);
   assert.equal(unpaid.body.data.advanceRefundable, false);
+  assert.equal(unpaid.body.data.advanceKeptAmount, 0);
+  assert.equal(unpaid.body.data.advanceRefundAmount, 0);
+  assert.equal(unpaid.body.data.advanceRefundDestination, '');
   assert.equal(typeof unpaid.body.data.fee, 'number');
 
   await payAdvance(ctx.rider, delivery.rideId);
   const paid = await t.api('GET', `/rides/${delivery.rideId}/cancel-preview`, { token: ctx.rider.token });
   assert.equal(paid.body.data.advanceForfeited, true);
   assert.equal(paid.body.data.advanceAmount, delivery.goodsAdvance.amount);
+  assert.equal(Math.round((paid.body.data.advanceKeptAmount + paid.body.data.advanceRefundAmount) * 100) / 100, paid.body.data.advanceAmount);
+  assert.equal(paid.body.data.advanceCancelKeepPercent, 15);
+  assert.equal(paid.body.data.advanceRefundable, paid.body.data.advanceRefundAmount > 0);
 
   const stranger = await t.factories.user();
   const foreign = await t.api('GET', `/rides/${delivery.rideId}/cancel-preview`, { token: stranger.token });

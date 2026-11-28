@@ -121,6 +121,20 @@ const PaymentGateways = () => {
         { label: 'Client Version / Salt Index', key: 'phone_pay.salt_index' }
       ]
     },
+    {
+      name: 'CASHFREE',
+      slug: 'cashfree',
+      logo: 'https://www.cashfree.com/images/brand/cashfree-logo.svg',
+      enableKey: 'cashfree.enabled',
+      color: 'purple',
+      fields: [
+        { label: 'Environment', key: 'cashfree.environment', type: 'select', options: ['test', 'live'] },
+        { label: 'Test App ID', key: 'cashfree.test_app_id' },
+        { label: 'Test Secret Key', key: 'cashfree.test_secret_key' },
+        { label: 'Live App ID', key: 'cashfree.live_app_id' },
+        { label: 'Live Secret Key', key: 'cashfree.live_secret_key' }
+      ]
+    },
     { 
       name: 'STRIPE', 
       slug: 'stripe', 

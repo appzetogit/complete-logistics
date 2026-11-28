@@ -62,6 +62,13 @@ const driverSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    // The driver's city for the state-wise admin view (copied from service_location_id when set, else from the zone).
+    area_location_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'TaxiServiceLocation',
+      default: null,
+      index: true,
+    },
     assignedFleetVehicleId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'TaxiFleetVehicle',
@@ -118,6 +125,17 @@ const driverSchema = new mongoose.Schema(
       },
     },
     isOnRide: {
+      type: Boolean,
+      default: false,
+    },
+    // Hybrid radius (km): the driver's own service radius and whether they chose to use it. Older drivers have neither
+    // field and are treated as "use the Admin default". See services/driverRadius.js.
+    serviceRadius: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    isCustomRadius: {
       type: Boolean,
       default: false,
     },
@@ -190,6 +208,12 @@ const driverSchema = new mongoose.Schema(
       type: String,
       default: '',
       trim: true,
+    },
+    // Longer codes this account used before it got its short one: still accepted when someone enters an old code or opens an old link.
+    legacyReferralCodes: {
+      type: [String],
+      default: [],
+      index: true,
     },
     referredBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -574,6 +598,11 @@ driverSchema.index({ approve: 1, deletedAt: 1, createdAt: -1 });
 driverSchema.index({ status: 1, deletedAt: 1 });
 driverSchema.index({ phone: 1, deletedAt: 1 });
 driverSchema.index({ acquiredByEmployeeCode: 1 });
+// A referral code identifies one driver. Empty codes (not issued yet) are ignored by the index.
+driverSchema.index(
+  { referralCode: 1 },
+  { unique: true, partialFilterExpression: { referralCode: { $type: 'string', $gt: '' } } },
+);
 
 driverSchema.index({ location: '2dsphere' });
 driverSchema.index({ 'routeBooking.anchorLocation': '2dsphere' });

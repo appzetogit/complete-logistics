@@ -249,7 +249,7 @@ test('paying before the driver reaches the drop is refused', async () => {
 
 // ---- 3 + 4. driver QR, webhook, poll ----------------------------------------------------------------------------
 
-test('driver QR: amount from the server; rider pays with the driver app closed; webhook credits once; poll + retry add nothing', async () => {
+test.skip('[Razorpay driver QR is switched off, see the Cashfree versions in cashfreePayments.test.js] driver QR: amount from the server; rider pays with the driver app closed; webhook credits once; poll + retry add nothing', async () => {
   const ctx = await setup();
   const rideId = await bookAndArrive(ctx);
   const done = await complete(rideId, ctx.driver); // old app: no cashReceived -> settled as cash, still payable
@@ -284,7 +284,7 @@ test('driver QR: amount from the server; rider pays with the driver app closed; 
   assert.equal(callsTo(/refund/).filter((c) => c.path.includes(payment.id)).length, 0, 'never refunded');
 });
 
-test('QR paid, the driver app polls before any webhook: credited once, the later webhook is a no-op', async () => {
+test.skip('[Razorpay driver QR is switched off, see the Cashfree versions in cashfreePayments.test.js] QR paid, the driver app polls before any webhook: credited once, the later webhook is a no-op', async () => {
   const ctx = await setup();
   const rideId = await bookAndArrive(ctx);
   const qr = await createQr(rideId, ctx.driver); // at the drop, before completion
@@ -303,7 +303,7 @@ test('QR paid, the driver app polls before any webhook: credited once, the later
   assert.equal(await driverNet(rideId), FARE - COMMISSION);
 });
 
-test('a new QR closes the old one; a late payment on the old QR after the ride is paid is refunded', async () => {
+test.skip('[Razorpay driver QR is switched off, see the Cashfree versions in cashfreePayments.test.js] a new QR closes the old one; a late payment on the old QR after the ride is paid is refunded', async () => {
   const ctx = await setup();
   const rideId = await bookAndArrive(ctx);
   const first = await createQr(rideId, ctx.driver);
@@ -578,7 +578,7 @@ test('canPayOnline 8: a cancelled ride -> false', async () => {
   assert.equal((await rideAs(rideId, ctx.rider)).canPayOnline, false);
 });
 
-test('pay-online window: an old completed cash ride cannot be paid online, but a QR opened in time still counts', async () => {
+test.skip('[Razorpay driver QR is switched off, see the Cashfree versions in cashfreePayments.test.js] pay-online window: an old completed cash ride cannot be paid online, but a QR opened in time still counts', async () => {
   const ctx = await setup();
   const rideId = await bookAndArrive(ctx);
   const qr = await createQr(rideId, ctx.driver); // shown at the drop
@@ -667,7 +667,7 @@ test('failed refund: listed in Admin > Payment Refunds, retry refunds it; anothe
   assert.deepEqual(stored.map((r) => r.status).sort(), ['processed', 'resolved_manually']);
 });
 
-test('unique payment id: a payment already recorded on one ride can never pay another (not applied, not refunded)', async () => {
+test.skip('[Razorpay driver QR is switched off, see the Cashfree versions in cashfreePayments.test.js] unique payment id: a payment already recorded on one ride can never pay another (not applied, not refunded)', async () => {
   const ctx = await setup();
   const rideA = await bookAndArrive(ctx);
   const qrA = await createQr(rideA, ctx.driver);
@@ -754,4 +754,84 @@ test('unpaid online booking: setting 0 = never covered; paid rides and cash ride
   assert.equal(await driverNet(paid), FARE - COMMISSION, 'paid: unchanged');
   assert.equal(await driverNet(cashRide), -COMMISSION, 'cash: the driver holds the cash');
   assert.equal(await driverNet(unpaid), FARE - COMMISSION, 'the 0-hours ride is covered now that the setting is 24');
+});
+
+// ---- online-booked ride, driver takes the fare in cash ---------------------------------------------------------
+
+test('online ride, unpaid at the drop, driver taps "Cash received": becomes a cash ride, rider cannot pay again, settled as cash', async () => {
+  const ctx = await setup();
+  const rideId = await bookAndArrive(ctx, { paymentMethod: 'online' });
+  const done = await complete(rideId, ctx.driver, { cashReceived: true });
+  assert.equal(done.status, 200, done.text);
+
+  const ride = await loadRide(rideId);
+  assert.equal(ride.paymentMethod, 'cash');
+  assert.equal(ride.paymentSwitchedFrom, 'online');
+  assert.equal(ride.driverPaymentCollection.status, 'paid');
+  assert.equal(ride.driverPaymentCollection.source, 'cash');
+  assert.equal(ride.settledAs, 'cash');
+  // the driver keeps the cash: only the commission is taken from the wallet, the fare is not credited again
+  assert.equal(await driverNet(rideId), -COMMISSION);
+
+  const order = await t.api('POST', `/rides/${rideId}/complete-payment/razorpay/order`, { token: ctx.rider.token, body: {} });
+  assert.equal(order.body.code, 'ALREADY_PAID');
+  const qr = await createQr(rideId, ctx.driver);
+  assert.equal(qr.body.code, 'ALREADY_PAID');
+});
+
+test('online ride completed with paymentMethod "cash" but WITHOUT cashReceived:true is not converted', async () => {
+  const ctx = await setup();
+  const rideId = await bookAndArrive(ctx, { paymentMethod: 'online' });
+  const done = await complete(rideId, ctx.driver, { paymentMethod: 'cash' });
+  assert.equal(done.status, 200, done.text);
+  const ride = await loadRide(rideId);
+  assert.equal(ride.paymentMethod, 'online');
+  assert.notEqual(ride.driverPaymentCollection?.status, 'paid');
+});
+
+test('online ride already paid by the rider: "Cash received" changes nothing', async () => {
+  const ctx = await setup();
+  const rideId = await bookAndArrive(ctx, { paymentMethod: 'online' });
+  await t.m.Ride.updateOne(
+    { _id: rideId },
+    { $set: { driverPaymentCollection: { provider: 'razorpay', source: 'razorpay', status: 'paid', amount: FARE, paidAt: new Date() } } },
+  );
+  const done = await complete(rideId, ctx.driver, { cashReceived: true });
+  assert.equal(done.status, 200, done.text);
+  const ride = await loadRide(rideId);
+  assert.equal(ride.paymentMethod, 'online');
+  assert.equal(ride.driverPaymentCollection.source, 'razorpay');
+  assert.equal(ride.paymentSwitchedFrom || '', '');
+});
+
+test('online ride: rider has an open checkout, driver takes cash, rider then pays: refunded, fare settled once as cash', async () => {
+  const ctx = await setup();
+  const rideId = await bookAndArrive(ctx, { paymentMethod: 'online' });
+  const order = await t.api('POST', `/rides/${rideId}/complete-payment/razorpay/order`, { token: ctx.rider.token, body: {} });
+  assert.equal(order.status, 201, order.text);
+  const paid = payOrder(order.body.data.orderId); // the rider pays in the checkout...
+  const done = await complete(rideId, ctx.driver, { cashReceived: true }); // ...after the driver took cash
+  assert.equal(done.status, 200, done.text);
+
+  const verify = await t.api('POST', `/rides/${rideId}/complete-payment/razorpay/verify`, { token: ctx.rider.token, body: paid });
+  assert.equal(verify.body.details?.refunded ?? verify.body.data?.refunded, true, verify.text);
+  assert.equal(callsTo(new RegExp(`POST /payments/${paid.razorpay_payment_id}/refund`)).length, 1);
+  const ride = await loadRide(rideId);
+  assert.equal(ride.paymentMethod, 'cash');
+  assert.equal(ride.driverPaymentCollection.source, 'cash');
+  assert.equal(await driverNet(rideId), -COMMISSION, 'driver not credited the fare again');
+});
+
+test('online ride: rider pays first, then the driver taps "Cash received": the online payment wins, no cash switch, no double credit', async () => {
+  const ctx = await setup();
+  const rideId = await bookAndArrive(ctx, { paymentMethod: 'online' });
+  const order = await t.api('POST', `/rides/${rideId}/complete-payment/razorpay/order`, { token: ctx.rider.token, body: {} });
+  const verify = await t.api('POST', `/rides/${rideId}/complete-payment/razorpay/verify`, { token: ctx.rider.token, body: payOrder(order.body.data.orderId) });
+  assert.equal(verify.status, 200, verify.text);
+  const done = await complete(rideId, ctx.driver, { cashReceived: true });
+  assert.equal(done.status, 200, done.text);
+  const ride = await loadRide(rideId);
+  assert.equal(ride.paymentMethod, 'online');
+  assert.equal(ride.paymentSwitchedFrom || '', '');
+  assert.equal(await driverNet(rideId), round2(FARE - COMMISSION), 'credited once, fare less commission');
 });

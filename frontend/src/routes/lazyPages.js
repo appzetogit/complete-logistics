@@ -262,6 +262,7 @@ export const AdminFleetFinanceReport = lazy(() => import('../modules/admin/pages
 export const AdminLanguages = lazy(() => import('../modules/admin/pages/masters/Languages'));
 export const AdminPreferences = lazy(() => import('../modules/admin/pages/masters/Preferences'));
 export const AdminAdmins = lazy(() => import('../modules/admin/pages/management/Admins'));
+export const AdminStates = lazy(() => import('../modules/admin/pages/management/States'));
 export const AdminAdminCreate = lazy(() => import('../modules/admin/pages/management/AdminCreate'));
 export const AdminUserAppManagement = lazy(() => import('../modules/admin/pages/settings/AdminUserAppManagement'));
 export const UserAppLayout = lazy(() => import('../modules/user/components/UserAppLayout'));

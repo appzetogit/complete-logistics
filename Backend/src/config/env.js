@@ -14,6 +14,9 @@ if (primaryEnvLoad.error && primaryEnvPath !== fallbackEnvPath) {
 
 const resolvedJwtSecret = process.env.JWT_SECRET || process.env.JWT_ACCESS_SECRET;
 const resolvedJwtExpiresIn = process.env.JWT_EXPIRES_IN || process.env.JWT_ACCESS_EXPIRES || '7d';
+// Rider / driver / owner apps stay logged in for a long time (the apps have no refresh-token flow, so the token's
+// lifetime IS the session). The admin panel keeps the short JWT_EXPIRES_IN.
+const resolvedAppJwtExpiresIn = process.env.JWT_APP_EXPIRES_IN || '90d';
 const readEnv = (...keys) => {
   for (const key of keys) {
     const value = process.env[key];
@@ -48,6 +51,7 @@ export const env = {
   mongoDbName: process.env.MONGODB_DB_NAME || 'appzeto_taxi',
   jwtSecret: resolvedJwtSecret,
   jwtExpiresIn: resolvedJwtExpiresIn,
+  jwtAppExpiresIn: resolvedAppJwtExpiresIn,
   corsOrigin: process.env.CORS_ORIGIN || process.env.FRONTEND_URL || '*',
   publicFrontendUrl:
     process.env.PUBLIC_FRONTEND_URL ||
@@ -109,6 +113,27 @@ export const env = {
       // Full registered DLT template text with ##var## slots (and ##sender## for the header); optional
       templateText: readEnv('SMS_INDIA_HUB_TEMPLATE_TEXT'),
     },
+  },
+  referral: {
+    // Public base of the shared link: https://<domain>/r/<code>. Falls back to the backend URL, then to the request host.
+    baseUrl: String(
+      process.env.REFERRAL_BASE_URL
+      || process.env.PUBLIC_BACKEND_URL
+      || process.env.APP_BACKEND_URL
+      || process.env.BACKEND_PUBLIC_URL
+      || process.env.BACKEND_URL
+      || '',
+    ).trim().replace(/\/+$/, ''),
+    // Where /r/<code> sends the visitor. Store links win over the landing page when set.
+    landingUrl: String(process.env.REFERRAL_LANDING_URL || '').trim(),
+    androidStoreUrl: String(process.env.REFERRAL_ANDROID_STORE_URL || process.env.REFERRAL_USER_ANDROID_STORE_URL || '').trim(),
+    driverAndroidStoreUrl: String(process.env.REFERRAL_DRIVER_ANDROID_STORE_URL || '').trim(),
+    iosStoreUrl: String(process.env.REFERRAL_IOS_STORE_URL || '').trim(),
+    // How long an unused click stays valid (default 7 days).
+    attributionTtlHours:
+      Number.isFinite(Number(process.env.REFERRAL_ATTRIBUTION_TTL_HOURS)) && Number(process.env.REFERRAL_ATTRIBUTION_TTL_HOURS) > 0
+        ? Number(process.env.REFERRAL_ATTRIBUTION_TTL_HOURS)
+        : 168,
   },
   driverWallet: {
     defaultCashLimit: Number.isFinite(Number(process.env.DRIVER_WALLET_DEFAULT_CASH_LIMIT))

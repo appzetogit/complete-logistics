@@ -30,7 +30,7 @@ before(async () => {
       STATIC_OTP_USER_PHONE: '1111111111',
       STATIC_OTP_DRIVER_PHONE: '2222222222',
       SMS_INDIA_HUB_API_KEY: 'test-key',
-      SMS_INDIA_HUB_SENDER_ID: 'BGADEC',
+      SMS_INDIA_HUB_SENDER_ID: 'RENGPL',
     },
   });
 });
@@ -51,7 +51,7 @@ const ok = (res) => res.status === 200 || res.status === 201;
 const smsTo = (phone) => sentSms.filter((sms) => sms.number.endsWith(phone));
 const otpInSms = (phone) => {
   const sms = smsTo(phone).at(-1);
-  const match = /registration is (\d{4})\./.exec(sms?.text || '');
+  const match = /login OTP is (\d{4})\./.exec(sms?.text || '');
   assert.ok(match, `an OTP message was sent to ${phone}: ${JSON.stringify(sms)}`);
   return match[1];
 };

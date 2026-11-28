@@ -89,6 +89,11 @@ import {
 import { resolveConfiguredGatewayCredentials } from "../../services/paymentGatewayService.js";
 import { applyRidePayment, closeRidePaymentCollection, ridePaymentError } from "../../services/ridePaymentService.js";
 import {
+  createCashfreeDriverCollection,
+  isCashfreeCollection,
+  syncCashfreeDriverCollection,
+} from "../../payments/services/driverCollectService.js";
+import {
   RIDE_PAYMENT_CODES,
   UNPAID_COLLECTION_FILTER,
   isRideCollectionPaid,
@@ -126,13 +131,8 @@ import {
 } from "../../services/paymentDiagnostics.js";
 import { verifyBankAccountWithRecharge, verifyDrivingLicenseWithRecharge, verifyGstinWithRecharge, verifyPanWithRecharge, verifyRcWithRecharge, verifyUpiWithRecharge } from "../../services/rechargeVerificationService.js";
 
-const generateDriverReferralCode = (driver) => {
-  const idPart = String(driver?._id || "")
-    .slice(-6)
-    .toUpperCase();
-  const phonePart = String(driver?.phone || "").slice(-4);
-  return `DRV${phonePart}${idPart}`.replace(/\W/g, "");
-};
+import { ensureReferralCode } from "../../referral/services/referralAttributionService.js";
+import { genericVehicleTypeOf } from "../../../../utils/genericVehicleType.js";
 
 const MAX_EMERGENCY_CONTACTS = 5;
 const EMERGENCY_CONTACT_NAME_REGEX = /^[A-Za-z]+(?:[ .'-][A-Za-z]+)*$/;
@@ -1699,6 +1699,17 @@ const refreshDriverPaymentCollection = async (ride) => {
     return serializeDriverPaymentCollection(collection);
   }
 
+  // Cashfree payment link (the collect gateway): ask Cashfree, settle once when paid, report the stored state.
+  if (isCashfreeCollection(collection)) {
+    await syncCashfreeDriverCollection(plainRide._id);
+    const latest = await Ride.findById(plainRide._id).select("driverPaymentCollection").lean();
+    return serializeDriverPaymentCollection(latest?.driverPaymentCollection || collection);
+  }
+
+  // A QR made on Razorpay before the switch: nothing can be asked of a gateway that is off, report what is stored.
+  return serializeDriverPaymentCollection(collection);
+
+  /* RAZORPAY: disabled (see createDriverPaymentQr). The poll that asked Razorpay about the QR / payment link:
   const providerMode = collection.providerMode || "";
   const providerPayload = await razorpayRequest({
     method: "GET",
@@ -1751,6 +1762,7 @@ const refreshDriverPaymentCollection = async (ride) => {
   );
 
   return serializeDriverPaymentCollection({ ...collection, status: providerStatus, linkUrl, updatedAt });
+  */
 };
 
 const sanitizeEmergencyPhone = (value) =>
@@ -3064,10 +3076,7 @@ export const getCurrentDriver = async (req, res) => {
     });
   }
 
-  if (!String(driver.referralCode || "").trim()) {
-    driver.referralCode = generateDriverReferralCode(driver);
-    await driver.save();
-  }
+  await ensureReferralCode("driver", driver);
 
   await clearDriverActiveRideIfStale(driver);
   const vehicleTypeSummary = await resolveVehicleTypeSummary(driver.vehicleTypeId);
@@ -6404,6 +6413,12 @@ export const createDriverPaymentQr = async (req, res) => {
   const previousCollection = ride.toObject().driverPaymentCollection || {};
   await closeRidePaymentCollection(previousCollection);
 
+  // Cashfree payment link + QR: the collect gateway. The amount is what the server says is due.
+  const notifyUrl = `${req.get("x-forwarded-proto") || req.protocol}://${req.get("x-forwarded-host") || req.get("host")}/api/v1/payments/cashfree/webhook`;
+  const payload = await createCashfreeDriverCollection({ ride, amountDue, driverId: req.auth.sub, notifyUrl });
+
+  /* RAZORPAY: disabled. The driver's collect QR runs on Cashfree only (Razorpay is switched off while Cashfree is
+     the active gateway, so this always answered 403 "Razorpay gateway is disabled"). Kept to bring it back:
   let payload;
 
   try {
@@ -6454,13 +6469,14 @@ export const createDriverPaymentQr = async (req, res) => {
       serviceType: ride.serviceType,
     });
   }
+  */
 
   const saved = await Ride.updateOne(
     { _id: ride._id, ...UNPAID_COLLECTION_FILTER },
     {
       $set: {
         driverPaymentCollection: {
-          provider: "razorpay",
+          provider: "cashfree",
           providerId: payload.id,
           providerOrderId: "",
           providerPaymentId: "",
@@ -6479,7 +6495,7 @@ export const createDriverPaymentQr = async (req, res) => {
 
   if (!saved.modifiedCount) {
     // Paid meanwhile (cash received or the rider paid in the app): this QR must not be payable.
-    await closeRidePaymentCollection({ providerId: payload.id, providerMode: payload.providerMode, status: "active" });
+    await closeRidePaymentCollection({ provider: "cashfree", providerId: payload.id, providerMode: payload.providerMode, status: "active" });
     throw ridePaymentError(409, RIDE_PAYMENT_CODES.ALREADY_PAID, "This ride is already paid");
   }
 
@@ -7451,19 +7467,7 @@ export const getDriverPaymentQrStatus = async (req, res) => {
   });
 };
 
-const getGenericVehicleType = (vehicle = {}) => {
-  const value = String(vehicle.icon_types || vehicle.name || "").toLowerCase();
-
-  if (value.includes("bike")) {
-    return "bike";
-  }
-
-  if (value.includes("auto")) {
-    return "auto";
-  }
-
-  return "car";
-};
+const getGenericVehicleType = (vehicle = {}) => genericVehicleTypeOf(vehicle.icon_types || vehicle.name);
 
 export const updateDriverVehicle = async (req, res) => {
   const {

@@ -3,6 +3,7 @@ import { Navigate, Route, useLocation, useNavigate } from 'react-router-dom';
 import {
   AdminAdminCreate,
   AdminAdmins,
+  AdminStates,
   AdminAppModules,
   AdminAirportManagement,
   AdminBannerImage,
@@ -272,6 +273,7 @@ const adminRoutes = (
       <Route path="promotions/banner-image/create" element={<AdminBannerImage />} />
 
       <Route path="management/admins" element={<AdminAdmins />} />
+      <Route path="management/states" element={<AdminStates />} />
       <Route path="management/admins/create" element={<AdminAdminCreate />} />
       <Route path="management/admins/edit/:id" element={<AdminAdminCreate />} />
 

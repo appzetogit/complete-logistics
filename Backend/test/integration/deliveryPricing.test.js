@@ -386,3 +386,60 @@ test('deleting the Delivery Set Price makes the vehicle unpriced again (no fallb
   assert.equal(after.total, 0);
   assert.equal((await tryBook(rider, vehicle)).body.code, 'PRICE_NOT_SET');
 });
+
+test('goods quote: allowedPaymentMethods comes from the delivery Set Price that priced it', async () => {
+  const rider = await t.factories.user();
+
+  const cases = [
+    [['cash', 'online', 'wallet'], ['cash', 'online', 'wallet']],
+    [['online', 'wallet'], ['online', 'wallet']],
+    [['online'], ['online']],
+    [[], ['cash', 'online']], // empty: the same default the booking uses
+  ];
+  for (const [paymentType, expected] of cases) {
+    const vehicle = await newVehicle();
+    const created = await createSetPrice(vehicle, { payment_type: paymentType });
+    assert.equal(created.status, 200, created.text);
+    const q = await quote(rider, vehicle);
+    assert.deepEqual(q.allowedPaymentMethods, expected, JSON.stringify(paymentType));
+  }
+
+  const noPrice = await quote(rider, await newVehicle());
+  assert.equal(noPrice.priceNotSet, true);
+  assert.equal('allowedPaymentMethods' in noPrice, false, 'no Set Price: the field is omitted');
+});
+
+test('goods quote: a zone Set Price wins for a pickup in that zone, and so do its payment types', async () => {
+  const vehicle = await newVehicle();
+  const rider = await t.factories.user();
+  const location = await t.mongoose.model('TaxiServiceLocation').create({
+    name: 'Indore Pay', service_location_name: 'Indore Pay', latitude: 22.72, longitude: 75.86,
+    location: { type: 'Point', coordinates: [75.86, 22.72] },
+  });
+  const zone = await t.mongoose.model('TaxiZone').create({
+    name: 'Indore Pay Zone',
+    service_location_id: location._id,
+    geometry: { type: 'Polygon', coordinates: [[[75.80, 22.65], [75.90, 22.65], [75.90, 22.75], [75.80, 22.75], [75.80, 22.65]]] },
+  });
+
+  await createSetPrice(vehicle, { payment_type: ['cash', 'online'] }); // All Zones
+  await createSetPrice(vehicle, { zone_id: String(zone._id), payment_type: ['online'] }); // the zone: online only
+
+  assert.deepEqual((await quote(rider, vehicle, PICKUP)).allowedPaymentMethods, ['online']);
+  assert.deepEqual((await quote(rider, vehicle, FAR_AWAY)).allowedPaymentMethods, ['cash', 'online']);
+});
+
+test('goods booking with Cash when Cash is not allowed is moved to an allowed method (as the quote said)', async () => {
+  const vehicle = await newVehicle();
+  const rider = await t.factories.user();
+  await createSetPrice(vehicle, { payment_type: ['online'] });
+
+  const q = await quote(rider, vehicle);
+  assert.deepEqual(q.allowedPaymentMethods, ['online']);
+
+  const delivery = await book(rider, vehicle, PICKUP, { paymentMethod: 'cash' });
+  assert.equal(delivery.paymentMethodChanged, true);
+  assert.equal(delivery.requestedPaymentMethod, 'cash');
+  const stored = await t.m.Ride.findById(delivery.rideId).lean();
+  assert.equal(stored.paymentMethod, 'online');
+});

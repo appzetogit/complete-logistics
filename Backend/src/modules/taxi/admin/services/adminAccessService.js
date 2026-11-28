@@ -29,6 +29,7 @@ export const ADMIN_PERMISSIONS = [
   'deliveries.view',
   'ongoing.view',
   'settings.view',
+  'legal.manage',
 ];
 
 // Only these values mean full access ('admin' is what scripts/seedAdmin.js used to write). Anything else, including

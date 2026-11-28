@@ -438,6 +438,10 @@ const Admins = () => {
   const handleEditClick = (admin) => {
     window.dispatchEvent(new Event('admin:closeDropdowns'));
     setIsDrawerOpen(false); // Close details drawer if open
+    // same full form as Create (states, cities, zones). The inline editor below did not send state_ids.
+    navigate(`/admin/management/admins/edit/${admin.id || admin._id}`);
+    return;
+    // eslint-disable-next-line no-unreachable
     setForm({
       id: admin.id || admin._id,
       name: admin.name || '',
@@ -634,8 +638,9 @@ const Admins = () => {
             <button
               onClick={() => {
                 window.dispatchEvent(new Event('admin:closeDropdowns'));
-                setForm(initialFormState);
-                setIsCreateOpen(true);
+                // the full form (with Assigned States / cities / zones); the old quick modal had no area fields, so an
+                // admin made there was not limited to any state
+                navigate('/admin/management/admins/create');
               }}
               className="admin-btn-primary h-10 gap-2 !bg-[#FFC400] !text-[#0B1220] hover:brightness-95"
             >

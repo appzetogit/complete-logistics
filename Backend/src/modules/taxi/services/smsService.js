@@ -3,16 +3,17 @@ import { ApiError } from '../../../utils/ApiError.js';
 import { AdminBusinessSetting } from '../admin/models/AdminBusinessSetting.js';
 
 const SMS_INDIA_HUB_ENDPOINT = 'http://cloud.smsindiahub.in/api/mt/SendSMS';
-// The OTP message must match the registered DLT template word for word (template 1007282516644508833,
-// sender BGADEC): only the ##var## slots change (app name, OTP) and ##sender## becomes the sender header.
-// Operators silently drop anything else. If the registered text changes, set SMS_INDIA_HUB_TEMPLATE_TEXT
-// instead of changing code. A template with three slots gets app name, "powered by" name, OTP.
+// The OTP message must match the registered DLT template word for word (template 1077213090085325073,
+// sender header RENGPL): only the ##var## slot changes (the OTP). Operators silently drop anything else.
+// If the registered text changes, set SMS_INDIA_HUB_TEMPLATE_TEXT instead of changing code. A template with
+// one slot gets the OTP, two slots app name + OTP, three slots app name, "powered by" name, OTP; ##sender##
+// becomes the sender header if the template ends with it.
 const DLT_TEMPLATE_TEXT =
-  'Welcome to the ##var## powered by Appzeto.Your OTP for registration is ##var##.##sender##';
-const DEFAULT_TEMPLATE_ID = '1007282516644508833';
+  'Dear Customer, your Rentol login OTP is ##var##. Valid for 5 minutes. Do not share it with anyone Rentol global';
+const DEFAULT_TEMPLATE_ID = '1077213090085325073';
 const DEFAULT_BRAND_NAME = 'Rentol';
 const DEFAULT_POWERED_BY = 'Rentol Logistics';
-const TEMPLATE_VALID_MINUTES = 10;
+const TEMPLATE_VALID_MINUTES = 5;
 // DLT variables are limited to 30 characters
 const MAX_VAR_LENGTH = 30;
 
@@ -253,7 +254,7 @@ export const sendOtpSms = async ({ phone, otp, purpose = 'otp' }) => {
 
   const config = getSmsIndiaHubConfig();
   if (env.sms.otpExpiryMinutes !== TEMPLATE_VALID_MINUTES) {
-    // the registered template promises "valid for 10 minutes"
+    // the registered template promises "valid for 5 minutes"
     console.warn(`[smsService] OTP_EXPIRY_MINUTES is ${env.sms.otpExpiryMinutes} but the SMS template says ${TEMPLATE_VALID_MINUTES} minutes`);
   }
   const brandName = await getConfiguredBrandName();
@@ -362,6 +363,20 @@ export const sendOtpSms = async ({ phone, otp, purpose = 'otp' }) => {
 
   const parsedFinalResponse = parseProviderResponse(finalResponseText);
   const looksFailed = !delivered || !isSuccessfulProviderResponse(finalResponse, finalResponseText);
+
+  // One line per SMS (no OTP, no key, phone masked) so a message that never arrives can be traced to the
+  // provider's answer. ErrorCode 000 = accepted by the provider; delivery after that is up to DLT / the operator.
+  console.log('[smsService] OTP SMS', JSON.stringify({
+    purpose,
+    to: `******${String(phone || '').replace(/\D/g, '').slice(-4)}`,
+    sender: config.senderId,
+    templateId: config.templateId,
+    accepted: !looksFailed,
+    errorCode: parsedFinalResponse?.ErrorCode ?? null,
+    errorMessage: parsedFinalResponse?.ErrorMessage ?? (parsedFinalResponse ? null : String(finalResponseText || '').slice(0, 120)),
+    jobId: parsedFinalResponse?.JobId ?? null,
+    messageId: parsedFinalResponse?.MessageData?.[0]?.MessageId ?? null,
+  }));
 
   if (looksFailed) {
     throw new ApiError(

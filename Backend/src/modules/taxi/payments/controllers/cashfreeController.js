@@ -1,0 +1,425 @@
+import mongoose from 'mongoose';
+import { ApiError } from '../../../../utils/ApiError.js';
+import { Ride } from '../../user/models/Ride.js';
+import { User } from '../../user/models/User.js';
+import { UserWallet } from '../../user/models/UserWallet.js';
+import { Driver } from '../../driver/models/Driver.js';
+import { serializeDriverWallet } from '../../driver/services/walletService.js';
+import { getWalletSettings } from '../../services/appSettingsService.js';
+import { getRideDetails } from '../../services/rideService.js';
+import {
+  assertSomethingToPay,
+  buildCompletionAmounts,
+  loadPayableRideForUser,
+  recordOptionalRating,
+  validateRideCompletionFeedback,
+} from '../../user/controllers/rideController.js';
+import { serializeDeliveryRealtime } from '../../user/services/deliveryService.js';
+import { getRemainingFare } from '../../user/services/goodsAdvanceService.js';
+import { startDispatchFlow } from '../../services/dispatchService.js';
+import { buildUserWalletPayload, ensureUserWallet, normalizeMoneyAmount } from '../../user/controllers/userController.js';
+import { PaymentOrder, PAYMENT_ORDER_STATUS } from '../models/PaymentOrder.js';
+import { createDriverPaymentQr, getDriverPaymentQrStatus } from '../../driver/controllers/driverController.js';
+import { findHeldPlanSubscription, loadPurchasablePlan } from '../../user/services/subscriptionService.js';
+import {
+  createGatewayOrder,
+  getBackendOrigin,
+  getCashfreeEnvironment,
+  handleCashfreeWebhook,
+  loadOwnOrder,
+  settlePaymentOrder,
+} from '../services/paymentOrderService.js';
+
+const notifyUrlFor = (req) => `${getBackendOrigin(req)}/api/v1/payments/cashfree/webhook`;
+
+const customerOf = (person) => ({
+  name: person?.name || '',
+  phone: person?.phone || '',
+  email: person?.email || '',
+});
+
+const statusPayload = (settled) => ({
+  status: settled.status,
+  paid: ['applied', 'already_applied'].includes(settled.status),
+  orderId: settled.order.orderId,
+  amount: settled.order.amount,
+});
+
+// ---- rider wallet ----------------------------------------------------------------------------------------------
+
+export const createUserWalletOrder = async (req, res) => {
+  const amount = normalizeMoneyAmount(req.body?.amount);
+  const user = await User.findById(req.auth.sub).select('name phone email').lean();
+  if (!user) throw new ApiError(404, 'User not found');
+
+  const order = await createGatewayOrder({
+    purpose: 'user_wallet_topup',
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    amount,
+    customer: customerOf(user),
+    notifyUrl: notifyUrlFor(req),
+  });
+  res.status(201).json({ success: true, data: order });
+};
+
+export const verifyUserWalletOrder = async (req, res) => {
+  const order = await loadOwnOrder({
+    orderId: req.body?.orderId,
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    purpose: 'user_wallet_topup',
+  });
+  const settled = await settlePaymentOrder(order.orderId);
+  await ensureUserWallet(req.auth.sub);
+  const wallet = await UserWallet.findOne({ userId: req.auth.sub })
+    .select('balance refundWallet heldBalance transactions')
+    .slice('transactions', -10)
+    .lean();
+  res.json({ success: true, data: { ...statusPayload(settled), wallet: buildUserWalletPayload(wallet) } });
+};
+
+// ---- driver wallet ---------------------------------------------------------------------------------------------
+
+const isOn = (value, fallback = true) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  return !['0', 'false', 'off', 'no'].includes(String(value).trim().toLowerCase());
+};
+
+export const createDriverWalletOrder = async (req, res) => {
+  const amount = normalizeMoneyAmount(req.body?.amount);
+  const walletSettings = await getWalletSettings();
+  if (!isOn(walletSettings.show_wallet_feature_for_driver, true)) {
+    throw new ApiError(403, 'Driver wallet is disabled by admin');
+  }
+  const minimum = Math.max(0, Number(walletSettings.minimum_amount_added_to_wallet || 0) || 0);
+  if (minimum > 0 && amount < minimum) {
+    throw new ApiError(400, `amount must be at least ${minimum}`);
+  }
+
+  const driver = await Driver.findById(req.auth.sub).select('name phone email').lean();
+  if (!driver) throw new ApiError(404, 'Driver not found');
+
+  const order = await createGatewayOrder({
+    purpose: 'driver_wallet_topup',
+    ownerType: 'driver',
+    ownerId: req.auth.sub,
+    amount,
+    customer: customerOf(driver),
+    notifyUrl: notifyUrlFor(req),
+  });
+  res.status(201).json({ success: true, data: order });
+};
+
+export const verifyDriverWalletOrder = async (req, res) => {
+  const order = await loadOwnOrder({
+    orderId: req.body?.orderId,
+    ownerType: 'driver',
+    ownerId: req.auth.sub,
+    purpose: 'driver_wallet_topup',
+  });
+  const settled = await settlePaymentOrder(order.orderId);
+  const driver = await Driver.findById(req.auth.sub);
+  res.json({
+    success: true,
+    data: { ...statusPayload(settled), wallet: driver ? await serializeDriverWallet(driver) : null },
+  });
+};
+
+// ---- ride completion payment -----------------------------------------------------------------------------------
+
+export const createRideCompletionOrder = async (req, res) => {
+  const rideId = String(req.params.rideId || '').trim();
+  const { tipAmount } = await validateRideCompletionFeedback({
+    rating: req.body?.rating,
+    tipAmount: req.body?.tipAmount,
+  });
+
+  const ride = await loadPayableRideForUser(rideId, req.auth.sub);
+  const amounts = buildCompletionAmounts(ride, tipAmount);
+  assertSomethingToPay(ride, amounts);
+
+  // A double tap (or reopening the pay sheet) gets the same open order, so the rider can never pay two.
+  const open = ride.riderPaymentOrder;
+  if (open?.orderId) {
+    const existing = await PaymentOrder.findOne({ orderId: open.orderId, gateway: 'cashfree', status: PAYMENT_ORDER_STATUS.CREATED }).lean();
+    if (
+      existing
+      && existing.paymentSessionId
+      && Math.round(existing.amount * 100) === Math.round(amounts.totalCharge * 100)
+      && Math.round(Number(existing.context?.fareDue || 0) * 100) === Math.round(amounts.fareDue * 100)
+      && Math.round(Number(existing.context?.tipAmount || 0) * 100) === Math.round(amounts.tipAmount * 100)
+    ) {
+      res.status(201).json({
+        success: true,
+        data: {
+          orderId: existing.orderId,
+          paymentSessionId: existing.paymentSessionId,
+          amount: existing.amount,
+          currency: 'INR',
+          fare: amounts.fare,
+          fareDue: amounts.fareDue,
+          tipAmount: amounts.tipAmount,
+          totalCharge: amounts.totalCharge,
+          environment: await getCashfreeEnvironment(),
+          reused: true,
+        },
+      });
+      return;
+    }
+  }
+
+  const user = await User.findById(req.auth.sub).select('name phone email').lean();
+  const order = await createGatewayOrder({
+    purpose: 'ride_payment',
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    amount: amounts.totalCharge,
+    customer: customerOf(user),
+    context: { rideId, fareDue: amounts.fareDue, tipAmount: amounts.tipAmount },
+    notifyUrl: notifyUrlFor(req),
+  });
+
+  await Ride.updateOne(
+    { _id: ride._id },
+    {
+      $set: {
+        riderPaymentOrder: {
+          orderId: order.orderId,
+          amountPaise: Math.round(amounts.totalCharge * 100),
+          fareDue: amounts.fareDue,
+          tipAmount: amounts.tipAmount,
+          createdAt: new Date(),
+        },
+      },
+    },
+  );
+
+  res.status(201).json({
+    success: true,
+    data: {
+      ...order,
+      fare: amounts.fare,
+      fareDue: amounts.fareDue,
+      tipAmount: amounts.tipAmount,
+      totalCharge: amounts.totalCharge,
+      reused: false,
+    },
+  });
+};
+
+export const verifyRideCompletionOrder = async (req, res) => {
+  const rideId = String(req.params.rideId || '').trim();
+  const comment = String(req.body?.comment || '');
+  const { rating } = await validateRideCompletionFeedback({ rating: req.body?.rating, tipAmount: 0 });
+  if (!mongoose.isValidObjectId(rideId)) throw new ApiError(404, 'Ride not found');
+
+  const order = await loadOwnOrder({
+    orderId: req.body?.orderId,
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    purpose: 'ride_payment',
+  });
+  // An order opened for one ride can never pay another.
+  if (String(order.context?.rideId || '') !== rideId) {
+    throw new ApiError(400, 'This payment was not made for this ride');
+  }
+
+  const settled = await settlePaymentOrder(order.orderId);
+
+  if (['refunded', 'refund_pending'].includes(settled.status)) {
+    // Paid, but the ride could not use it (already paid, cancelled): it goes back to the rider.
+    throw new ApiError(409, 'This payment could not be used for the ride and is being refunded', {
+      code: 'payment_refunded',
+      status: settled.status,
+    });
+  }
+
+  if (settled.status === 'pending') {
+    res.json({ success: true, data: { ...statusPayload(settled), ride: null } });
+    return;
+  }
+
+  await recordOptionalRating({ rideId, userId: req.auth.sub, rating, comment });
+  res.json({ success: true, data: { ...statusPayload(settled), ride: await getRideDetails(rideId) } });
+};
+
+// ---- goods advance (booking time) ------------------------------------------------------------------------------
+
+const money2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+
+export const createGoodsAdvanceCashfreeOrder = async (req, res) => {
+  const rideId = String(req.body?.rideId || '').trim();
+  const notFound = () => new ApiError(404, 'Goods booking with an advance was not found');
+  if (!mongoose.isValidObjectId(rideId)) throw notFound();
+
+  const ride = await Ride.findOne({ _id: rideId, userId: req.auth.sub, serviceType: 'parcel' }).lean();
+  if (!ride || !ride.goodsAdvance || ride.goodsAdvance.status === 'none') throw notFound();
+  if (ride.goodsAdvance.status !== 'pending' || ride.status !== 'searching') {
+    throw new ApiError(409, 'The advance for this booking is not payable');
+  }
+
+  // the amount is the booking's own advance, never something the app sends
+  const amount = money2(ride.goodsAdvance.amount);
+  const remainingAmount = getRemainingFare(ride);
+
+  // A double tap (or reopening the pay sheet) gets the same open order, so the rider can never pay two.
+  const openId = ride.goodsAdvance.provider === 'cashfree' ? ride.goodsAdvance.providerOrderId : '';
+  if (openId) {
+    const existing = await PaymentOrder.findOne({ orderId: openId, gateway: 'cashfree', purpose: 'goods_advance', status: PAYMENT_ORDER_STATUS.CREATED }).lean();
+    if (existing?.paymentSessionId && Math.round(existing.amount * 100) === Math.round(amount * 100)) {
+      res.status(201).json({
+        success: true,
+        data: { orderId: existing.orderId, paymentSessionId: existing.paymentSessionId, amount: existing.amount, currency: 'INR', environment: await getCashfreeEnvironment(), advanceAmount: amount, remainingAmount, reused: true },
+      });
+      return;
+    }
+  }
+
+  const user = await User.findById(req.auth.sub).select('name phone email').lean();
+  const order = await createGatewayOrder({
+    purpose: 'goods_advance',
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    amount,
+    customer: customerOf(user),
+    context: { rideId },
+    notifyUrl: notifyUrlFor(req),
+  });
+
+  // Only the latest order is the one the booking points at (older ones are still settled by webhook/reconcile).
+  await Ride.updateOne(
+    { _id: ride._id, 'goodsAdvance.status': 'pending' },
+    {
+      $set: { 'goodsAdvance.provider': 'cashfree', 'goodsAdvance.providerOrderId': order.orderId },
+      $addToSet: { 'goodsAdvance.providerOrderIds': order.orderId },
+    },
+  );
+
+  res.status(201).json({ success: true, data: { ...order, advanceAmount: amount, remainingAmount, reused: false } });
+};
+
+export const verifyGoodsAdvanceCashfreeOrder = async (req, res) => {
+  const rideId = String(req.body?.rideId || '').trim();
+  if (!mongoose.isValidObjectId(rideId)) throw new ApiError(404, 'Goods booking with an advance was not found');
+
+  const order = await loadOwnOrder({
+    orderId: req.body?.orderId,
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    purpose: 'goods_advance',
+  });
+  // An order opened for one booking can never pay another.
+  if (String(order.context?.rideId || '') !== rideId) {
+    throw new ApiError(400, 'This payment was not made for this booking');
+  }
+
+  const settled = await settlePaymentOrder(order.orderId);
+
+  if (['refunded', 'refund_pending'].includes(settled.status)) {
+    throw new ApiError(409, 'This booking is no longer open. The payment is being refunded.', {
+      code: 'payment_refunded',
+      status: settled.status,
+    });
+  }
+
+  const detailed = await getRideDetails(rideId);
+  // Idempotent: a no-op if dispatch is already running or the ride was taken.
+  if (settled.status !== 'pending' && detailed.status === 'searching' && !detailed.driverId) {
+    await startDispatchFlow(detailed);
+  }
+  res.json({ success: true, data: { ...statusPayload(settled), delivery: serializeDeliveryRealtime(detailed) } });
+};
+
+// ---- ride pass (subscription) bought online -----------------------------------------------------------------------
+
+export const createSubscriptionOrder = async (req, res) => {
+  const planId = String(req.body?.planId || '').trim();
+  // 400 for a bad id, 404 for a missing / inactive plan; the price is the plan's, never the app's
+  const { plan, amount } = await loadPurchasablePlan(planId);
+
+  if (await findHeldPlanSubscription({ userId: req.auth.sub, planId: String(plan._id) })) {
+    throw new ApiError(409, 'You already have an active pass for this plan', { code: 'ALREADY_PAID' });
+  }
+
+  // A double tap (or reopening the pay sheet) gets the same open order, so the rider is never charged twice.
+  const existing = await PaymentOrder.findOne({
+    gateway: 'cashfree',
+    purpose: 'subscription',
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    status: PAYMENT_ORDER_STATUS.CREATED,
+    'context.planId': String(plan._id),
+    paymentSessionId: { $ne: '' },
+    createdAt: { $gt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+  }).sort({ createdAt: -1 }).lean();
+  if (existing && Math.round(existing.amount * 100) === Math.round(amount * 100)) {
+    res.status(201).json({
+      success: true,
+      data: {
+        orderId: existing.orderId,
+        paymentSessionId: existing.paymentSessionId,
+        environment: await getCashfreeEnvironment(),
+        amount: existing.amount,
+        currency: 'INR',
+        reused: true,
+      },
+    });
+    return;
+  }
+
+  const user = await User.findById(req.auth.sub).select('name phone email').lean();
+  const order = await createGatewayOrder({
+    purpose: 'subscription',
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    amount,
+    customer: customerOf(user),
+    context: { planId: String(plan._id) },
+    notifyUrl: notifyUrlFor(req),
+  });
+  res.status(201).json({ success: true, data: { ...order, reused: false } });
+};
+
+export const verifySubscriptionOrder = async (req, res) => {
+  const order = await loadOwnOrder({
+    orderId: req.body?.orderId,
+    ownerType: 'user',
+    ownerId: req.auth.sub,
+    purpose: 'subscription',
+  });
+  // 'pending' is normal right after checkout closes (a UPI collect takes a while): the app polls this call.
+  const settled = await settlePaymentOrder(order.orderId);
+
+  if (['refunded', 'refund_pending'].includes(settled.status)) {
+    throw new ApiError(409, 'This payment could not be used for the pass and is being refunded', {
+      code: 'payment_refunded',
+      status: settled.status,
+    });
+  }
+  res.json({ success: true, data: statusPayload(settled) });
+};
+
+// ---- driver collect (QR at the drop) -----------------------------------------------------------------------------
+
+// The rideId comes from the path; the amount is never taken from the request.
+export const createDriverCollectOrder = (req, res) => {
+  req.body = { ...(req.body || {}), rideId: req.params.rideId };
+  return createDriverPaymentQr(req, res);
+};
+
+export const getDriverCollectStatus = (req, res) => {
+  req.query = { ...(req.query || {}), rideId: req.params.rideId };
+  return getDriverPaymentQrStatus(req, res);
+};
+
+// ---- webhook ---------------------------------------------------------------------------------------------------
+
+export const cashfreeWebhook = async (req, res) => {
+  const result = await handleCashfreeWebhook({
+    rawBody: req.rawBody,
+    signature: String(req.get('x-webhook-signature') || ''),
+    timestamp: String(req.get('x-webhook-timestamp') || ''),
+  });
+  res.json({ success: true, ...result });
+};

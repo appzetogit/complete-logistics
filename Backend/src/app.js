@@ -1,9 +1,12 @@
+// must be first: registers the admin-scope plugin before any model is compiled
+import './modules/taxi/admin/services/adminScopeMongoose.js';
 import cors from 'cors';
 import express from 'express';
 import morgan from 'morgan';
 import { env } from './config/env.js';
 import { errorHandler, notFoundHandler } from './modules/taxi/middlewares/errorMiddleware.js';
 import { taxiRouter } from './modules/taxi/routes/index.js';
+import { referralLinkRouter } from './modules/taxi/referral/routes/referralRoutes.js';
 
 export const createApp = () => {
   const app = express();
@@ -12,7 +15,9 @@ app.use(
   cors({
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    // x-admin-state: the admin panel's state selector (state-wise view); without it the browser blocks every admin request
+    // once a state is picked.
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-state'],
   })
 );
   app.use(express.json({
@@ -21,7 +26,7 @@ app.use(
     // (goods advance: /deliveries/advance/razorpay/webhook, ride payments: /rides/payments/razorpay/webhook).
     verify: (req, _res, buf) => {
       const url = String(req.originalUrl || '');
-      if (url.includes('/advance/razorpay/webhook') || url.includes('/rides/payments/razorpay/webhook')) {
+      if (url.includes('/advance/razorpay/webhook') || url.includes('/rides/payments/razorpay/webhook') || url.includes('/payments/cashfree/webhook')) {
         req.rawBody = buf;
       }
     },
@@ -34,6 +39,9 @@ app.use(
   app.get('/health', (_req, res) => {
     res.json({ success: true, message: 'Taxi backend is healthy' });
   });
+
+  // The shared referral link (https://<domain>/r/<code>) lives at the site root, not under /api.
+  app.use(referralLinkRouter);
 
   // Keep both mounts during integration so existing clients using /api or /api/v1 continue to work.
   app.use('/api', taxiRouter);

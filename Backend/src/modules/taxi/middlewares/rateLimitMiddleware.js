@@ -327,6 +327,17 @@ export const paymentConfirmRateLimit = createRateLimitMiddleware({
   message: 'Too many payment confirmations. Please try again shortly.',
 });
 
+// A payment that is still pending is polled by the app every 3 seconds for up to 90 seconds (30 calls per attempt,
+// ride pass on Cashfree). The shared confirm limit (60 per 15 minutes) would block a second attempt, so this one is
+// roomier. Still per rider, and the call is cheap and idempotent.
+export const paymentPollRateLimit = createRateLimitMiddleware({
+  scope: 'payment_poll',
+  max: 240,
+  windowMs: 15 * 60 * 1000,
+  mode: 'auth_or_ip',
+  message: 'Too many payment status checks. Please try again shortly.',
+});
+
 // The all-types summary replaces one call per vehicle type: counted per logged-in rider, not per network
 // (many riders share a mobile carrier IP). The app refreshes every 12-15 s, about 5 calls a minute.
 export const availableDriversSummaryRateLimit = createRateLimitMiddleware({
@@ -343,4 +354,21 @@ export const availableDriversRateLimit = createRateLimitMiddleware({
   windowMs: 60 * 1000,
   mode: 'ip',
   message: 'Too many driver availability requests. Please try again later.',
+});
+
+// Opening a shared referral link (public) and claiming its token from the app.
+export const referralLinkRateLimit = createRateLimitMiddleware({
+  scope: 'referral_link',
+  max: 60,
+  windowMs: 10 * 60 * 1000,
+  mode: 'ip',
+  message: 'Too many referral link requests. Please try again later.',
+});
+
+export const referralAttributeRateLimit = createRateLimitMiddleware({
+  scope: 'referral_attribute',
+  max: 30,
+  windowMs: 10 * 60 * 1000,
+  mode: 'ip',
+  message: 'Too many referral requests. Please try again later.',
 });

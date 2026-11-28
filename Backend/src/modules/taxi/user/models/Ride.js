@@ -66,6 +66,14 @@ const rideSchema = new mongoose.Schema(
         default: null,
       },
     },
+    // The catalog name of the booked vehicle ('Ambulance', 'Tata Ace').
+    // `vehicleIconType` alone cannot tell an ambulance from a cab: the
+    // catalog files both under icon type `car`.
+    vehicleType: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     vehicleIconType: {
       type: String,
       default: '',
@@ -654,6 +662,13 @@ const rideSchema = new mongoose.Schema(
       ref: 'TaxiServiceLocation',
       default: null,
     },
+    // The city of the pickup. Only drives the state-wise admin view (never dispatch or pricing, unlike service_location_id).
+    area_location_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'TaxiServiceLocation',
+      default: null,
+      index: true,
+    },
     transport_type: {
       type: String,
       enum: ['taxi', 'delivery', 'intercity', 'all'],
@@ -761,6 +776,9 @@ const rideSchema = new mongoose.Schema(
         {
           _id: false,
           paymentId: { type: String, default: '' },
+          // which gateway took the payment, and (Cashfree) the order the refund is made against
+          provider: { type: String, default: '' },
+          orderId: { type: String, default: '' },
           amount: { type: Number, default: 0 },
           refundId: { type: String, default: '' },
           // pending -> processed (Razorpay accepted) | failed (retry in Admin > Payment Refunds) | resolved_manually

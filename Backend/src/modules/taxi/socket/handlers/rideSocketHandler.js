@@ -2,7 +2,7 @@ import { normalizePoint } from '../../../../utils/geo.js';
 import { RIDE_LIVE_STATUS } from '../../constants/index.js';
 import { emitRideStateToParticipants, getDriverRoom } from '../../services/dispatchService.js';
 import {
-  appendRideMessage,
+  appendRideMessageWithParticipants,
   getActiveRideForIdentity,
   getRideDetails,
   getRideRoom,
@@ -15,6 +15,7 @@ import {
   mirrorRideDriverLocation,
   mirrorRideRealtimeState,
 } from '../../services/rideRealtimeSyncService.js';
+import { notifyRideMessageRecipient } from '../../services/rideChatPushService.js';
 import { authorizeRideRoomAccess } from '../middleware/rideRoomAuth.js';
 import { SOCKET_EVENTS } from '../events.js';
 import { clearDriverRoute, updateDriverRoute } from '../services/driverRouteService.js';
@@ -246,7 +247,7 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
     onAsync(socket, async ({ rideId, message }) => {
       await authorizeRideRoomAccess({ socket, rideId });
 
-      const savedMessage = await appendRideMessage({
+      const { message: savedMessage, participants } = await appendRideMessageWithParticipants({
         rideId,
         role: socket.auth.role,
         senderId: socket.auth.sub,
@@ -254,6 +255,12 @@ export const registerRideSocketHandlers = ({ io, socket, onAsync }) => {
       });
 
       io.to(getRideRoom(rideId)).emit(SOCKET_EVENTS.RIDE_MESSAGE_NEW, savedMessage);
+
+      // The other person may have the app in the background or closed: tell them with a push. A failed push
+      // never fails the chat message.
+      notifyRideMessageRecipient({ savedMessage, participants }).catch((error) => {
+        console.error('[ride-chat] push failed', rideId, error?.message || error);
+      });
     }),
   );
 };

@@ -5,6 +5,7 @@ import { RIDE_STATUS } from '../../constants/index.js';
 import { applyDriverWalletAdjustment } from '../../driver/services/walletService.js';
 import { getTransportRideSettings } from '../../services/transportSettingsService.js';
 import { razorpayRequest, resolveRazorpayCredentials, signaturesMatch } from '../../services/razorpayClient.js';
+import { createCashfreeRefund, fetchCashfreeRefund } from '../../services/cashfreeClient.js';
 import { Ride } from '../models/Ride.js';
 import { UserWallet } from '../models/UserWallet.js';
 
@@ -232,6 +233,28 @@ export const refundRazorpayPayment = async ({ paymentId, amount, notes = {}, dep
     body: { amount: Math.round(roundMoney(amount) * 100), notes },
     keyId,
     keySecret,
+  });
+};
+
+/** Refund to the original payment, through whichever gateway took it. One refund id per advance: a retry never refunds twice. */
+const refundAdvanceToSource = async ({ ride, amount, reason, deps = {} }) => {
+  if (ride.goodsAdvance.provider === 'cashfree') {
+    const orderId = ride.goodsAdvance.providerOrderId;
+    const refundId = `rfga_${orderId}`;
+    try {
+      await (deps.createCashfreeRefund || createCashfreeRefund)({ orderId, refundId, amount: roundMoney(amount), note: reason || 'goods advance refund' });
+    } catch (error) {
+      // a repeated refund id is an error at Cashfree: if it exists, an earlier attempt already went through
+      const existing = await (deps.fetchCashfreeRefund || fetchCashfreeRefund)({ orderId, refundId }).catch(() => null);
+      if (!existing?.refund_id) throw error;
+    }
+    return;
+  }
+  await refundRazorpayPayment({
+    paymentId: ride.goodsAdvance.providerPaymentId,
+    amount,
+    notes: { rideId: String(ride._id), reason },
+    deps,
   });
 };
 
@@ -648,7 +671,7 @@ export const payGoodsAdvanceWithWallet = async ({ rideId, userId, deps = {} }) =
 /** 'source' only when asked for AND the advance was paid through Razorpay; otherwise one of the wallets. */
 const resolveRefundDestination = (ride, config) => {
   const canRefundToSource =
-    ride.goodsAdvance.provider === 'razorpay' && Boolean(ride.goodsAdvance.providerPaymentId);
+    ['razorpay', 'cashfree'].includes(ride.goodsAdvance.provider) && Boolean(ride.goodsAdvance.providerPaymentId);
 
   if (config.refundTo === 'source' && canRefundToSource) {
     return 'source';
@@ -699,12 +722,7 @@ export const refundGoodsAdvance = async ({ rideId, reason = '', deps = {} }) => 
     }
 
     try {
-      await refundRazorpayPayment({
-        paymentId: claimed.goodsAdvance.providerPaymentId,
-        amount,
-        notes: { rideId: String(claimed._id), reason },
-        deps,
-      });
+      await refundAdvanceToSource({ ride: claimed, amount, reason, deps });
     } catch (error) {
       await RideModel.updateOne(
         { _id: claimed._id, 'goodsAdvance.status': 'refunded' },
@@ -777,6 +795,31 @@ const loadConfigOrDefaults = async (deps) => {
     console.error('Goods advance settings could not be loaded; using the defaults', error?.message || error);
     return { cancelKeepPercent: DEFAULT_CANCEL_KEEP_PERCENT, refundTo: 'refund_wallet' };
   }
+};
+
+/**
+ * What a rider cancel would do to a PAID goods advance, without changing anything. Uses the same split and
+ * destination rules as forfeitGoodsAdvance, so the preview always matches the real cancel.
+ * Returns zeros when the ride has no paid advance.
+ */
+export const previewAdvanceOnRiderCancel = async (ride, deps = {}) => {
+  if (ride?.serviceType !== 'parcel' || ride?.goodsAdvance?.status !== 'paid') {
+    return { keptAmount: 0, refundAmount: 0, refundDestination: '', keepPercent: 0 };
+  }
+
+  const config = await loadConfigOrDefaults(deps);
+  const { keptAmount, refundAmount } = splitAdvanceOnRiderCancel({
+    fare: ride.fare,
+    advanceAmount: ride.goodsAdvance.amount,
+    keepPercent: config.cancelKeepPercent,
+  });
+
+  return {
+    keptAmount,
+    refundAmount,
+    refundDestination: refundAmount > 0 ? resolveRefundDestination(ride, config) : '',
+    keepPercent: config.cancelKeepPercent,
+  };
 };
 
 export const forfeitGoodsAdvance = async ({ rideId, creditDriver = false, deps = {} }) => {
@@ -866,12 +909,7 @@ export const forfeitGoodsAdvance = async ({ rideId, creditDriver = false, deps =
     }
 
     try {
-      await refundRazorpayPayment({
-        paymentId: claimed.goodsAdvance.providerPaymentId,
-        amount: refundAmount,
-        notes: { rideId: String(claimed._id), reason: 'cancelled_by_rider' },
-        deps,
-      });
+      await refundAdvanceToSource({ ride: claimed, amount: refundAmount, reason: 'cancelled_by_rider', deps });
     } catch (error) {
       await RideModel.updateOne(
         { _id: claimed._id, 'goodsAdvance.status': 'forfeited' },

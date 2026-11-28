@@ -1,6 +1,7 @@
 import { ApiError } from '../../../utils/ApiError.js';
 import { normalizePoint } from '../../../utils/geo.js';
 import { DISPATCH_TOP_DRIVERS } from '../constants/index.js';
+import { hasActiveCustomRadius } from './driverRadius.js';
 import { Vehicle } from '../admin/models/Vehicle.js';
 import { Driver } from '../driver/models/Driver.js';
 import { Zone } from '../driver/models/Zone.js';
@@ -302,7 +303,7 @@ const findDriversForZone = async ({
     vehicleTypeKeys,
   });
   const selectedFields =
-    'name phone socketId vehicleTypeId vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel rating location heading zoneId service_location_id isOnline isOnRide routeBooking';
+    'name phone socketId vehicleTypeId vehicleType vehicleIconType vehicleNumber vehicleColor vehicleMake vehicleModel rating location heading zoneId service_location_id isOnline isOnRide routeBooking serviceRadius isCustomRadius';
 
   const [liveLocationDrivers, routeBookingDrivers] = await Promise.all([
     Driver.find({
@@ -331,11 +332,42 @@ const findDriversForZone = async ({
   ).slice(0, limit);
 };
 
+/*
+ * Per-driver radius. The search itself uses one distance (the dispatch attempt radius), which stays the radius of every
+ * driver without a custom radius. A driver whose own radius is in force (see driverRadius.js) is judged against that
+ * radius instead: the search is widened to the largest allowed radius so such a driver can be found, and each driver is
+ * then kept only when the pickup is inside their own radius. Nobody else's radius is touched.
+ */
+// upper bound on how many nearest drivers one search will look through while custom radii are in play
+const MAX_RADIUS_CANDIDATES = 400;
+
+const keepDriversInsideTheirRadius = ({ drivers, pickupCoords, defaultMaxDistance, driverRadius, limit }) => {
+  if (!driverRadius?.allowCustomRadius) {
+    return drivers;
+  }
+
+  return drivers
+    .filter((driver) => {
+      const coordinates = getDriverMatchCoordinates(driver);
+      if (!coordinates) {
+        return false;
+      }
+
+      const ownRadiusMeters = hasActiveCustomRadius(driver, driverRadius)
+        ? Math.round(Number(driver.serviceRadius) * 1000)
+        : defaultMaxDistance;
+
+      return getDistanceBetweenMeters(pickupCoords, coordinates) <= ownRadiusMeters;
+    })
+    .slice(0, limit);
+};
+
 export const matchDrivers = async (pickupCoords, options = {}) => {
   const coordinates = normalizePoint(pickupCoords, 'pickupCoords');
   const {
     maxDistance = 3000,
     limit = DISPATCH_TOP_DRIVERS,
+    driverRadius = null,
     vehicleTypeId,
     vehicleTypeIds,
     serviceLocationId = null,
@@ -355,23 +387,53 @@ export const matchDrivers = async (pickupCoords, options = {}) => {
   // radius and the cross-zone fallback. Zone membership is still enforced per driver
   // (isDriverWithinMatchedZone); the boundary distance is only reported.
   const effectiveMaxDistance = Math.max(1, Math.round(maxDistance));
+  // with custom radii in play the candidates come from the widest radius a driver may have; over-fetch because some
+  // of the nearest candidates are dropped below for being outside their own (smaller) radius
+  const customRadiiActive = Boolean(driverRadius?.allowCustomRadius);
+  const searchDistance = customRadiiActive
+    ? Math.max(effectiveMaxDistance, Math.round(Number(driverRadius.maxRadius) * 1000))
+    : effectiveMaxDistance;
 
-  let drivers = await findDriversForZone({
-    zoneId: zone?._id || null,
-    serviceLocationId,
-    coordinates,
-    effectiveMaxDistance,
-    limit,
-    normalizedVehicleTypeIds,
-    vehicleTypeKeys,
-    strictZoneOnly,
-  });
-  drivers = filterDriversForMatchedZone({
-    drivers,
-    zone,
-    pickupCoords: coordinates,
-    maxDistance: effectiveMaxDistance,
-  });
+  // The query returns the nearest candidates first, so with custom radii it is asked for more than needed and asked
+  // again with a larger limit when every row came back and still too few drivers were inside their own radius.
+  const collectDrivers = async ({ queryZoneId, filterZone }) => {
+    let fetchLimit = customRadiiActive ? limit * 4 : limit;
+
+    for (;;) {
+      const found = await findDriversForZone({
+        zoneId: queryZoneId,
+        serviceLocationId,
+        coordinates,
+        effectiveMaxDistance: searchDistance,
+        limit: fetchLimit,
+        normalizedVehicleTypeIds,
+        vehicleTypeKeys,
+        strictZoneOnly,
+      });
+      const inZone = filterDriversForMatchedZone({
+        drivers: found,
+        zone: filterZone,
+        pickupCoords: coordinates,
+        maxDistance: searchDistance,
+      });
+      const kept = keepDriversInsideTheirRadius({
+        drivers: inZone,
+        pickupCoords: coordinates,
+        defaultMaxDistance: effectiveMaxDistance,
+        driverRadius,
+        limit,
+      });
+      const saturated = found.length >= fetchLimit;
+
+      if (!customRadiiActive || kept.length >= limit || !saturated || fetchLimit >= MAX_RADIUS_CANDIDATES) {
+        return kept;
+      }
+
+      fetchLimit = Math.min(fetchLimit * 4, MAX_RADIUS_CANDIDATES);
+    }
+  };
+
+  let drivers = await collectDrivers({ queryZoneId: zone?._id || null, filterZone: zone });
 
   const blockedDriverIds = await getDriverIdsBlockedByUpcomingScheduledRides(
     drivers.map((driver) => String(driver?._id || '')),
@@ -379,22 +441,7 @@ export const matchDrivers = async (pickupCoords, options = {}) => {
   drivers = drivers.filter((driver) => !blockedDriverIds.has(String(driver?._id || '')));
 
   if (allowCrossZoneFallback && drivers.length === 0 && zone?._id) {
-    drivers = await findDriversForZone({
-      zoneId: null,
-      serviceLocationId,
-      coordinates,
-      effectiveMaxDistance,
-      limit,
-      normalizedVehicleTypeIds,
-      vehicleTypeKeys,
-      strictZoneOnly,
-    });
-    drivers = filterDriversForMatchedZone({
-      drivers,
-      zone: null,
-      pickupCoords: coordinates,
-      maxDistance: effectiveMaxDistance,
-    });
+    drivers = await collectDrivers({ queryZoneId: null, filterZone: null });
 
     const fallbackBlockedDriverIds = await getDriverIdsBlockedByUpcomingScheduledRides(
       drivers.map((driver) => String(driver?._id || '')),

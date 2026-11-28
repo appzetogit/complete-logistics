@@ -7,6 +7,7 @@ export const ADMIN_PERMISSION_GROUPS = [
       { key: 'chat.view', label: 'Chat' },
       { key: 'promotions.view', label: 'Promotions' },
       { key: 'subadmins.manage', label: 'Subadmins' },
+      { key: 'legal.manage', label: 'Legal & About content' },
     ],
   },
   {

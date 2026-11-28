@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   GoogleMap, 
   MarkerF, 
@@ -69,6 +69,14 @@ const GodsEye = () => {
   const navigate = useNavigate();
   const { isLoaded, loadError } = useBaseGoogleMapsLoader();
   const [mapInstance, setMapInstance] = useState(null);
+  // The map is only placed once (on load, then on the first drivers that arrive). After that the admin is in control:
+  // the 30 s refresh must never pull the view back (center / zoom are NOT controlled props any more).
+  const centeredOnDrivers = useRef(false);
+  const handleMapLoad = useCallback((map) => {
+    map.setCenter(INDIA_CENTER);
+    map.setZoom(12);
+    setMapInstance(map);
+  }, []);
 
   // Data States
   const [drivers, setDrivers] = useState([]);
@@ -244,9 +252,17 @@ const GodsEye = () => {
     }
   };
 
-  const mapCenter = filteredDrivers.length > 0 && controls.autoFollow && selectedDriver
-    ? { lat: Number(selectedDriver.latitude), lng: Number(selectedDriver.longitude) }
-    : (filteredDrivers.length > 0 ? { lat: Number(filteredDrivers[0].latitude), lng: Number(filteredDrivers[0].longitude) } : INDIA_CENTER);
+  // first time there are drivers to show: start the view on them (once)
+  const hasDriversToShow = filteredDrivers.length > 0;
+  useEffect(() => {
+    if (!mapInstance || !hasDriversToShow || centeredOnDrivers.current) return;
+    const first = filteredDrivers.find((d) => Number.isFinite(Number(d.latitude)) && Number.isFinite(Number(d.longitude)));
+    if (first) {
+      mapInstance.setCenter({ lat: Number(first.latitude), lng: Number(first.longitude) });
+      centeredOnDrivers.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapInstance, hasDriversToShow]);
 
   return (
     <div className={`flex flex-col h-screen bg-gray-50 font-sans ${controls.fullscreen ? 'fixed inset-0 z-50' : ''}`}>
@@ -428,10 +444,8 @@ const GodsEye = () => {
                ) : HAS_VALID_GOOGLE_MAPS_KEY && isLoaded ? (
                   <GoogleMap
                      mapContainerStyle={{ width: '100%', height: '100%' }} 
-                     center={mapCenter} 
-                     zoom={12} 
                      options={mapOptions}
-                     onLoad={setMapInstance}
+                     onLoad={handleMapLoad}
                      onClick={() => setSelectedDriver(null)}
                   >
                      {controls.traffic && <TrafficLayer />}

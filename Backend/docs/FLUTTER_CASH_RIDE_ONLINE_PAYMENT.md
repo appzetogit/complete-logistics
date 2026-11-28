@@ -191,7 +191,7 @@ When the *(new UI)* "Rider will pay online" option exists, send `cashReceived: f
 **Rules the server applies:**
 - `cashReceived` wins over `paymentMethod`.
 - Without `cashReceived`, `paymentMethod: 'cash'` means cash received.
-- It only applies to **cash** rides.
+- It applies to **cash** rides. An **online** ride only converts on an explicit `cashReceived: true` (see `FLUTTER_ONLINE_RIDE_CASH_RECEIVED.md`).
 - If the rider already paid online, the cash flag is ignored.
 - Sending `paymentMethod: 'online'` **never** changes anything.
 

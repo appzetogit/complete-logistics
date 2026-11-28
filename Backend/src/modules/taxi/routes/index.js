@@ -6,6 +6,8 @@ import { supportModuleRouter } from '../support/routes/index.js';
 import { userModuleRouter } from '../user/routes/index.js';
 import { commonRouter } from '../common/routes/commonRoutes.js';
 import { careerRouter } from '../career/routes/careerRoutes.js';
+import { referralRouter } from '../referral/routes/referralRoutes.js';
+import { cashfreePaymentRouter } from '../payments/routes/cashfreeRoutes.js';
 
 export const taxiRouter = Router();
 
@@ -16,3 +18,5 @@ taxiRouter.use(driverModuleRouter);
 taxiRouter.use(supportModuleRouter);
 taxiRouter.use(commonRouter);
 taxiRouter.use(careerRouter);
+taxiRouter.use(referralRouter);
+taxiRouter.use(cashfreePaymentRouter);

@@ -1,3 +1,4 @@
+import StateSelector from './StateSelector.jsx';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -577,14 +578,14 @@ const ModeSwitcher = ({ mode, setMode }) => {
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="group flex items-center gap-2 rounded border border-slate-200 bg-white px-2.5 py-1.5 transition-all hover:border-slate-300 hover:bg-slate-50"
+        className="group flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 transition-all hover:border-slate-300 hover:bg-slate-50"
       >
-        <div className="flex h-7 w-7 items-center justify-center rounded bg-slate-900 text-white shrink-0">
+        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-900 text-white shrink-0">
           {active.id === ADMIN_MODE ? <Monitor size={14} strokeWidth={2} /> : <Briefcase size={14} strokeWidth={2} />}
         </div>
         <div className="text-left hidden sm:flex flex-col justify-center">
-          <p className="text-[12px] font-semibold text-slate-900 whitespace-nowrap">{active.label}</p>
-          <p className="text-[10px] font-medium text-slate-500 whitespace-nowrap">{active.subtitle}</p>
+          <p className="text-[13px] leading-4 font-semibold text-slate-900 whitespace-nowrap">{active.label}</p>
+          <p className="text-[11px] leading-4 font-medium text-slate-500 whitespace-nowrap">{active.subtitle}</p>
         </div>
         <ChevronDown size={14} className={`text-slate-400 ml-1 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} />
       </button>
@@ -832,6 +833,7 @@ const AdminLayout = () => {
             label: 'Admin Management',
             subItems: [
               { label: 'Admins', path: '/admin/management/admins', permission: 'subadmins.manage' },
+              { label: 'States', path: '/admin/management/states', permission: 'subadmins.manage' },
             ],
           },
           { icon: Home, label: 'Dashboard', path: '/admin/dashboard', permission: 'dashboard.view' },
@@ -1060,6 +1062,7 @@ const AdminLayout = () => {
               // { label: 'Notification Channel', path: '/admin/settings/third-party/notification-channel' },
             ],
           },
+          { icon: FileText, label: 'Legal & About Pages', path: '/admin/cms', permission: 'legal.manage' },
           // {
           //   icon: PlusCircle,
           //   label: 'Addons',
@@ -1500,6 +1503,7 @@ const AdminLayout = () => {
     socketService.disconnect();
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminInfo');
+    localStorage.removeItem('adminSelectedState');
     setIsUserMenuOpen(false);
     navigate('/admin/login');
   };
@@ -1600,17 +1604,17 @@ const AdminLayout = () => {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[#f0f4f8]">
-        <header className="sticky top-0 z-40 flex h-[68px] items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm">
+        <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm">
           <div className="flex flex-1 items-center gap-3">
             <div className="h-4 w-1 rounded-full bg-slate-900" />
-            <h2 className="text-lg font-bold tracking-tight text-slate-900 font-serif">{pageTitle}</h2>
+            <h2 className="admin-header-title text-slate-900">{pageTitle}</h2>
           </div>
 
           <div className="flex flex-1 justify-center">
             <button
               type="button"
               onClick={() => setIsSearchOpen((current) => !current)}
-              className="group flex w-[260px] items-center gap-2 px-3 py-1.5 rounded border border-slate-200 bg-slate-50 text-slate-400 transition-all hover:border-slate-300 hover:bg-white text-xs font-medium"
+              className="group flex h-10 w-[280px] items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-slate-400 transition-all hover:border-slate-300 hover:bg-slate-50 text-[13px] font-medium"
             >
               <Search size={14} className="text-slate-400 group-hover:text-slate-500" />
               <span className="flex-1 text-left text-slate-500">Search dashboard...</span>
@@ -1623,11 +1627,11 @@ const AdminLayout = () => {
               <button
                 type="button"
                 onClick={() => setIsNotificationsOpen((current) => !current)}
-                className="relative group flex items-center justify-center rounded h-9 w-9 text-slate-400 transition-all hover:bg-slate-50 hover:text-slate-900"
+                className="relative group flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition-all hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
               >
-                <Bell size={20} strokeWidth={2.5} />
+                <Bell size={18} strokeWidth={2} />
                 {totalNotificationItems > 0 ? (
-                  <span className="absolute right-2 top-2 inline-flex h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white animate-pulse" />
+                  <span className="absolute right-2.5 top-2.5 inline-flex h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" />
                 ) : null}
               </button>
 
@@ -1901,21 +1905,23 @@ const AdminLayout = () => {
               </div>
             </div>
 
+            {/* riders are not state-wise: the User List always shows every user, so no state picker there */}
+            {!/^\/admin\/users(\/|$)/.test(location.pathname) && <StateSelector />}
             <ModeSwitcher mode={mode} setMode={setMode} />
             <div className="h-6 w-px bg-slate-200 mx-1"></div>
 
             <div ref={userMenuRef} className="relative flex items-center">
               <button
                 type="button"
-                className="group flex items-center gap-2 rounded border border-transparent px-2 py-1.5 transition-all hover:bg-slate-50"
+                className="group flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 transition-all hover:border-slate-300 hover:bg-slate-50"
                 onClick={() => setIsUserMenuOpen((current) => !current)}
               >
-                <div className="flex h-7 w-7 items-center justify-center rounded bg-slate-900 text-white shrink-0">
+                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-900 text-white shrink-0">
                   <Users size={14} strokeWidth={2} />
                 </div>
                 <div className="text-left hidden sm:flex flex-col justify-center">
-                  <p className="text-[12px] font-semibold text-slate-900 whitespace-nowrap">{adminProfile?.name || 'Terminal'}</p>
-                  <p className="text-[10px] font-medium text-slate-500 whitespace-nowrap">
+                  <p className="text-[13px] leading-4 font-semibold text-slate-900 whitespace-nowrap">{adminProfile?.name || 'Terminal'}</p>
+                  <p className="text-[11px] leading-4 font-medium text-slate-500 whitespace-nowrap">
                     {adminProfile?.admin_type === 'subadmin' ? adminProfile?.role || 'Access Restricted' : 'Master Authority'}
                   </p>
                 </div>

@@ -1,7 +1,7 @@
 import { asyncHandler } from '../../../../utils/asyncHandler.js';
 import { uploadDataUrlToCloudinary } from '../../../../utils/cloudinaryUpload.js';
 import { env } from '../../../../config/env.js';
-import { getReferralSettings, getReferralTranslationContent } from '../../admin/services/adminService.js';
+import { getPublicReferralSettings, getReferralTranslationContent } from '../../admin/services/adminService.js';
 import { getPublicActivePaymentGateway } from '../../services/paymentGatewayService.js';
 import { buildPaymentRequestContext, logPaymentDiagnostic } from '../../services/paymentDiagnostics.js';
 
@@ -48,6 +48,30 @@ export const getSupportContact = asyncHandler(async (_req, res) => {
     return res.json({ success: true, data: await getSupportSettings() });
 });
 
+// About / Privacy / Terms / Refund ... written in the admin panel. Public: the login screens show them before sign-in.
+export const listLegalContent = asyncHandler(async (req, res) => {
+    const { listPublishedLegalDocuments } = await import('../../services/legalContentService.js');
+    const data = await listPublishedLegalDocuments({ audience: req.query?.audience, lang: req.query?.lang });
+    res.set('Cache-Control', 'public, max-age=300');
+    return res.json({ success: true, data: { results: data } });
+});
+
+export const getLegalContent = asyncHandler(async (req, res) => {
+    const { getPublishedLegalDocument } = await import('../../services/legalContentService.js');
+    const data = await getPublishedLegalDocument({
+        type: req.params.type,
+        audience: req.query?.audience,
+        lang: req.query?.lang,
+    });
+
+    if (!data) {
+        return res.status(404).json({ success: false, message: 'Document not found' });
+    }
+
+    res.set('Cache-Control', 'public, max-age=300');
+    return res.json({ success: true, data });
+});
+
 export const getReferralTranslation = asyncHandler(async (req, res) => {
     const languageCode = String(req.query?.language || req.query?.lang || '').trim().toLowerCase();
     const data = await getReferralTranslationContent(languageCode);
@@ -60,7 +84,7 @@ export const getReferralTranslation = asyncHandler(async (req, res) => {
 
 export const getReferralSettingsContent = asyncHandler(async (req, res) => {
     const type = String(req.query?.type || '').trim().toLowerCase();
-    const data = await getReferralSettings(type || undefined);
+    const data = await getPublicReferralSettings(['user', 'driver'].includes(type) ? type : undefined);
 
     return res.json({
         success: true,

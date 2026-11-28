@@ -47,6 +47,15 @@ const adminSchema = new mongoose.Schema(
       ],
       default: [],
     },
+    state_ids: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'TaxiState',
+        },
+      ],
+      default: [],
+    },
     zone_ids: {
       type: [
         {

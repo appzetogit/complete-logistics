@@ -20,6 +20,15 @@ const PAYMENT_GATEWAY_SPECS = {
       production: ['merchant_id', 'salt_key', 'salt_index'],
     },
   },
+  cashfree: {
+    label: 'Cashfree',
+    environmentKey: 'environment',
+    liveValue: 'live',
+    credentialsByEnvironment: {
+      test: ['test_app_id', 'test_secret_key'],
+      live: ['live_app_id', 'live_secret_key'],
+    },
+  },
   stripe: {
     label: 'Stripe',
     environmentKey: 'environment',
@@ -164,19 +173,44 @@ export const getPublicActivePaymentGateway = async () => {
     activeGateway: {
       slug: activeGateway.slug,
       label: activeGateway.label,
-      supportsWalletTopUp: ['razor_pay', 'phone_pay'].includes(activeGateway.slug),
+      supportsWalletTopUp: ['razor_pay', 'phone_pay', 'cashfree'].includes(activeGateway.slug),
+      // Cashfree is wired for wallet top-up and ride payment only (rental advance is a later phase).
       supportsRentalAdvance: ['razor_pay', 'phone_pay'].includes(activeGateway.slug),
       walletTopUpMode:
         activeGateway.slug === 'razor_pay'
           ? 'razorpay_checkout'
           : activeGateway.slug === 'phone_pay'
             ? 'phonepe_redirect'
-            : 'unsupported',
+            : activeGateway.slug === 'cashfree'
+              ? 'cashfree_checkout'
+              : 'unsupported',
       rentalAdvanceMode:
         activeGateway.slug === 'razor_pay'
           ? 'razorpay_checkout'
           : activeGateway.slug === 'phone_pay'
             ? 'phonepe_redirect'
+            : 'unsupported',
+      // Ride pass (subscription) purchase online. The rider app switches on this field: missing = Razorpay.
+      subscriptionMode:
+        activeGateway.slug === 'razor_pay'
+          ? 'razorpay_checkout'
+          : activeGateway.slug === 'cashfree'
+            ? 'cashfree_checkout'
+            : 'unsupported',
+      // Driver "Collect payment" QR at the drop: Cashfree only (the Razorpay version is switched off)
+      driverCollectMode: activeGateway.slug === 'cashfree' ? 'cashfree_qr' : 'unsupported',
+      // Goods booking advance (paid when the delivery is booked)
+      goodsAdvanceMode:
+        activeGateway.slug === 'razor_pay'
+          ? 'razorpay_checkout'
+          : activeGateway.slug === 'cashfree'
+            ? 'cashfree_checkout'
+            : 'unsupported',
+      ridePaymentMode:
+        activeGateway.slug === 'razor_pay'
+          ? 'razorpay_checkout'
+          : activeGateway.slug === 'cashfree'
+            ? 'cashfree_checkout'
             : 'unsupported',
     },
   };
@@ -228,6 +262,15 @@ export const resolveConfiguredGatewayCredentials = async (gatewayKey) => {
     }
 
     return { keyId, keySecret, environment };
+  }
+
+  if (gatewayKey === 'cashfree') {
+    const appId = normalizeString(isLive ? validatedGateway.live_app_id : validatedGateway.test_app_id);
+    const secretKey = normalizeString(isLive ? validatedGateway.live_secret_key : validatedGateway.test_secret_key);
+    if (appId.toLowerCase().includes('demo') || secretKey.toLowerCase().includes('demo')) {
+      throw new ApiError(500, 'Cashfree keys are demo placeholders. Configure real keys in Admin > Payment Gateways');
+    }
+    return { appId, secretKey, environment, isLive };
   }
 
   if (gatewayKey === 'phone_pay') {

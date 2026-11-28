@@ -120,6 +120,8 @@ import {
 import { triggerDriverSosAlert } from '../../safety/controllers/safetyController.js';
 import { getOpenRideOffersForDriver } from '../../services/dispatchService.js';
 import { getDriverPerformance } from '../services/driverPerformanceService.js';
+import { getMyReferral, getMyReferralHistory } from '../../referral/controllers/referralController.js';
+import { getServiceRadius, updateServiceRadius } from '../controllers/driverRadiusController.js';
 
 export const driverRouter = Router();
 
@@ -174,6 +176,19 @@ driverRouter.get(
   asyncHandler(async (req, res) => {
     res.json({ success: true, data: await getDriverPerformance(req.auth.sub) });
   }),
+);
+// Hybrid radius: the signed-in driver reads and sets their own service radius (limits come from the Admin settings)
+driverRouter.get("/service-radius", authenticate(["driver"]), asyncHandler(getServiceRadius));
+driverRouter.patch("/service-radius", authenticate(["driver"]), asyncHandler(updateServiceRadius));
+driverRouter.get(
+  "/referrals/me",
+  authenticate(["driver"], { allowPending: true }),
+  asyncHandler(getMyReferral("driver")),
+);
+driverRouter.get(
+  "/referrals/history",
+  authenticate(["driver"], { allowPending: true }),
+  asyncHandler(getMyReferralHistory("driver")),
 );
 driverRouter.get(
   "/me",

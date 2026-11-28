@@ -152,6 +152,13 @@ const userSchema = new mongoose.Schema(
         default: null,
       },
     },
+    // The city this rider belongs to (set from the pickup of their first ride). Only drives the state-wise admin view.
+    area_location_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'TaxiServiceLocation',
+      default: null,
+      index: true,
+    },
     // Tokens issued before this moment are no longer accepted (set by logout).
     tokensRevokedAt: {
       type: Date,
@@ -184,6 +191,12 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '',
       trim: true,
+    },
+    // Longer codes this account used before it got its short one: still accepted when someone enters an old code or opens an old link.
+    legacyReferralCodes: {
+      type: [String],
+      default: [],
+      index: true,
     },
     referredBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -297,6 +310,11 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.index({ phone: 1 }, { unique: true });
+// A referral code identifies one user. Empty codes (not issued yet) are ignored by the index.
+userSchema.index(
+  { referralCode: 1 },
+  { unique: true, partialFilterExpression: { referralCode: { $type: 'string', $gt: '' } } },
+);
 userSchema.index({ deletedAt: 1, createdAt: -1 });
 userSchema.index({ name: 1 });
 userSchema.index({ email: 1 });

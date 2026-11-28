@@ -17,6 +17,7 @@ import {
   getRideRoom,
   listRideHistoryForIdentity,
   audienceForRole,
+  normalizeAllowedRidePaymentMethods,
   serializeRideRealtime,
 } from '../../services/rideService.js';
 
@@ -355,6 +356,11 @@ export const quoteDeliveryFare = async ({
     advanceOptions: coveredBy ? [] : getAdvanceOptions(advanceConfig),
     // Rider cancels after paying: this % of the fare is kept, the rest of the advance is refunded.
     advanceCancelKeepPercent: coveredBy ? 0 : advanceConfig.cancelKeepPercent,
+    // cash / online / wallet the admin allows for this vehicle: from the very Set Price rule that priced this quote
+    // (the booking uses the same rule), so the app shows only these options. Omitted when no Set Price exists.
+    ...(resolvedPricing.rule
+      ? { allowedPaymentMethods: normalizeAllowedRidePaymentMethods(resolvedPricing.rule.payment_type) }
+      : {}),
   };
 };
 

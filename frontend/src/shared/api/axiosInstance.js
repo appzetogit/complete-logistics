@@ -364,6 +364,17 @@ const isStaleAuthMessage = (message = '') => {
 // Request Interceptor: Attach Auth Token automatically
 api.interceptors.request.use(
   (config) => {
+    // State-wise admin view: the state picked in the admin header limits every admin request to that state.
+    try {
+      const selectedState = window.localStorage.getItem('adminSelectedState');
+      // (a request that sets x-admin-state itself, e.g. the States list, keeps its own value)
+      if (selectedState && String(config.url || '').startsWith('/admin') && !config.headers?.['x-admin-state']) {
+        config.headers['x-admin-state'] = selectedState;
+      }
+    } catch {
+      // storage unavailable: no state filter
+    }
+
     const existingAuthorization = config.headers?.Authorization || config.headers?.authorization;
 
     if (existingAuthorization) {

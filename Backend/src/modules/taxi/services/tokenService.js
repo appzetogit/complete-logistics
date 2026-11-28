@@ -2,10 +2,17 @@ import jwt from 'jsonwebtoken';
 import { env } from '../../../config/env.js';
 import { ApiError } from '../../../utils/ApiError.js';
 
+// Only the admin panel uses the short lifetime (JWT_EXPIRES_IN, 7d). Every mobile-app role (rider, driver, owner,
+// bus / pooling driver, service center) gets JWT_APP_EXPIRES_IN (90d): the apps cannot renew a token, so a 7 day
+// token logged everybody out once a week. Logout still ends a session at once (tokensRevokedAt) and a deactivated
+// account is refused on every request, so a longer token does not keep a blocked account alive.
+export const accessTokenLifetimeFor = (role) =>
+  String(role || '').toLowerCase() === 'admin' ? env.jwtExpiresIn : env.jwtAppExpiresIn;
+
 export const signAccessToken = ({ sub, role }) =>
   jwt.sign({ role }, env.jwtSecret, {
     subject: sub,
-    expiresIn: env.jwtExpiresIn,
+    expiresIn: accessTokenLifetimeFor(role),
   });
 
 // jsonwebtoken spends ~370us per verify -- over 100x the HMAC it actually
