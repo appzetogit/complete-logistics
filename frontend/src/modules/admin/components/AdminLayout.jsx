@@ -977,9 +977,9 @@ const AdminLayout = () => {
               { label: 'User Report', path: '/admin/reports/user', permission: 'reports.view' },
               { label: 'Driver Report', path: '/admin/reports/driver', permission: 'reports.view' },
               { label: 'Driver Duty Report', path: '/admin/reports/driver-duty', permission: 'reports.view' },
-              { label: 'Owner Report', path: '/admin/reports/owner', permission: 'reports.view' },
+              // { label: 'Owner Report', path: '/admin/reports/owner', permission: 'reports.view' }, // hidden
               { label: 'Finance Report', path: '/admin/reports/finance', permission: 'reports.view' },
-              { label: 'Fleet Finance Report', path: '/admin/reports/fleet-finance', permission: 'reports.view' },
+              // { label: 'Fleet Finance Report', path: '/admin/reports/fleet-finance', permission: 'reports.view' }, // hidden
             ],
           },
           {
